@@ -36,6 +36,8 @@ node --test tests/frontend_request_guard.test.js tests/frontend_contract.test.js
 
 管理脚本支持 `.cmd`、`.bat` 和 `.ps1`，并接受一个固定动作参数：
 
+完整接口、错误处理和示例参见 [脚本要求.md](脚本要求.md)。
+
 ```powershell
 D:\AIWork\example\manage.ps1 start
 D:\AIWork\example\manage.ps1 stop
