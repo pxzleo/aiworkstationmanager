@@ -6,6 +6,7 @@ __pycache__/
 logs/
 output/
 .playwright-cli/
+.worktrees/
 %SystemDrive%/
 config/settings.json
 config/integrations.json
