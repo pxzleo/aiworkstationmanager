@@ -7,14 +7,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from .discovery import redact_discovery_value
+from .redaction import redact_value
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 class DatabaseError(RuntimeError):
     """数据库初始化或读写失败。"""
+
+
+class OperationBusyError(DatabaseError):
+    """数据库中已经存在尚未结束的服务或场景操作。"""
 
 
 def utc_now() -> str:
@@ -77,13 +81,14 @@ class Database:
                     migrations = {
                         1: self._migrate_to_1,
                         2: self._migrate_to_2,
-                        3: self._migrate_to_3,
+                        3: self._no_op_migration,
                         4: self._migrate_to_4,
                         5: self._migrate_to_5,
                         6: self._migrate_to_6,
-                        7: self._migrate_to_7,
-                        8: self._migrate_to_8,
-                        9: self._migrate_to_9,
+                        7: self._no_op_migration,
+                        8: self._no_op_migration,
+                        9: self._no_op_migration,
+                        10: self._migrate_to_10,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -116,12 +121,6 @@ class Database:
                 source_ip TEXT NOT NULL, event TEXT NOT NULL, result TEXT NOT NULL
             )"""
         )
-        connection.execute(
-            """CREATE TABLE IF NOT EXISTS discovered_entries (
-                path TEXT PRIMARY KEY, name TEXT NOT NULL, entry_type TEXT NOT NULL,
-                mtime TEXT NOT NULL, sha256 TEXT NOT NULL, details_json TEXT NOT NULL
-            )"""
-        )
 
     @classmethod
     def _migrate_to_2(cls, connection: sqlite3.Connection) -> None:
@@ -142,34 +141,9 @@ class Database:
         cls._ensure_column(connection, "audit_events", "event", "TEXT NOT NULL DEFAULT ''")
         cls._ensure_column(connection, "audit_events", "result", "TEXT NOT NULL DEFAULT ''")
         cls._ensure_column(connection, "audit_events", "summary_json", "TEXT NOT NULL DEFAULT '{}'")
-        cls._ensure_column(connection, "discovered_entries", "name", "TEXT NOT NULL DEFAULT ''")
-        cls._ensure_column(connection, "discovered_entries", "entry_type", "TEXT NOT NULL DEFAULT ''")
-        cls._ensure_column(connection, "discovered_entries", "mtime", "TEXT NOT NULL DEFAULT ''")
-        cls._ensure_column(connection, "discovered_entries", "sha256", "TEXT NOT NULL DEFAULT ''")
-        cls._ensure_column(connection, "discovered_entries", "details_json", "TEXT NOT NULL DEFAULT '{}'")
-        cls._ensure_column(connection, "discovered_entries", "scan_id", "TEXT NOT NULL DEFAULT ''")
-        cls._ensure_column(connection, "discovered_entries", "active", "INTEGER NOT NULL DEFAULT 1")
-        cls._ensure_column(connection, "discovered_entries", "updated_at", "TEXT NOT NULL DEFAULT ''")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)")
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at DESC)"
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_discovered_entries_active ON discovered_entries(active, name)"
-        )
-
-    @staticmethod
-    def _migrate_to_3(connection: sqlite3.Connection) -> None:
-        connection.execute(
-            """CREATE TABLE IF NOT EXISTS scan_runs (
-                scan_id TEXT PRIMARY KEY, scanned_at TEXT NOT NULL, directory TEXT NOT NULL,
-                directory_exists INTEGER NOT NULL, entry_count INTEGER NOT NULL,
-                error_count INTEGER NOT NULL, errors_json TEXT NOT NULL,
-                source_ip TEXT NOT NULL, recorded_at TEXT NOT NULL
-            )"""
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_scan_runs_scanned_at ON scan_runs(scanned_at DESC, recorded_at DESC)"
         )
 
     @staticmethod
@@ -238,41 +212,53 @@ class Database:
         )
 
     @staticmethod
-    def _migrate_to_7(connection: sqlite3.Connection) -> None:
+    def _migrate_to_10(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TABLE IF EXISTS control_recovery_items")
+        connection.execute("DROP TABLE IF EXISTS control_recovery_lock")
+        connection.execute("DROP TABLE IF EXISTS control_operation_lease")
+        connection.execute("DROP TABLE IF EXISTS scan_runs")
+        connection.execute("DROP TABLE IF EXISTS discovered_entries")
         connection.execute(
-            """CREATE TABLE IF NOT EXISTS control_operation_lease (
-                id INTEGER PRIMARY KEY CHECK (id = 1), owner_id TEXT NOT NULL,
-                acquired_at TEXT NOT NULL
-            )"""
-        )
-
-    @staticmethod
-    def _migrate_to_8(connection: sqlite3.Connection) -> None:
-        connection.execute(
-            """CREATE TABLE IF NOT EXISTS control_recovery_lock (
-                id INTEGER PRIMARY KEY CHECK (id = 1), operation_id TEXT NOT NULL,
-                environment_id TEXT NOT NULL, expected_state TEXT NOT NULL,
-                reason TEXT NOT NULL, created_at TEXT NOT NULL
-            )"""
-        )
-
-    @staticmethod
-    def _migrate_to_9(connection: sqlite3.Connection) -> None:
-        connection.execute(
-            """CREATE TABLE IF NOT EXISTS control_recovery_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                operation_id TEXT NOT NULL, environment_id TEXT NOT NULL,
-                expected_state TEXT NOT NULL, reason TEXT NOT NULL,
+            """CREATE TABLE IF NOT EXISTS registered_services (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                description TEXT NOT NULL DEFAULT '',
+                script_path TEXT NOT NULL,
+                gpu_label TEXT NOT NULL DEFAULT '',
+                port INTEGER,
+                ui_url TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
-                UNIQUE(operation_id, environment_id)
+                updated_at TEXT NOT NULL
             )"""
         )
         connection.execute(
-            """INSERT OR IGNORE INTO control_recovery_items(
-                   operation_id, environment_id, expected_state, reason, created_at
-               ) SELECT operation_id, environment_id, expected_state, reason, created_at
-                 FROM control_recovery_lock WHERE id=1"""
+            """CREATE TABLE IF NOT EXISTS scenes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS scene_services (
+                scene_id TEXT NOT NULL REFERENCES scenes(id) ON DELETE CASCADE,
+                service_id TEXT NOT NULL REFERENCES registered_services(id) ON DELETE CASCADE,
+                start_order INTEGER NOT NULL,
+                PRIMARY KEY(scene_id, service_id),
+                UNIQUE(scene_id, start_order)
+            )"""
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_registered_services_name ON registered_services(name)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scene_services_order ON scene_services(scene_id, start_order)"
+        )
+
+    @staticmethod
+    def _no_op_migration(_: sqlite3.Connection) -> None:
+        """保留历史版本号，使旧数据库可以按顺序升级到当前结构。"""
 
     @staticmethod
     def _ensure_column(
@@ -292,207 +278,6 @@ class Database:
         except (sqlite3.Error, TypeError, ValueError) as exc:
             raise DatabaseError(f"写入审计事件失败: {exc}") from exc
 
-    def interrupt_incomplete_operations(self) -> None:
-        """管理器进程不会恢复旧后台任务；启动时明确终结遗留状态。"""
-        try:
-            with self.connect() as connection:
-                with connection:
-                    rows = connection.execute(
-                        """SELECT id, kind, target_id, action, source_ip, requested_by, before_state
-                           FROM operations WHERE status IN ('queued','running')"""
-                    ).fetchall()
-                    now = utc_now()
-                    for row in rows:
-                        recovery_created = False
-                        if row["kind"] == "environment":
-                            step = connection.execute(
-                                """SELECT before_state FROM operation_steps
-                                   WHERE operation_id=? ORDER BY sequence LIMIT 1""",
-                                (row["id"],),
-                            ).fetchone()
-                            before = step["before_state"] if step is not None else None
-                            expected = before if before in {"running", "stopped"} else "stopped"
-                            cursor = connection.execute(
-                                """INSERT OR IGNORE INTO control_recovery_lock(
-                                       id, operation_id, environment_id, expected_state, reason, created_at
-                                   ) VALUES (1, ?, ?, ?, ?, ?)""",
-                                (row["id"], row["target_id"], expected,
-                                 "管理器重启时发现未可靠最终化的环境操作", now),
-                            )
-                            recovery_created = cursor.rowcount == 1
-                            if recovery_created:
-                                connection.execute(
-                                    """INSERT OR IGNORE INTO control_recovery_items(
-                                           operation_id, environment_id, expected_state, reason, created_at
-                                       ) VALUES (?, ?, ?, ?, ?)""",
-                                    (row["id"], row["target_id"], expected,
-                                     "管理器重启时发现未可靠最终化的环境操作", now),
-                                )
-                        elif row["kind"] == "scene":
-                            expected_by_environment: dict[str, str] = {}
-                            try:
-                                payload = json.loads(row["before_state"] or "{}")
-                                statuses = payload.get("statuses", payload)
-                                if isinstance(statuses, dict):
-                                    for environment_id, state in statuses.items():
-                                        if isinstance(environment_id, str):
-                                            expected_by_environment[environment_id] = (
-                                                state if state in {"running", "stopped"} else "stopped")
-                            except (TypeError, ValueError):
-                                expected_by_environment = {}
-                            if not expected_by_environment:
-                                steps = connection.execute(
-                                    """SELECT target_id,before_state FROM operation_steps
-                                       WHERE operation_id=? ORDER BY sequence""",
-                                    (row["id"],),
-                                ).fetchall()
-                                for step in steps:
-                                    expected_by_environment.setdefault(
-                                        step["target_id"], step["before_state"]
-                                        if step["before_state"] in {"running", "stopped"}
-                                        else "stopped")
-                            if expected_by_environment:
-                                first_environment, first_expected = next(iter(
-                                    expected_by_environment.items()))
-                                cursor = connection.execute(
-                                    """INSERT OR IGNORE INTO control_recovery_lock(
-                                           id, operation_id, environment_id, expected_state, reason, created_at
-                                       ) VALUES (1, ?, ?, ?, ?, ?)""",
-                                    (row["id"], first_environment, first_expected,
-                                     "管理器重启时发现未可靠最终化的场景操作", now),
-                                )
-                                recovery_created = cursor.rowcount == 1
-                                if recovery_created:
-                                    for environment_id, expected in expected_by_environment.items():
-                                        connection.execute(
-                                            """INSERT OR IGNORE INTO control_recovery_items(
-                                                   operation_id, environment_id, expected_state, reason, created_at
-                                               ) VALUES (?, ?, ?, ?, ?)""",
-                                            (row["id"], environment_id, expected,
-                                             "管理器重启时发现未可靠最终化的场景操作", now),
-                                        )
-                        connection.execute(
-                            """UPDATE operation_steps SET status='interrupted',
-                                   error_summary='管理器重启，步骤已中断', finished_at=?
-                               WHERE operation_id=? AND status IN ('queued','running')""",
-                            (now, row["id"]),
-                        )
-                        self.insert_audit(
-                            connection, row["source_ip"], "control.recovery", "failure",
-                            {"operation_id": row["id"], "kind": row["kind"],
-                             "target_id": row["target_id"], "action": row["action"],
-                             "requested_by": row["requested_by"],
-                             "result": "recovery_required" if recovery_created else "interrupted"},
-                        )
-                        audit_id = connection.execute(
-                            "SELECT last_insert_rowid() AS id"
-                        ).fetchone()["id"]
-                        connection.execute(
-                            """UPDATE operations SET status='interrupted', result=?,
-                                   error_summary='管理器重启，操作已中断', finished_at=?,
-                                   audit_event_id=? WHERE id=?""",
-                            ("recovery_required" if recovery_created else "interrupted",
-                             now, audit_id, row["id"]),
-                        )
-        except sqlite3.Error as exc:
-            raise DatabaseError(f"恢复遗留操作状态失败: {exc}") from exc
-
-    def acquire_control_lease(self, owner_id: str) -> bool:
-        try:
-            with self.connect() as connection:
-                with connection:
-                    connection.execute("BEGIN IMMEDIATE")
-                    if connection.execute(
-                        "SELECT 1 FROM control_operation_lease WHERE id=1"
-                    ).fetchone() is not None:
-                        return False
-                    connection.execute(
-                        "INSERT INTO control_operation_lease(id, owner_id, acquired_at) VALUES (1, ?, ?)",
-                        (owner_id, utc_now()),
-                    )
-                    return True
-        except sqlite3.Error as exc:
-            raise DatabaseError(f"取得控制操作租约失败: {exc}") from exc
-
-    def release_control_lease(self, owner_id: str) -> None:
-        try:
-            with self.connect() as connection:
-                with connection:
-                    connection.execute(
-                        "DELETE FROM control_operation_lease WHERE id=1 AND owner_id=?",
-                        (owner_id,),
-                    )
-        except sqlite3.Error as exc:
-            raise DatabaseError(f"释放控制操作租约失败: {exc}") from exc
-
-    def clear_stale_control_lease(self) -> None:
-        """仅允许持有进程级文件锁的调用方清理崩溃遗留租约。"""
-        try:
-            with self.connect() as connection:
-                with connection:
-                    connection.execute("DELETE FROM control_operation_lease WHERE id=1")
-        except sqlite3.Error as exc:
-            raise DatabaseError(f"清理遗留控制租约失败: {exc}") from exc
-
-    def control_lease_owner(self) -> str | None:
-        try:
-            with self.connect() as connection:
-                row = connection.execute(
-                    "SELECT owner_id FROM control_operation_lease WHERE id=1"
-                ).fetchone()
-            return str(row["owner_id"]) if row is not None else None
-        except sqlite3.Error as exc:
-            raise DatabaseError(f"读取控制操作租约失败: {exc}") from exc
-
-    def control_recovery_lock(self) -> dict[str, Any] | None:
-        try:
-            with self.connect() as connection:
-                row = connection.execute(
-                    "SELECT operation_id,environment_id,expected_state,reason,created_at "
-                    "FROM control_recovery_lock WHERE id=1"
-                ).fetchone()
-                if row is None:
-                    return None
-                items = connection.execute(
-                    """SELECT environment_id,expected_state,reason,created_at
-                       FROM control_recovery_items WHERE operation_id=? ORDER BY id""",
-                    (row["operation_id"],),
-                ).fetchall()
-            result = dict(row)
-            result["items"] = [dict(item) for item in items] or [{
-                "environment_id": result["environment_id"],
-                "expected_state": result["expected_state"],
-                "reason": result["reason"], "created_at": result["created_at"],
-            }]
-            return result
-        except sqlite3.Error as exc:
-            raise DatabaseError(f"读取控制恢复锁失败: {exc}") from exc
-
-    def resolve_control_recovery(self, recovery_key: str, username: str,
-                                 source_ip: str) -> bool:
-        try:
-            with self.connect() as connection:
-                with connection:
-                    connection.execute("BEGIN IMMEDIATE")
-                    row = connection.execute(
-                        "SELECT operation_id,environment_id,expected_state FROM control_recovery_lock WHERE id=1"
-                    ).fetchone()
-                    if row is None or recovery_key not in {row["operation_id"], row["environment_id"]}:
-                        return False
-                    self.insert_audit(
-                        connection, source_ip, "control.recovery.resolve", "success",
-                        {"operation_id": row["operation_id"], "environment_id": row["environment_id"],
-                         "expected_state": row["expected_state"], "requested_by": username},
-                    )
-                    connection.execute(
-                        "DELETE FROM control_recovery_items WHERE operation_id=?",
-                        (row["operation_id"],),
-                    )
-                    connection.execute("DELETE FROM control_recovery_lock WHERE id=1")
-                    return True
-        except sqlite3.Error as exc:
-            raise DatabaseError(f"解除控制恢复锁失败: {exc}") from exc
-
     def insert_audit(
         self,
         connection: sqlite3.Connection,
@@ -501,9 +286,7 @@ class Database:
         result: str,
         summary: dict[str, Any],
     ) -> None:
-        payload = json.dumps(
-            redact_discovery_value(summary), ensure_ascii=False, sort_keys=True
-        )
+        payload = json.dumps(redact_value(summary), ensure_ascii=False, sort_keys=True)
         now = utc_now()
         connection.execute(
             """INSERT INTO audit_events(created_at, source_ip, event, result, summary_json)
@@ -599,139 +382,6 @@ class Database:
         except (sqlite3.Error, TypeError, ValueError) as exc:
             raise DatabaseError(f"原子记录登录失败失败: {exc}") from exc
 
-    def replace_discovered(self, scan_id: str, entries: list[dict[str, Any]]) -> None:
-        try:
-            with self.connect() as connection:
-                with connection:
-                    self._replace_discovered_rows(connection, scan_id, entries)
-        except (sqlite3.Error, KeyError, TypeError, ValueError) as exc:
-            raise DatabaseError(f"保存脚本发现结果失败: {exc}") from exc
-
-    def replace_discovered_with_audit(
-        self,
-        scan: dict[str, Any],
-        source_ip: str,
-        result: str,
-        summary: dict[str, Any],
-    ) -> None:
-        try:
-            with self.connect() as connection:
-                with connection:
-                    self._replace_discovered_rows(
-                        connection, str(scan["scan_id"]), list(scan["entries"])
-                    )
-                    self._insert_scan_run(connection, scan, source_ip)
-                    self.insert_audit(
-                        connection, source_ip, "discovery.scripts.scan", result, summary
-                    )
-        except (sqlite3.Error, KeyError, TypeError, ValueError) as exc:
-            raise DatabaseError(f"保存扫描结果及审计失败: {exc}") from exc
-
-    def record_failed_scan_with_audit(
-        self, scan: dict[str, Any], source_ip: str, error_type: str
-    ) -> None:
-        try:
-            with self.connect() as connection:
-                with connection:
-                    self._insert_scan_run(connection, scan, source_ip)
-                    self.insert_audit(
-                        connection,
-                        source_ip,
-                        "discovery.scripts.scan",
-                        "failure",
-                        {"entry_count": 0, "entry_error_count": 1, "error_type": error_type},
-                    )
-        except (sqlite3.Error, KeyError, TypeError, ValueError) as exc:
-            raise DatabaseError(f"保存失败扫描元数据及审计失败: {exc}") from exc
-
-    @staticmethod
-    def _insert_scan_run(
-        connection: sqlite3.Connection, scan: dict[str, Any], source_ip: str
-    ) -> None:
-        safe_scan = redact_discovery_value(scan)
-        entry_errors = [
-            {"path": entry.get("path"), **error}
-            for entry in safe_scan.get("entries", [])
-            for error in entry.get("errors", [])
-        ]
-        errors = [*safe_scan.get("errors", []), *entry_errors]
-        connection.execute(
-            """INSERT INTO scan_runs(
-                   scan_id, scanned_at, directory, directory_exists, entry_count,
-                   error_count, errors_json, source_ip, recorded_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                safe_scan["scan_id"], safe_scan["scanned_at"], safe_scan["directory"],
-                1 if safe_scan["directory_exists"] else 0, len(safe_scan.get("entries", [])),
-                len(errors), json.dumps(errors, ensure_ascii=False, sort_keys=True),
-                source_ip, utc_now(),
-            ),
-        )
-
-    def latest_scan_run(self) -> dict[str, Any] | None:
-        try:
-            with self.connect() as connection:
-                row = connection.execute(
-                    """SELECT scan_id, scanned_at, directory, directory_exists,
-                              entry_count, error_count, errors_json, source_ip
-                       FROM scan_runs ORDER BY recorded_at DESC, rowid DESC LIMIT 1"""
-                ).fetchone()
-            if row is None:
-                return None
-            return {
-                "scan_id": row["scan_id"],
-                "scanned_at": row["scanned_at"],
-                "directory": row["directory"],
-                "directory_exists": bool(row["directory_exists"]),
-                "entry_count": row["entry_count"],
-                "error_count": row["error_count"],
-                "errors": json.loads(row["errors_json"]),
-                "source_ip": row["source_ip"],
-            }
-        except (sqlite3.Error, json.JSONDecodeError) as exc:
-            raise DatabaseError(f"读取最近扫描元数据失败: {exc}") from exc
-
-    @staticmethod
-    def _replace_discovered_rows(
-        connection: sqlite3.Connection, scan_id: str, entries: list[dict[str, Any]]
-    ) -> None:
-        now = utc_now()
-        connection.execute("UPDATE discovered_entries SET active = 0")
-        for entry in entries:
-            safe_entry = redact_discovery_value(entry)
-            connection.execute(
-                """INSERT INTO discovered_entries(
-                       path, name, entry_type, mtime, sha256, details_json,
-                       scan_id, active, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
-                   ON CONFLICT(path) DO UPDATE SET
-                       name=excluded.name, entry_type=excluded.entry_type,
-                       mtime=excluded.mtime, sha256=excluded.sha256,
-                       details_json=excluded.details_json, scan_id=excluded.scan_id,
-                       active=1, updated_at=excluded.updated_at""",
-                (
-                    safe_entry["path"], safe_entry["name"], safe_entry["type"], safe_entry["mtime"],
-                    safe_entry["sha256"],
-                    json.dumps(
-                        safe_entry,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
-                    scan_id, now,
-                ),
-            )
-
-    def list_discovered(self) -> list[dict[str, Any]]:
-        try:
-            with self.connect() as connection:
-                rows = connection.execute(
-                    """SELECT details_json FROM discovered_entries
-                       WHERE active = 1 ORDER BY name COLLATE NOCASE"""
-                ).fetchall()
-            return [json.loads(row["details_json"]) for row in rows]
-        except (sqlite3.Error, json.JSONDecodeError) as exc:
-            raise DatabaseError(f"读取脚本发现结果失败: {exc}") from exc
-
     def create_operation(
         self, operation_id: str, kind: str, target_id: str, action: str,
         requested_by: str, source_ip: str,
@@ -739,6 +389,11 @@ class Database:
         try:
             with self.connect() as connection:
                 with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    if connection.execute(
+                        "SELECT 1 FROM operations WHERE status IN ('queued','running') LIMIT 1"
+                    ).fetchone() is not None:
+                        raise OperationBusyError("已有服务或场景操作正在执行")
                     connection.execute(
                         """INSERT INTO operations(
                                id, kind, target_id, action, requested_by, source_ip,
@@ -756,6 +411,16 @@ class Database:
         except sqlite3.Error as exc:
             raise DatabaseError(f"创建操作任务失败: {exc}") from exc
 
+    def has_active_operation(self) -> bool:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    "SELECT 1 FROM operations WHERE status IN ('queued','running') LIMIT 1"
+                ).fetchone()
+            return row is not None
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取活动操作状态失败: {exc}") from exc
+
     def update_operation(self, operation_id: str, **fields: Any) -> None:
         allowed = {
             "status", "before_state", "after_state", "result", "error_summary",
@@ -763,7 +428,7 @@ class Database:
         }
         if not fields or set(fields) - allowed:
             raise DatabaseError("操作更新字段不受支持")
-        safe = redact_discovery_value(fields)
+        safe = redact_value(fields)
         assignments = ", ".join(f"{name}=?" for name in safe)
         try:
             with self.connect() as connection:
@@ -799,7 +464,7 @@ class Database:
         self, operation_id: str, sequence: int, status: str, after_state: str | None,
         result: str | None = None, error_summary: str | None = None,
     ) -> None:
-        safe_error = redact_discovery_value(error_summary)
+        safe_error = redact_value(error_summary)
         try:
             with self.connect() as connection:
                 with connection:
@@ -816,10 +481,8 @@ class Database:
         self, operation_id: str, status: str, result: str,
         before_state: str | None, after_state: str | None,
         error_summary: str | None = None,
-        recovery_lock: dict[str, str] | None = None,
-        recovery_items: list[dict[str, str]] | None = None,
     ) -> None:
-        safe_error = redact_discovery_value(error_summary)
+        safe_error = redact_value(error_summary)
         try:
             with self.connect() as connection:
                 with connection:
@@ -830,7 +493,7 @@ class Database:
                     if row is None:
                         raise DatabaseError("操作任务不存在")
                     self.insert_audit(
-                        connection, row["source_ip"], f"control.{row['kind']}",
+                        connection, row["source_ip"], f"management.{row['kind']}",
                         "success" if status == "succeeded" else "failure",
                         {"operation_id": operation_id, "target_id": row["target_id"],
                          "action": row["action"], "requested_by": row["requested_by"],
@@ -844,29 +507,6 @@ class Database:
                         (status, result, before_state, after_state, safe_error, utc_now(),
                          audit_id, operation_id),
                     )
-                    items = recovery_items or ([recovery_lock] if recovery_lock is not None else [])
-                    if items:
-                        safe_items = redact_discovery_value(items)
-                        safe_lock = safe_items[0]
-                        connection.execute(
-                            """INSERT OR REPLACE INTO control_recovery_lock(
-                                   id, operation_id, environment_id, expected_state, reason, created_at
-                               ) VALUES (1, ?, ?, ?, ?, ?)""",
-                            (operation_id, safe_lock["environment_id"],
-                             safe_lock["expected_state"], safe_lock["reason"], utc_now()),
-                        )
-                        connection.execute(
-                            "DELETE FROM control_recovery_items WHERE operation_id=?",
-                            (operation_id,),
-                        )
-                        for item in safe_items:
-                            connection.execute(
-                                """INSERT INTO control_recovery_items(
-                                       operation_id, environment_id, expected_state, reason, created_at
-                                   ) VALUES (?, ?, ?, ?, ?)""",
-                                (operation_id, item["environment_id"], item["expected_state"],
-                                 item["reason"], utc_now()),
-                            )
         except sqlite3.Error as exc:
             raise DatabaseError(f"完成操作任务及审计失败: {exc}") from exc
 
@@ -904,3 +544,180 @@ class Database:
             return result
         except sqlite3.Error as exc:
             raise DatabaseError(f"读取操作任务列表失败: {exc}") from exc
+
+    def list_registered_services(self) -> list[dict[str, Any]]:
+        try:
+            with self.connect() as connection:
+                rows = connection.execute(
+                    "SELECT * FROM registered_services ORDER BY name COLLATE NOCASE, id"
+                ).fetchall()
+            return [dict(row) for row in rows]
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取已登记服务失败: {exc}") from exc
+
+    def get_registered_service(self, service_id: str) -> dict[str, Any] | None:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM registered_services WHERE id=?", (service_id,)
+                ).fetchone()
+            return dict(row) if row is not None else None
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取已登记服务失败: {exc}") from exc
+
+    def create_registered_service(self, item: dict[str, Any]) -> None:
+        now = utc_now()
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute(
+                        """INSERT INTO registered_services(
+                               id,name,description,script_path,gpu_label,port,ui_url,
+                               created_at,updated_at
+                           ) VALUES (?,?,?,?,?,?,?,?,?)""",
+                        (item["id"], item["name"], item["description"], item["script_path"],
+                         item["gpu_label"], item["port"], item["ui_url"], now, now),
+                    )
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError("服务名称或 ID 已存在") from exc
+        except (sqlite3.Error, KeyError) as exc:
+            raise DatabaseError(f"创建已登记服务失败: {exc}") from exc
+
+    def update_registered_service(self, service_id: str, item: dict[str, Any]) -> bool:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        """UPDATE registered_services SET name=?,description=?,script_path=?,
+                               gpu_label=?,port=?,ui_url=?,updated_at=? WHERE id=?""",
+                        (item["name"], item["description"], item["script_path"],
+                         item["gpu_label"], item["port"], item["ui_url"], utc_now(), service_id),
+                    )
+                    return cursor.rowcount == 1
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError("服务名称已存在") from exc
+        except (sqlite3.Error, KeyError) as exc:
+            raise DatabaseError(f"更新已登记服务失败: {exc}") from exc
+
+    def delete_registered_service(self, service_id: str) -> bool:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        "DELETE FROM registered_services WHERE id=?", (service_id,)
+                    )
+                    return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"删除已登记服务失败: {exc}") from exc
+
+    def list_scenes(self) -> list[dict[str, Any]]:
+        try:
+            with self.connect() as connection:
+                rows = connection.execute(
+                    "SELECT * FROM scenes ORDER BY name COLLATE NOCASE, id"
+                ).fetchall()
+                result: list[dict[str, Any]] = []
+                for row in rows:
+                    item = dict(row)
+                    services = connection.execute(
+                        """SELECT ss.service_id,rs.name FROM scene_services ss
+                           JOIN registered_services rs ON rs.id=ss.service_id
+                           WHERE ss.scene_id=? ORDER BY ss.start_order""",
+                        (row["id"],),
+                    ).fetchall()
+                    item["service_ids"] = [service["service_id"] for service in services]
+                    item["service_names"] = [service["name"] for service in services]
+                    result.append(item)
+            return result
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取场景失败: {exc}") from exc
+
+    def get_scene(self, scene_id: str) -> dict[str, Any] | None:
+        return next((item for item in self.list_scenes() if item["id"] == scene_id), None)
+
+    def create_scene(self, item: dict[str, Any]) -> None:
+        now = utc_now()
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute(
+                        "INSERT INTO scenes(id,name,description,created_at,updated_at) VALUES (?,?,?,?,?)",
+                        (item["id"], item["name"], item["description"], now, now),
+                    )
+                    self._replace_scene_services(connection, item["id"], item["service_ids"])
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError("场景名称、ID 或服务列表无效") from exc
+        except (sqlite3.Error, KeyError) as exc:
+            raise DatabaseError(f"创建场景失败: {exc}") from exc
+
+    def update_scene(self, scene_id: str, item: dict[str, Any]) -> bool:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        "UPDATE scenes SET name=?,description=?,updated_at=? WHERE id=?",
+                        (item["name"], item["description"], utc_now(), scene_id),
+                    )
+                    if cursor.rowcount != 1:
+                        return False
+                    self._replace_scene_services(connection, scene_id, item["service_ids"])
+                    return True
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError("场景名称或服务列表无效") from exc
+        except (sqlite3.Error, KeyError) as exc:
+            raise DatabaseError(f"更新场景失败: {exc}") from exc
+
+    def delete_scene(self, scene_id: str) -> bool:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute("DELETE FROM scenes WHERE id=?", (scene_id,))
+                    return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"删除场景失败: {exc}") from exc
+
+    @staticmethod
+    def _replace_scene_services(
+        connection: sqlite3.Connection, scene_id: str, service_ids: list[str]
+    ) -> None:
+        connection.execute("DELETE FROM scene_services WHERE scene_id=?", (scene_id,))
+        for index, service_id in enumerate(service_ids):
+            connection.execute(
+                "INSERT INTO scene_services(scene_id,service_id,start_order) VALUES (?,?,?)",
+                (scene_id, service_id, index),
+            )
+
+    def interrupt_simple_operations(self) -> None:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    rows = connection.execute(
+                        "SELECT id,kind,target_id,action,source_ip,requested_by FROM operations "
+                        "WHERE status IN ('queued','running')"
+                    ).fetchall()
+                    now = utc_now()
+                    for row in rows:
+                        connection.execute(
+                            """UPDATE operation_steps SET status='interrupted',
+                                   result='interrupted',error_summary='管理器重启，操作已中断',
+                                   finished_at=? WHERE operation_id=?
+                                   AND status IN ('queued','running')""",
+                            (now, row["id"]),
+                        )
+                        self.insert_audit(
+                            connection, row["source_ip"], f"management.{row['kind']}",
+                            "failure", {"operation_id": row["id"], "target_id": row["target_id"],
+                                        "action": row["action"], "requested_by": row["requested_by"],
+                                        "result": "interrupted"},
+                        )
+                        audit_id = connection.execute(
+                            "SELECT last_insert_rowid() AS id"
+                        ).fetchone()["id"]
+                        connection.execute(
+                            """UPDATE operations SET status='interrupted',result='interrupted',
+                                   error_summary='管理器重启，操作已中断',finished_at=?,audit_event_id=?
+                               WHERE id=?""",
+                            (now, audit_id, row["id"]),
+                        )
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"恢复遗留服务操作失败: {exc}") from exc

@@ -171,6 +171,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .service-state { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-2); }
 .service-state.ready { background: var(--accent); }
 .service-state.partial { background: var(--warning); }
+.service-state.danger { background: var(--danger); }
 .service-row strong, .service-row small { display: block; }
 .service-row strong { font-size: 11px; }
 .service-row small { color: var(--muted); font-size: 9px; margin-top: 2px; }
@@ -220,7 +221,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .filter.active, .range-select button.active { background: var(--surface-3); color: var(--text); }
 .range-select button:disabled { opacity: .35; cursor: not-allowed; }
 .data-table { border-top: 1px solid var(--line-strong); }
-.table-head, .table-row { display: grid; grid-template-columns: minmax(230px,1.6fr) 1fr 1.2fr 110px 90px 130px; align-items: center; column-gap: 15px; }
+.table-head, .table-row { display: grid; grid-template-columns: minmax(210px,1.35fr) minmax(150px,1fr) 120px 80px 90px minmax(260px,auto); align-items: center; column-gap: 15px; }
 .table-head { min-height: 39px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--line); }
 .table-row { min-height: 65px; border-bottom: 1px solid var(--line); transition: background .16s; }
 .table-row:hover { background: rgba(255,255,255,.018); }
@@ -243,6 +244,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .row-buttons { display: flex; justify-content: flex-end; gap: 5px; }
 .row-buttons button { height: 28px; border: 1px solid var(--line); background: transparent; border-radius: 4px; font-size: 9px; cursor: pointer; }
 .row-buttons .icon-only { width: 28px; }
+.row-buttons button { padding: 0 7px; color: var(--text); }
+.row-buttons button:disabled { opacity: .4; cursor: not-allowed; }
+.scene-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.scene-card-actions .button { width: auto; }
 
 .webui-list { border-top: 1px solid var(--line-strong); }
 .webui-row { min-height: 132px; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 21px; padding: 18px 0; position: relative; }
@@ -433,7 +438,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .gpu-stage { grid-template-columns: 1fr; gap: 14px; }
   .scene-flow { display: none; }
   .overview-lower { grid-template-columns: 1fr; }
-  .table-head, .table-row { grid-template-columns: minmax(200px,1.5fr) 1fr 110px 90px 110px; }
+  .table-head, .table-row { grid-template-columns: minmax(200px,1.5fr) 1fr 90px 90px minmax(260px,auto); }
   .table-head span:nth-child(3), .table-row > span:nth-child(3) { display: none; }
   .monitor-grid { grid-template-columns: 1fr; }
   .chart-section.wide { grid-row: auto; }
@@ -514,7 +519,17 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .control-plan p { line-height: 1.55; }
 .control-plan .danger { color: #b42318; }
 .control-dialog label { display: grid; gap: 8px; font-size: 13px; }
-.control-dialog input { width: 100%; border: 1px solid var(--line, #d9dde5); border-radius: 10px; padding: 11px 12px; background: transparent; color: inherit; }
+.control-dialog input, .control-dialog textarea { width: 100%; border: 1px solid var(--line, #d9dde5); border-radius: 10px; padding: 11px 12px; background: transparent; color: inherit; }
+.control-dialog textarea { min-height: 82px; resize: vertical; font: inherit; }
+.editor-dialog { max-height: calc(100vh - 32px); overflow: auto; }
+.scene-service-editor { display: grid; gap: 7px; }
+.scene-service-editor > small { color: var(--muted); }
+#sceneServiceChoices { display: grid; gap: 6px; max-height: 280px; overflow: auto; }
+.scene-service-choice { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.scene-service-choice label { display: flex !important; grid-template-columns: auto 1fr; align-items: center; flex: 1; }
+.scene-service-choice input { width: auto; }
+.scene-service-choice span { display: flex; gap: 4px; }
+.scene-service-choice button { width: 28px; height: 26px; border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 5px; cursor: pointer; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .operation-list { display: grid; gap: 8px; margin-bottom: 14px; }
 .operation-row { display: grid; grid-template-columns: minmax(160px, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 12px; }

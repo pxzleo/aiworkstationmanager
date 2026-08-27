@@ -40,12 +40,10 @@
 
       <nav class="nav" aria-label="主导航">
         <button class="nav-item active" data-page="overview"><svg><use href="#i-grid"/></svg><span>总览</span></button>
-        <button class="nav-item" data-page="scenes"><svg><use href="#i-layers"/></svg><span>工作场景</span><b>2</b></button>
-        <button class="nav-item" data-page="environments"><svg><use href="#i-box"/></svg><span>工作环境</span></button>
-        <button class="nav-item" data-page="webuis"><svg><use href="#i-window"/></svg><span>现有 WebUI</span></button>
+        <button class="nav-item" data-page="scenes"><svg><use href="#i-layers"/></svg><span>工作场景</span><b id="sceneNavCount">0</b></button>
+        <button class="nav-item" data-page="environments"><svg><use href="#i-box"/></svg><span>已登记服务</span></button>
         <button class="nav-item" data-page="monitor"><svg><use href="#i-pulse"/></svg><span>资源监控</span></button>
         <button class="nav-item" data-page="logs"><svg><use href="#i-terminal"/></svg><span>日志中心</span></button>
-        <button class="nav-item" data-page="scripts"><svg><use href="#i-file"/></svg><span>脚本导入</span><i></i></button>
       </nav>
 
       <div class="sidebar-foot">
@@ -75,7 +73,7 @@
             <div>
               <p class="eyebrow">当前工作场景</p>
               <h1><span class="scene-indicator"></span><span id="activeSceneName">场景检测尚未配置</span></h1>
-              <p id="activeSceneSummary">以下模板仅用于规划；当前状态以真实资源与服务列表为准。</p>
+              <p id="activeSceneSummary">场景状态由已登记服务的脚本状态计算。</p>
             </div>
             <div class="heading-actions">
               <button class="button secondary" data-nav="scenes">查看场景</button>
@@ -137,7 +135,7 @@
 
           <div class="overview-lower">
             <section class="running-section">
-              <div class="section-heading"><div><h2>运行状态</h2><p>Docker 容器与关键监听端口的只读快照</p></div><button class="text-button" data-nav="environments">全部环境 <svg><use href="#i-chevron"/></svg></button></div>
+              <div class="section-heading"><div><h2>已登记服务</h2><p>状态由后端每 5 秒统一调用管理脚本更新</p></div><button class="text-button" data-nav="environments">全部服务 <svg><use href="#i-chevron"/></svg></button></div>
               <div class="service-list" id="serviceList">
                 <p class="empty-state">登录后加载真实服务状态。</p>
               </div>
@@ -146,48 +144,27 @@
             <aside class="activity-section">
               <div class="section-heading"><div><h2>最近事件</h2><p>最近 30 分钟</p></div></div>
               <ol class="timeline" id="auditTimeline">
-                <li class="empty-state">登录后加载真实审计事件。</li>
+                <li class="empty-state">登录后加载服务与场景操作。</li>
               </ol>
             </aside>
           </div>
         </section>
 
         <section class="page" id="page-scenes" data-title="工作场景">
-          <div class="page-heading"><div><p class="eyebrow">资源编排</p><h1>工作场景</h1><p>一次确认，完成双 GPU 环境切换与健康验证。</p></div><div class="heading-actions"><button class="button secondary scene-quick-action" data-switch="development" disabled><svg><use href="#i-terminal"/></svg><span>一键切换到开发/agent场景</span></button><button class="button primary scene-quick-action" data-switch="video" disabled><svg><use href="#i-play"/></svg><span>一键切换到视频制作</span></button></div></div>
-          <div class="scene-selector">
-            <article class="scene-panel selected" data-scene="development">
-              <div class="scene-panel-top"><span>场景 01</span><i>规划模板</i></div>
-              <h2>开发/agent场景</h2><p>语言模型常驻，图像和语音能力按需进入 3090。</p>
-              <div class="scene-map"><div><span>RTX 4090</span><strong>NInfer · Qwen3.8</strong><small>API 8080 · 262K context</small></div><div><span>RTX 3090</span><strong>Krea2 生图 / H3 视频 · ASR · TTS</strong><small>队列 / 按需加载</small></div></div>
-              <button class="button secondary scene-action" data-switch="development" disabled><svg><use href="#i-x"/></svg><span>加载场景状态…</span></button>
-            </article>
-            <article class="scene-panel" data-scene="video">
-              <div class="scene-panel-top"><span>场景 02</span><i>规划模板</i></div>
-              <h2>视频制作</h2><p>4090 专注 H3 视频，3090 承担整条音频与分析流。</p>
-              <div class="scene-map"><div><span>RTX 4090</span><strong>ComfyUI · MiniMax H3</strong><small>端口 8000 · 8-step</small></div><div><span>RTX 3090</span><strong>Qwen TTS · ACE-Step · ASR</strong><small>端口 8001 · 单任务队列</small></div></div>
-              <button class="button primary scene-action" data-switch="video" disabled><svg><use href="#i-x"/></svg><span>加载场景状态…</span></button>
-            </article>
-          </div>
+          <div class="page-heading"><div><p class="eyebrow">服务组合</p><h1>工作场景</h1><p>场景按配置顺序停止未选服务，再启动所需服务。</p></div><button class="button primary" id="addSceneButton"><span>＋</span>添加场景</button></div>
+          <div class="scene-selector" id="sceneList"><p class="empty-state">尚未添加场景。</p></div>
           <section class="switch-rules">
-            <div class="section-heading"><div><h2>切换规则</h2><p>所有步骤均由实际状态驱动，不修改开机启动策略。</p></div></div>
-            <div class="rule-flow"><span><b>01</b>阻止新任务<small>检查 NInfer / Comfy 队列</small></span><i></i><span><b>02</b>等待排空<small>活跃任务默认不打断</small></span><i></i><span><b>03</b>释放显存<small>验证实际 GPU 占用</small></span><i></i><span><b>04</b>启动目标<small>逐项健康检查</small></span></div>
+            <div class="section-heading"><div><h2>切换规则</h2><p>不执行自动回滚，最终状态和失败原因写入操作日志。</p></div></div>
+            <div class="rule-flow"><span><b>01</b>停止未选服务<small>逐个调用 stop</small></span><i></i><span><b>02</b>检查停止结果<small>任一失败则不启动</small></span><i></i><span><b>03</b>启动目标服务<small>按场景顺序调用 start</small></span><i></i><span><b>04</b>刷新最终状态<small>标记激活或部分完成</small></span></div>
           </section>
         </section>
 
-        <section class="page" id="page-environments" data-title="工作环境">
-          <div class="page-heading"><div><p class="eyebrow">规划清单</p><h1>工作环境</h1><p>已登记环境会显示真实运行状态；只有通过安全验收并允许控制动作的环境才能启动、停止或重启。</p></div><button class="button primary"><span>＋</span>尚未配置</button></div>
-          <div class="toolbar"><div class="search"><svg><use href="#i-search"/></svg><input type="search" placeholder="搜索环境、模型或端口"></div><div class="filter-group"><button class="filter active">全部</button><button class="filter">运行中</button><button class="filter">异常</button><button class="filter">已停止</button></div></div>
+        <section class="page" id="page-environments" data-title="已登记服务">
+          <div class="page-heading"><div><p class="eyebrow">脚本服务</p><h1>已登记服务</h1><p>一个管理脚本提供 start、stop、restart 和 status 四个动作。</p></div><button class="button primary" id="addServiceButton"><span>＋</span>添加服务</button></div>
+          <div class="toolbar"><div class="search"><svg><use href="#i-search"/></svg><input id="serviceSearch" type="search" placeholder="搜索服务、说明、GPU 或端口"></div><div class="filter-group" id="serviceFilters"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="running">运行中</button><button class="filter" data-filter="unhealthy">异常</button><button class="filter" data-filter="stopped">已停止</button></div></div>
           <div class="data-table env-table">
-            <div class="table-head"><span>环境</span><span>运行方式</span><span>资源</span><span>端口</span><span>状态</span><span></span></div>
-            <p class="empty-state">尚未加载环境配置；此处不会展示示例运行状态。</p>
-          </div>
-        </section>
-
-        <section class="page" id="page-webuis" data-title="现有 WebUI">
-          <div class="page-heading"><div><p class="eyebrow">隔离只读预览</p><h1>现有 WebUI</h1><p>在不共享管理器权限的浏览器沙箱中查看基础页面与静态资源。</p></div></div>
-          <p class="integration-note" id="webuiConfigNote">登录后读取固定白名单配置。WebSocket/交互通道在 MVP 中可能受限。</p>
-          <div class="webui-list" id="webuiList" aria-live="polite">
-            <p class="empty-state">登录后检查 WebUI 配置。</p>
+            <div class="table-head"><span>服务名称</span><span>说明</span><span>GPU</span><span>端口</span><span>状态</span><span></span></div>
+            <div id="registeredServiceRows"><p class="empty-state">尚未添加服务。</p></div>
           </div>
         </section>
 
@@ -199,38 +176,9 @@
         </section>
 
         <section class="page" id="page-logs" data-title="日志中心">
-          <div class="page-heading"><div><p class="eyebrow">集中诊断</p><h1>日志中心</h1><p>仅访问服务器端固定配置的日志来源；不提供任意命令、路径或 grep。</p></div></div>
-          <div class="log-toolbar">
-            <label>来源<select id="logSourceSelect" aria-label="日志来源"></select></label>
-            <label>行数<select id="logLinesSelect" aria-label="日志行数"><option>100</option><option selected>200</option><option>500</option><option>1000</option></select></label>
-            <button class="button secondary" id="refreshLogsButton">刷新日志</button>
-            <label class="auto-refresh"><input type="checkbox" id="autoRefreshLogs"> 每 5 秒自动刷新</label>
-          </div>
-          <p class="integration-note" id="logConfigNote">登录后读取日志来源。</p>
-          <div class="log-console source-log-console" id="sourceLogConsole" aria-live="polite"><p class="empty-state">请选择已配置的日志来源。</p></div>
-          <div class="section-heading"><div><h2>控制操作</h2><p>持久化 operation 与步骤</p></div></div>
-          <section class="operation-list" id="operationList" aria-live="polite"><p class="empty-state">登录后加载真实控制操作。</p></section>
-          <div class="section-heading"><div><h2>操作审计</h2><p>登录、扫描、控制和日志读取事件</p></div></div>
-          <div class="log-console" id="auditLogConsole">
-            <p class="empty-state">登录后加载真实审计事件。</p>
-          </div>
-        </section>
-
-        <section class="page" id="page-scripts" data-title="脚本导入">
-          <div class="page-heading"><div><p class="eyebrow">受控迁移</p><h1>脚本导入</h1><p>只读扫描现有启动入口，审核后转换为非交互适配器。</p></div><button class="button primary" id="scanScriptsButton"><svg><use href="#i-refresh"/></svg>重新扫描</button></div>
-          <div class="path-bar"><svg><use href="#i-file"/></svg><code id="discoveryPath">等待登录</code><span id="discoveryCount">--</span><i id="discoveryTime">尚未读取</i></div>
-          <div class="import-layout">
-            <div class="script-list" id="scriptList">
-              <div class="script-list-head"><span>来源</span><span>解析结果</span><span>审核</span></div>
-              <p class="empty-state">登录后加载真实扫描结果。</p>
-            </div>
-            <aside class="script-inspector">
-              <div class="inspector-head"><div><span>解析预览</span><h2 id="scriptInspectorTitle">等待扫描</h2></div><i class="status-label partial">未执行</i></div>
-              <dl><div><dt>运行方式</dt><dd id="scriptRuntime">等待数据</dd></div><div><dt>GPU</dt><dd id="scriptGpu">等待数据</dd></div><div><dt>API / UI</dt><dd id="scriptPorts">等待数据</dd></div><div><dt>健康检查</dt><dd id="scriptHealth">等待数据</dd></div><div><dt>动作</dt><dd id="scriptActions">尚未配置</dd></div></dl>
-              <div class="risk-box"><svg><use href="#i-alert"/></svg><div><strong>需要人工确认</strong><p id="scriptRisk">尚无真实扫描结果。</p></div></div>
-              <div class="inspector-actions"><button class="button secondary">查看原文件</button><button class="button primary">批准并导入</button></div>
-            </aside>
-          </div>
+          <div class="page-heading"><div><p class="eyebrow">管理记录</p><h1>日志中心</h1><p>只记录服务启停与场景切换的时间和结果。</p></div><button class="button secondary" id="refreshLogsButton">刷新记录</button></div>
+          <div class="section-heading"><div><h2>服务与场景操作</h2><p>包含每个脚本步骤、耗时和失败摘要</p></div></div>
+          <section class="operation-list" id="operationList" aria-live="polite"><p class="empty-state">尚无服务或场景操作。</p></section>
         </section>
       </div>
     </main>
@@ -256,18 +204,32 @@
   </div>
 
   <div class="toast" id="toast"><svg><use href="#i-check"/></svg><span>数据已刷新</span></div>
-  <dialog class="control-dialog" id="controlDialog">
-    <form method="dialog" id="controlDialogForm">
-      <p class="eyebrow">安全预检</p>
-      <h2 id="controlDialogTitle">确认控制操作</h2>
-      <div class="control-plan" id="controlDialogPlan"></div>
-      <label for="controlConfirmationInput">输入精确确认文本 <code id="controlConfirmationExpected"></code></label>
-      <input id="controlConfirmationInput" autocomplete="off" maxlength="160" required>
-      <p class="auth-error" id="controlDialogError" role="alert"></p>
-      <div class="dialog-actions"><button class="button secondary" id="controlDialogCancel" type="button">取消</button><button class="button primary" id="controlDialogSubmit" type="submit" value="default">提交操作</button></div>
+  <dialog class="control-dialog editor-dialog" id="serviceDialog">
+    <form id="serviceForm">
+      <p class="eyebrow">已登记服务</p><h2 id="serviceDialogTitle">添加服务</h2>
+      <input id="serviceId" type="hidden">
+      <label>服务名称<input id="serviceName" maxlength="100" required></label>
+      <label>说明<textarea id="serviceDescription" maxlength="1000"></textarea></label>
+      <label>管理脚本绝对路径<input id="serviceScriptPath" maxlength="2048" placeholder="D:\AIWork\service\manage.ps1" required></label>
+      <label>GPU 展示标签<input id="serviceGpu" maxlength="100" placeholder="例如 RTX 4090"></label>
+      <label>服务端口<input id="servicePort" type="number" min="1" max="65535"></label>
+      <label>UI 地址<input id="serviceUiUrl" type="url" maxlength="2048" placeholder="http://192.168.1.10:8080"></label>
+      <p class="auth-error" id="serviceFormError" role="alert"></p>
+      <div class="dialog-actions"><button class="button secondary" type="button" data-close="serviceDialog">取消</button><button class="button primary" type="submit">保存服务</button></div>
+    </form>
+  </dialog>
+  <dialog class="control-dialog editor-dialog" id="sceneDialog">
+    <form id="sceneForm">
+      <p class="eyebrow">场景编辑器</p><h2 id="sceneDialogTitle">添加场景</h2>
+      <input id="sceneId" type="hidden">
+      <label>场景名称<input id="sceneName" maxlength="100" required></label>
+      <label>说明<textarea id="sceneDescription" maxlength="1000"></textarea></label>
+      <div class="scene-service-editor"><strong>需要启动的服务</strong><small>使用箭头调整启动顺序</small><div id="sceneServiceChoices"></div></div>
+      <p class="auth-error" id="sceneFormError" role="alert"></p>
+      <div class="dialog-actions"><button class="button secondary" type="button" data-close="sceneDialog">取消</button><button class="button primary" type="submit">保存场景</button></div>
     </form>
   </dialog>
   <script src="request-guard.js?v=20260827-5"></script>
-  <script src="app.js?v=20260827-5"></script>
+  <script src="app.js?v=20260827-6"></script>
 </body>
 </html>

@@ -19,7 +19,7 @@ $files = @(
     "app.js", "index.html", "styles.css", "request-guard.js", "README.md",
     "requirements.txt", "Start-Manager.ps1", "Start-Manager.cmd", "Install-ManagerTask.ps1",
     "Uninstall-ManagerTask.ps1", "Build-Release.ps1", ".gitignore",
-    "config\control.example.json", "config\integrations.example.json", "config\settings.example.json"
+    "config\settings.example.json"
 )
 $files += Get-ChildItem -LiteralPath (Join-Path $projectRoot "workstation_manager") -Filter "*.py" | ForEach-Object {
     "workstation_manager\$($_.Name)"
@@ -33,4 +33,4 @@ foreach ($relative in $files) {
     Copy-Item -LiteralPath $source -Destination $destinationFile
 }
 Write-Host "已生成干净发布目录: $target"
-Write-Host "未包含 data、logs、output、.playwright-cli 或任何正式配置。"
+Write-Host "未包含 data、logs、output 或 .playwright-cli。"

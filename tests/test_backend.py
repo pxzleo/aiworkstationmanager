@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -35,36 +36,31 @@ class ConfigTests(unittest.TestCase):
         settings = load_settings(
             {
                 "WM_DATABASE_PATH": "D:/temp/manager.db",
-                "WM_DISCOVERY_SCRIPTS_PATH": "D:/scripts",
                 "WM_SESSION_TTL_SECONDS": "600",
                 "WM_COOKIE_SECURE": "true",
-                "WM_SCAN_SCRIPTS_ON_STARTUP": "false",
                 "WM_REQUEST_BODY_MAX_BYTES": "8192",
                 "WM_AUTH_CONCURRENCY_LIMIT": "3",
                 "WM_SESSION_MAX_ACTIVE": "8",
                 "WM_AUDIT_RETENTION_MAX_EVENTS": "500",
                 "WM_AUDIT_RETENTION_DAYS": "30",
                 "WM_LOGIN_FAILURE_MAX_ROWS": "600",
-                "WM_DISCOVERY_MAX_FILE_BYTES": "16384",
-                "WM_DISCOVERY_MAX_ENTRIES": "12",
-                "WM_DISCOVERY_MAX_SHORTCUTS": "4",
-                "WM_DISCOVERY_TOTAL_TIMEOUT_SECONDS": "5.5",
+                "WM_SERVICE_STATUS_INTERVAL_SECONDS": "5",
+                "WM_SCRIPT_STATUS_TIMEOUT_SECONDS": "3",
+                "WM_SCRIPT_ACTION_TIMEOUT_SECONDS": "600",
             }
         )
         self.assertEqual(settings.database_path, Path("D:/temp/manager.db"))
         self.assertEqual(settings.session_ttl_seconds, 600)
         self.assertTrue(settings.cookie_secure)
-        self.assertFalse(settings.scan_scripts_on_startup)
         self.assertEqual(settings.request_body_max_bytes, 8192)
         self.assertEqual(settings.auth_concurrency_limit, 3)
         self.assertEqual(settings.session_max_active, 8)
         self.assertEqual(settings.audit_retention_max_events, 500)
         self.assertEqual(settings.audit_retention_days, 30)
         self.assertEqual(settings.login_failure_max_rows, 600)
-        self.assertEqual(settings.discovery_max_file_bytes, 16384)
-        self.assertEqual(settings.discovery_max_entries, 12)
-        self.assertEqual(settings.discovery_max_shortcuts, 4)
-        self.assertEqual(settings.discovery_total_timeout_seconds, 5.5)
+        self.assertEqual(settings.service_status_interval_seconds, 5)
+        self.assertEqual(settings.script_status_timeout_seconds, 3)
+        self.assertEqual(settings.script_action_timeout_seconds, 600)
 
     def test_invalid_port_is_explicit(self) -> None:
         with self.assertRaisesRegex(ConfigError, "1..65535"):
@@ -420,8 +416,7 @@ class ApiTests(unittest.TestCase):
         self.settings = Settings(
             sample_interval_seconds=60,
             database_path=temporary_root / "manager.db",
-            discovery_scripts_path=temporary_root / "scripts",
-            scan_scripts_on_startup=False,
+            manager_log_path=temporary_root / "manager.log",
         )
 
         def fake_collector(_: Settings) -> dict:
@@ -462,7 +457,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/v1/health").status_code, 200)
         self.assertEqual(self.client.get("/api/v1/snapshot").json()["gpus"][0]["uuid"], "GPU-a")
         self.assertEqual(len(self.client.get("/api/v1/history?window=15m").json()["samples"]), 1)
-        services = self.client.get("/api/v1/services").json()
+        services = self.client.get("/api/v1/host-services").json()
         self.assertEqual(services["containers"][0]["name"], "example")
         self.assertEqual(services["listening_ports"][0]["port"], 8080)
 
@@ -483,12 +478,12 @@ class ApiTests(unittest.TestCase):
     def test_invalid_history_window_returns_structured_error(self) -> None:
         response = self.client.get("/api/v1/history?window=1h")
         self.assertEqual(response.status_code, 422)
-        self.assertEqual(response.json()["detail"]["error_type"], "ValueError")
+        self.assertEqual(response.json()["error"]["code"], "ValueError")
 
     def test_oversized_history_window_returns_structured_error(self) -> None:
         response = self.client.get("/api/v1/history?window=" + "9" * 10000 + "m")
         self.assertEqual(response.status_code, 422)
-        self.assertEqual(response.json()["detail"]["error_type"], "ValueError")
+        self.assertEqual(response.json()["error"]["code"], "ValueError")
 
     def test_root_serves_existing_prototype(self) -> None:
         response = self.client.get("/")
@@ -505,32 +500,20 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("Math.random", source)
         self.assertNotIn("|| snapshot.gpus?.[", source)
         self.assertIn("function bindGpuSlots", source)
-        self.assertIn("数据已过期 · 离线重试中", source)
         self.assertIn("sidebar.inert", source)
         self.assertIn("mainContent.inert", source)
         self.assertIn("requestGuard.reset()", source)
         self.assertIn("!requestGuard.isCurrent(ticket)", source)
         self.assertIn("invalid_response", source)
-        self.assertIn("RESOURCE_NAMES", source)
-        self.assertIn("const CONTROL_REQUEST_TIMEOUT_MS = 30000;", source)
-        self.assertIn("resource: 'scenes', timeout: CONTROL_REQUEST_TIMEOUT_MS", source)
-        self.assertIn("overviewEnvironmentState('dev3090_asr')", source)
-        self.assertIn("overviewEnvironmentState('dev3090_tts')", source)
-        self.assertIn("item.status === 'stopped' && item.action_capabilities?.start?.ready", source)
+        self.assertIn("const SERVICE_INTERVAL_MS = 5000;", source)
+        self.assertIn("/registered-services", source)
+        self.assertIn("openServiceDialog", source)
         self.assertIn('SenseVoiceSmall<small id="gpu1AsrState">等待状态</small>', html)
         self.assertIn('IndexTTS 1.5<small id="gpu1TtsState">等待状态</small>', html)
-        self.assertIn('<h2>开发/agent场景</h2>', html)
-        self.assertIn('<strong>Krea2 生图 / H3 视频 · ASR · TTS</strong>', html)
-        self.assertIn('一键切换到开发/agent场景', html)
-        self.assertNotIn('一键切换到开发场景', html)
-        self.assertIn('只有通过安全验收并允许控制动作的环境才能启动、停止或重启', html)
-        self.assertNotIn('环境适配器尚未接入；真实运行状态', html)
-        self.assertIn("button.classList.contains('scene-quick-action') ? `一键切换到${item.name}` : '一键切换'", source)
-        self.assertIn("button.disabled = !state.controlEnabled || controlActionGuard.pending || item.current === 'active';", source)
-        self.assertIn('class="button secondary scene-quick-action" data-switch="development"', html)
-        self.assertIn('class="button primary scene-quick-action" data-switch="video"', html)
-        self.assertIn(".scene-quick-action[data-switch]", source)
-        self.assertNotIn("<span>尚未配置</span></button>", html[html.index('id="page-scenes"'):html.index('id="page-environments"')])
+        self.assertIn('id="addSceneButton"', html)
+        self.assertIn('id="addServiceButton"', html)
+        self.assertIn('管理脚本绝对路径', html)
+        self.assertNotIn('运行适配器', html)
         self.assertNotIn("setInterval(", source)
         self.assertNotIn("state.failures", source)
         self.assertIn("aria-expanded", html)
@@ -542,8 +525,8 @@ class ApiTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden_demo, html)
         for endpoint in (
-            "/auth/status", "/snapshot", "/history?window=15m", "/services",
-            "/discovery/scripts", "/audit?limit=100",
+            "/auth/status", "/snapshot", "/history?window=15m", "/registered-services",
+            "/scenes", "/operations?limit=50",
         ):
             self.assertIn(endpoint, source)
         node = shutil.which("node")
@@ -580,9 +563,14 @@ class ApiTests(unittest.TestCase):
     def test_application_starts_when_one_collector_raises_runtime_error(
         self, _host, _gpus, _docker, _ports
     ) -> None:
-        sampler = Sampler(self.settings, collector=collect_snapshot)
+        isolated_settings = replace(
+            self.settings,
+            database_path=Path(self.temp.name) / "collector-error.db",
+            manager_log_path=Path(self.temp.name) / "collector-error.log",
+        )
+        sampler = Sampler(isolated_settings, collector=collect_snapshot)
         with TestClient(
-            create_app(self.settings, sampler), client=("127.0.0.1", 50000)
+            create_app(isolated_settings, sampler), client=("127.0.0.1", 50000)
         ) as client:
             response = client.get("/api/v1/snapshot")
             self.assertEqual(response.status_code, 200)

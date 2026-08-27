@@ -5,7 +5,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import uuid
 
-from .discovery import redact_sensitive_text
+from .redaction import redact_sensitive_text
 
 
 LOGGER_NAME = "workstation_manager"

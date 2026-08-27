@@ -35,23 +35,18 @@ class Settings:
     command_timeout_seconds: float = 4.0
     critical_ports: tuple[int, ...] = DEFAULT_PORTS
     database_path: Path = PROJECT_ROOT / "data" / "workstation-manager.db"
-    discovery_scripts_path: Path = Path.home() / "Desktop" / "本地模型启动"
     session_ttl_seconds: int = 12 * 60 * 60
     cookie_secure: bool = False
-    scan_scripts_on_startup: bool = True
     request_body_max_bytes: int = 64 * 1024
     auth_concurrency_limit: int = 2
     session_max_active: int = 64
     audit_retention_max_events: int = 10_000
     audit_retention_days: int = 90
     login_failure_max_rows: int = 10_000
-    discovery_max_file_bytes: int = 4 * 1024 * 1024
-    discovery_max_entries: int = 512
-    discovery_max_shortcuts: int = 64
-    discovery_total_timeout_seconds: float = 30.0
-    control_config_path: Path = PROJECT_ROOT / "config" / "control.json"
     operation_retention_max: int = 1000
-    integrations_config_path: Path = PROJECT_ROOT / "config" / "integrations.json"
+    service_status_interval_seconds: float = 5.0
+    script_status_timeout_seconds: float = 3.0
+    script_action_timeout_seconds: float = 600.0
     manager_log_path: Path = PROJECT_ROOT / "logs" / "manager.log"
     manager_log_level: str = "INFO"
     manager_log_max_bytes: int = 5 * 1024 * 1024
@@ -267,23 +262,18 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         "WM_COMMAND_TIMEOUT_SECONDS": "command_timeout_seconds",
         "WM_CRITICAL_PORTS": "critical_ports",
         "WM_DATABASE_PATH": "database_path",
-        "WM_DISCOVERY_SCRIPTS_PATH": "discovery_scripts_path",
         "WM_SESSION_TTL_SECONDS": "session_ttl_seconds",
         "WM_COOKIE_SECURE": "cookie_secure",
-        "WM_SCAN_SCRIPTS_ON_STARTUP": "scan_scripts_on_startup",
         "WM_REQUEST_BODY_MAX_BYTES": "request_body_max_bytes",
         "WM_AUTH_CONCURRENCY_LIMIT": "auth_concurrency_limit",
         "WM_SESSION_MAX_ACTIVE": "session_max_active",
         "WM_AUDIT_RETENTION_MAX_EVENTS": "audit_retention_max_events",
         "WM_AUDIT_RETENTION_DAYS": "audit_retention_days",
         "WM_LOGIN_FAILURE_MAX_ROWS": "login_failure_max_rows",
-        "WM_DISCOVERY_MAX_FILE_BYTES": "discovery_max_file_bytes",
-        "WM_DISCOVERY_MAX_ENTRIES": "discovery_max_entries",
-        "WM_DISCOVERY_MAX_SHORTCUTS": "discovery_max_shortcuts",
-        "WM_DISCOVERY_TOTAL_TIMEOUT_SECONDS": "discovery_total_timeout_seconds",
-        "WM_CONTROL_CONFIG_PATH": "control_config_path",
         "WM_OPERATION_RETENTION_MAX": "operation_retention_max",
-        "WM_INTEGRATIONS_CONFIG_PATH": "integrations_config_path",
+        "WM_SERVICE_STATUS_INTERVAL_SECONDS": "service_status_interval_seconds",
+        "WM_SCRIPT_STATUS_TIMEOUT_SECONDS": "script_status_timeout_seconds",
+        "WM_SCRIPT_ACTION_TIMEOUT_SECONDS": "script_action_timeout_seconds",
         "WM_MANAGER_LOG_PATH": "manager_log_path",
         "WM_MANAGER_LOG_LEVEL": "manager_log_level",
         "WM_MANAGER_LOG_MAX_BYTES": "manager_log_max_bytes",
@@ -326,10 +316,6 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
             data.get("database_path", PROJECT_ROOT / "data" / "workstation-manager.db"),
             "database_path",
         ),
-        discovery_scripts_path=_path(
-            data.get("discovery_scripts_path", Path.home() / "Desktop" / "本地模型启动"),
-            "discovery_scripts_path",
-        ),
         session_ttl_seconds=_bounded_integer(
             data.get("session_ttl_seconds", 12 * 60 * 60),
             "session_ttl_seconds",
@@ -337,9 +323,6 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
             30 * 24 * 60 * 60,
         ),
         cookie_secure=_boolean(data.get("cookie_secure", False), "cookie_secure"),
-        scan_scripts_on_startup=_boolean(
-            data.get("scan_scripts_on_startup", True), "scan_scripts_on_startup"
-        ),
         request_body_max_bytes=_bounded_integer(
             data.get("request_body_max_bytes", 64 * 1024), "request_body_max_bytes", 1024, 10 * 1024 * 1024
         ),
@@ -358,30 +341,20 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         login_failure_max_rows=_bounded_integer(
             data.get("login_failure_max_rows", 10_000), "login_failure_max_rows", 100, 1_000_000
         ),
-        discovery_max_file_bytes=_bounded_integer(
-            data.get("discovery_max_file_bytes", 4 * 1024 * 1024),
-            "discovery_max_file_bytes", 1024, 1024 * 1024 * 1024,
-        ),
-        discovery_max_entries=_bounded_integer(
-            data.get("discovery_max_entries", 512), "discovery_max_entries", 1, 100_000
-        ),
-        discovery_max_shortcuts=_bounded_integer(
-            data.get("discovery_max_shortcuts", 64), "discovery_max_shortcuts", 0, 10_000
-        ),
-        discovery_total_timeout_seconds=_bounded_number(
-            data.get("discovery_total_timeout_seconds", 30),
-            "discovery_total_timeout_seconds", 0.1, 3600,
-        ),
-        control_config_path=_path(
-            data.get("control_config_path", PROJECT_ROOT / "config" / "control.json"),
-            "control_config_path",
-        ),
         operation_retention_max=_bounded_integer(
             data.get("operation_retention_max", 1000), "operation_retention_max", 100, 100_000
         ),
-        integrations_config_path=_path(
-            data.get("integrations_config_path", PROJECT_ROOT / "config" / "integrations.json"),
-            "integrations_config_path",
+        service_status_interval_seconds=_bounded_number(
+            data.get("service_status_interval_seconds", 5),
+            "service_status_interval_seconds", 1, 3600,
+        ),
+        script_status_timeout_seconds=_bounded_number(
+            data.get("script_status_timeout_seconds", 3),
+            "script_status_timeout_seconds", 0.1, 60,
+        ),
+        script_action_timeout_seconds=_bounded_number(
+            data.get("script_action_timeout_seconds", 600),
+            "script_action_timeout_seconds", 1, 24 * 60 * 60,
         ),
         manager_log_path=_local_log_path(
             data.get("manager_log_path", PROJECT_ROOT / "logs" / "manager.log"),
