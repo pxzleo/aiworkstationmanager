@@ -47,6 +47,11 @@ class ScenePayload(BaseModel):
     service_ids: list[str] = Field(default_factory=list, max_length=1000)
 
 
+class SceneOrderPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scene_ids: list[str] = Field(max_length=1000)
+
+
 class ServiceActionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: str = Field(pattern=r"^(start|stop|restart)$")
@@ -144,7 +149,6 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         resolved_database,
         ScriptRunner(resolved_settings.script_action_timeout_seconds,
                      resolved_settings.script_status_timeout_seconds),
-        resolved_settings.service_status_interval_seconds,
     )
     auth_concurrency = asyncio.Semaphore(resolved_settings.auth_concurrency_limit)
     if resolved_settings.host.lower() != "localhost" and not is_loopback(resolved_settings.host) \
@@ -253,20 +257,18 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         sampler_running = resolved_sampler._task is not None and not resolved_sampler._task.done()
         collector_errors = resolved_sampler.current.get("collector_errors", []) \
             if resolved_sampler.current else []
-        manager_error = resolved_registry.last_poll_error
         operation_error = resolved_registry.last_operation_error
         return {"version": __version__, "schema": {"api": "v1", "database": DATABASE_SCHEMA_VERSION},
-                "status": "healthy" if sampler_running and not collector_errors and not manager_error and not operation_error else "degraded",
+                "status": "healthy" if sampler_running and not collector_errors and not operation_error else "degraded",
                 "sampler_running": sampler_running,
                 "collector_errors": collector_errors,
-                "service_status_error": manager_error,
                 "service_operation_error": operation_error,
-                "service_status_interval_seconds": resolved_settings.service_status_interval_seconds,
+                "service_status_mode": "stored",
                 "sampled_at": resolved_sampler.current.get("sampled_at")
                 if resolved_sampler.current else None,
                 "readiness": {"setup_complete": resolved_auth.is_setup(),
                               "sampler": "ready" if sampler_running else "not_ready",
-                              "registered_services": "ready" if not manager_error and not operation_error else "degraded"}}
+                              "registered_services": "ready" if not operation_error else "degraded"}}
 
     @app.get("/api/v1/auth/status")
     async def auth_status(request: Request) -> dict[str, bool]:
@@ -339,7 +341,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     @app.get("/api/v1/services")
     async def registered_services(_: AuthenticatedSession = Depends(require_session)) -> dict[str, Any]:
         return {"services": resolved_registry.list_services(),
-                "poll_interval_seconds": resolved_settings.service_status_interval_seconds}
+                "status_mode": "stored"}
 
     @app.post("/api/v1/registered-services", status_code=201)
     async def create_service(payload: ServicePayload, request: Request,
@@ -359,10 +361,17 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         resolved_registry.delete_service(service_id, session.username, _client_ip(request))
         return Response(status_code=204)
 
-    @app.post("/api/v1/registered-services/refresh")
-    async def refresh_services(_: AuthenticatedSession = Depends(require_csrf)) -> dict[str, Any]:
-        await resolved_registry.refresh_all_statuses()
-        return {"services": resolved_registry.list_services()}
+    @app.post("/api/v1/registered-services/{service_id}/status")
+    async def check_service_status(
+        service_id: str, _: AuthenticatedSession = Depends(require_csrf)
+    ) -> dict[str, Any]:
+        return await resolved_registry.check_service_status(service_id)
+
+    @app.post("/api/v1/registered-services/actions/stop-all", status_code=202)
+    async def stop_all_services(request: Request,
+                                session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, str]:
+        operation_id = resolved_registry.submit_stop_all(session.username, _client_ip(request))
+        return {"operation_id": operation_id, "status": "queued"}
 
     @app.post("/api/v1/registered-services/{service_id}/actions", status_code=202)
     async def service_action(service_id: str, payload: ServiceActionPayload, request: Request,
@@ -381,6 +390,13 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
                            session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, Any]:
         return resolved_registry.create_scene(payload.model_dump(), session.username,
                                               _client_ip(request))
+
+    @app.post("/api/v1/scenes/reorder")
+    async def reorder_scenes(payload: SceneOrderPayload, request: Request,
+                             session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, Any]:
+        return {"scenes": resolved_registry.reorder_scenes(
+            payload.scene_ids, session.username, _client_ip(request)
+        )}
 
     @app.put("/api/v1/scenes/{scene_id}")
     async def update_scene(scene_id: str, payload: ScenePayload, request: Request,
@@ -401,6 +417,13 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             scene_id, session.username, _client_ip(request)
         )
         return {"operation_id": operation_id, "status": "queued"}
+
+    @app.post("/api/v1/operations/{operation_id}/cancel", status_code=202)
+    async def cancel_operation(operation_id: str, request: Request,
+                               session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, str]:
+        return resolved_registry.request_scene_cancel(
+            operation_id, session.username, _client_ip(request)
+        )
 
     @app.get("/api/v1/operations/{operation_id}")
     async def operation(operation_id: str,

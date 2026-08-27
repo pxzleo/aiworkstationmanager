@@ -15,7 +15,7 @@ python -m workstation_manager
 http://127.0.0.1:19100
 ```
 
-首次访问需要创建管理员，密码至少 12 个字符。也可以运行 `Start-Manager.ps1` 或 `Start-Manager.cmd`。计划任务安装和卸载脚本只供用户手动执行。
+首次访问需要创建管理员，密码至少 4 个字符。系统支持多个具有相同管理权限的用户。也可以运行 `Start-Manager.ps1` 或 `Start-Manager.cmd`。计划任务安装和卸载脚本只供用户手动执行。
 
 运行测试：
 
@@ -56,7 +56,7 @@ unhealthy
 unknown
 ```
 
-后端默认每 5 秒统一调用所有空闲服务的 `status`，浏览器只读取缓存。状态检查默认 3 秒超时，服务动作默认 600 秒超时。添加、编辑、手动刷新和动作完成后会立即更新状态。
+服务状态永久保存到数据库，管理器启动和页面刷新不会执行 `status`。启动、停止和重启成功后直接保存目标状态；只有用户点击单个服务的“检查状态”时才调用一次 `status`。状态检查默认 3 秒超时，服务动作默认 600 秒超时。
 
 删除服务只删除登记记录，并自动将它从全部场景移除；不会删除脚本、项目、模型或服务本身。
 
@@ -66,11 +66,11 @@ unknown
 
 切换场景时：
 
-1. 依次对所有未包含在目标场景中的服务调用 `stop`。
-2. 停止阶段会尝试全部非目标服务；任一失败则不进入启动阶段。
+1. 只对保存状态为 `running` 且未包含在目标场景中的服务调用 `stop`。
+2. 状态为 `stopped`、`unhealthy` 或 `unknown` 的非目标服务不重复停止；符合条件的停止步骤任一失败则不进入启动阶段。
 3. 停止全部成功后，按场景顺序调用目标服务的 `start`。
 4. 单个目标服务启动失败不阻止后续目标服务。
-5. 最后刷新全部状态；目标服务全为 `running` 且其他服务全为 `stopped` 时场景为已激活。
+5. 不批量调用 `status`；目标服务保存状态全为 `running` 且没有非目标服务仍为 `running` 时，场景为已激活。
 
 场景切换不自动回滚。删除场景也不会停止或删除任何服务。
 
@@ -92,9 +92,9 @@ unknown
 
 - 认证：`/api/v1/auth/status`、`setup`、`login`、`logout`、`me`
 - 资源：`/api/v1/snapshot`、`/api/v1/history?window=15m`
-- 服务：`/api/v1/registered-services`、`/refresh`、`/{id}/actions`
-- 场景：`/api/v1/scenes`、`/{id}/activate`
-- 记录：`/api/v1/operations`、`/api/v1/audit`
+- 服务：`/api/v1/registered-services`、`/{id}/status`、`/{id}/actions`、`/actions/stop-all`
+- 场景：`/api/v1/scenes`、`/reorder`、`/{id}/activate`
+- 记录：`/api/v1/operations`、`/{id}/cancel`、`/api/v1/audit`
 
 除健康检查和认证入口外，API 需要登录。写操作需要当前会话的 CSRF 令牌。
 
@@ -102,7 +102,6 @@ unknown
 
 完整字段见 `config/settings.example.json`。主要新增字段：
 
-- `service_status_interval_seconds`：默认 5
 - `script_status_timeout_seconds`：默认 3
 - `script_action_timeout_seconds`：默认 600
 

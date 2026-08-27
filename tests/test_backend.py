@@ -44,7 +44,6 @@ class ConfigTests(unittest.TestCase):
                 "WM_AUDIT_RETENTION_MAX_EVENTS": "500",
                 "WM_AUDIT_RETENTION_DAYS": "30",
                 "WM_LOGIN_FAILURE_MAX_ROWS": "600",
-                "WM_SERVICE_STATUS_INTERVAL_SECONDS": "5",
                 "WM_SCRIPT_STATUS_TIMEOUT_SECONDS": "3",
                 "WM_SCRIPT_ACTION_TIMEOUT_SECONDS": "600",
             }
@@ -58,7 +57,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.audit_retention_max_events, 500)
         self.assertEqual(settings.audit_retention_days, 30)
         self.assertEqual(settings.login_failure_max_rows, 600)
-        self.assertEqual(settings.service_status_interval_seconds, 5)
         self.assertEqual(settings.script_status_timeout_seconds, 3)
         self.assertEqual(settings.script_action_timeout_seconds, 600)
 
@@ -460,6 +458,12 @@ class ApiTests(unittest.TestCase):
         services = self.client.get("/api/v1/host-services").json()
         self.assertEqual(services["containers"][0]["name"], "example")
         self.assertEqual(services["listening_ports"][0]["port"], 8080)
+
+    def test_setup_accepts_four_character_password(self) -> None:
+        response = self.client.post(
+            "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+        )
+        self.assertEqual(response.status_code, 201, response.text)
 
     def test_health_is_degraded_when_snapshot_has_collector_errors(self) -> None:
         self.client.app.state.sampler.current["collector_errors"] = [

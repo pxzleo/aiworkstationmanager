@@ -13,7 +13,7 @@ from .database import Database, DatabaseError, utc_now
 
 
 PBKDF2_ITERATIONS = 310_000
-MIN_PASSWORD_LENGTH = 12
+MIN_PASSWORD_LENGTH = 4
 LOGIN_FAILURE_LIMIT = 5
 LOGIN_FAILURE_WINDOW_MINUTES = 5
 SESSION_COOKIE = "wm_session"
@@ -106,7 +106,7 @@ class AuthService:
                            ) VALUES (1, ?, ?, ?, ?, ?)""",
                         (username, digest, salt, PBKDF2_ITERATIONS, utc_now()),
                     )
-                    self._insert_session(connection, token, csrf, expires_at, source_ip)
+                    self._insert_session(connection, 1, token, csrf, expires_at, source_ip)
                     self.database.insert_audit(
                         connection, source_ip, "auth.setup", "success", {"username": username}
                     )
@@ -117,6 +117,43 @@ class AuthService:
             raise DatabaseError(f"创建管理员失败: {exc}") from exc
         return token, csrf, expires_at
 
+    def create_user(self, username: str, password: str, source_ip: str) -> dict[str, Any]:
+        if not is_loopback(source_ip):
+            self.database.append_audit(
+                source_ip, "auth.user.create", "failure", {"reason": "non_loopback"}
+            )
+            raise AuthError(403, "loopback_required", "新增用户仅允许从本机执行")
+        try:
+            username, password = self.validate_credentials(username, password)
+        except AuthError as exc:
+            self.database.append_audit(
+                source_ip, "auth.user.create", "failure", {"reason": exc.code}
+            )
+            raise
+        salt = secrets.token_bytes(32)
+        digest = password_digest(password, salt)
+        try:
+            with self.database.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        """INSERT INTO admin_user(
+                               username,password_hash,password_salt,iterations,created_at
+                           ) VALUES (?,?,?,?,?)""",
+                        (username, digest, salt, PBKDF2_ITERATIONS, utc_now()),
+                    )
+                    self.database.insert_audit(
+                        connection, source_ip, "auth.user.create", "success",
+                        {"username": username},
+                    )
+        except sqlite3.IntegrityError as exc:
+            self.database.append_audit(
+                source_ip, "auth.user.create", "failure", {"reason": "username_exists"}
+            )
+            raise AuthError(409, "username_exists", "用户名已存在") from exc
+        except (sqlite3.Error, TypeError, ValueError) as exc:
+            raise DatabaseError(f"创建用户失败: {exc}") from exc
+        return {"id": int(cursor.lastrowid), "username": username}
+
     def login(self, username: str, password: str, source_ip: str) -> tuple[str, str, str]:
         since = (datetime.now(timezone.utc) - timedelta(minutes=LOGIN_FAILURE_WINDOW_MINUTES)).isoformat()
         if self.database.is_login_rate_limited(source_ip, since, LOGIN_FAILURE_LIMIT):
@@ -126,7 +163,7 @@ class AuthService:
         try:
             with self.database.connect() as connection:
                 row = connection.execute(
-                    """SELECT username, password_hash, password_salt, iterations
+                    """SELECT id, username, password_hash, password_salt, iterations
                        FROM admin_user WHERE username = ?""",
                     (username.strip(),),
                 ).fetchone()
@@ -147,7 +184,9 @@ class AuthService:
         try:
             with self.database.connect() as connection:
                 with connection:
-                    self._insert_session(connection, token, csrf, expires_at, source_ip)
+                    self._insert_session(
+                        connection, int(row["id"]), token, csrf, expires_at, source_ip
+                    )
                     self.database.insert_audit(
                         connection,
                         source_ip,
@@ -168,6 +207,7 @@ class AuthService:
     def _insert_session(
         self,
         connection: sqlite3.Connection,
+        admin_id: int,
         token: str,
         csrf: str,
         expires_at: str,
@@ -178,8 +218,8 @@ class AuthService:
         connection.execute(
             """INSERT INTO sessions(
                    token_hash, admin_id, csrf_hash, created_at, expires_at, source_ip
-               ) VALUES (?, 1, ?, ?, ?, ?)""",
-            (secret_hash(token), secret_hash(csrf), now, expires_at, source_ip),
+               ) VALUES (?, ?, ?, ?, ?, ?)""",
+            (secret_hash(token), admin_id, secret_hash(csrf), now, expires_at, source_ip),
         )
         connection.execute(
             """INSERT INTO session_csrf_tokens(

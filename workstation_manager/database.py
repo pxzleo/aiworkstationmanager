@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 13
 
 
 class DatabaseError(RuntimeError):
@@ -89,6 +89,9 @@ class Database:
                         8: self._no_op_migration,
                         9: self._no_op_migration,
                         10: self._migrate_to_10,
+                        11: self._migrate_to_11,
+                        12: self._migrate_to_12,
+                        13: self._migrate_to_13,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -255,6 +258,51 @@ class Database:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_scene_services_order ON scene_services(scene_id, start_order)"
         )
+
+    @classmethod
+    def _migrate_to_11(cls, connection: sqlite3.Connection) -> None:
+        cls._ensure_column(connection, "scenes", "display_order", "INTEGER NOT NULL DEFAULT 0")
+        rows = connection.execute(
+            "SELECT id FROM scenes ORDER BY name COLLATE NOCASE, id"
+        ).fetchall()
+        for display_order, row in enumerate(rows):
+            connection.execute(
+                "UPDATE scenes SET display_order=? WHERE id=?", (display_order, row["id"])
+            )
+
+    @classmethod
+    def _migrate_to_12(cls, connection: sqlite3.Connection) -> None:
+        cls._ensure_column(
+            connection, "registered_services", "recorded_state",
+            "TEXT NOT NULL DEFAULT 'unknown'",
+        )
+        cls._ensure_column(connection, "registered_services", "state_updated_at", "TEXT")
+        cls._ensure_column(connection, "registered_services", "state_error", "TEXT")
+
+    @classmethod
+    def _migrate_to_13(cls, connection: sqlite3.Connection) -> None:
+        cls._migrate_to_2(connection)
+        cls._migrate_to_5(connection)
+        connection.execute("DELETE FROM sessions")
+        connection.execute(
+            """CREATE TABLE admin_user_v13 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash BLOB NOT NULL,
+                password_salt BLOB NOT NULL,
+                iterations INTEGER NOT NULL DEFAULT 310000,
+                created_at TEXT NOT NULL DEFAULT ''
+            )"""
+        )
+        connection.execute(
+            """INSERT INTO admin_user_v13(
+                   id,username,password_hash,password_salt,iterations,created_at
+               )
+               SELECT id,username,password_hash,password_salt,iterations,created_at
+               FROM admin_user"""
+        )
+        connection.execute("DROP TABLE admin_user")
+        connection.execute("ALTER TABLE admin_user_v13 RENAME TO admin_user")
 
     @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
@@ -442,6 +490,35 @@ class Database:
         except sqlite3.Error as exc:
             raise DatabaseError(f"更新操作任务失败: {exc}") from exc
 
+    def request_scene_operation_cancel(
+        self, operation_id: str, username: str, source_ip: str,
+    ) -> str:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute(
+                        "SELECT kind,status,result FROM operations WHERE id=?", (operation_id,)
+                    ).fetchone()
+                    if row is None:
+                        return "missing"
+                    if row["kind"] != "scene":
+                        return "not_scene"
+                    if row["status"] not in {"queued", "running"}:
+                        return "finished"
+                    if row["result"] == "cancel_requested":
+                        return "already_requested"
+                    connection.execute(
+                        "UPDATE operations SET result='cancel_requested' WHERE id=?", (operation_id,)
+                    )
+                    self.insert_audit(
+                        connection, source_ip, "management.scene.cancel", "success",
+                        {"operation_id": operation_id, "requested_by": username},
+                    )
+                    return "accepted"
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"记录场景终止请求失败: {exc}") from exc
+
     def create_operation_step(
         self, operation_id: str, sequence: int, phase: str, target_id: str,
         action: str, status: str = "running", before_state: str | None = None,
@@ -589,15 +666,36 @@ class Database:
                 with connection:
                     cursor = connection.execute(
                         """UPDATE registered_services SET name=?,description=?,script_path=?,
-                               gpu_label=?,port=?,ui_url=?,updated_at=? WHERE id=?""",
+                               gpu_label=?,port=?,ui_url=?,
+                               recorded_state=CASE WHEN script_path<>? THEN 'unknown' ELSE recorded_state END,
+                               state_updated_at=CASE WHEN script_path<>? THEN NULL ELSE state_updated_at END,
+                               state_error=CASE WHEN script_path<>? THEN NULL ELSE state_error END,
+                               updated_at=? WHERE id=?""",
                         (item["name"], item["description"], item["script_path"],
-                         item["gpu_label"], item["port"], item["ui_url"], utc_now(), service_id),
+                         item["gpu_label"], item["port"], item["ui_url"],
+                         item["script_path"], item["script_path"], item["script_path"],
+                         utc_now(), service_id),
                     )
                     return cursor.rowcount == 1
         except sqlite3.IntegrityError as exc:
             raise DatabaseError("服务名称已存在") from exc
         except (sqlite3.Error, KeyError) as exc:
             raise DatabaseError(f"更新已登记服务失败: {exc}") from exc
+
+    def update_registered_service_status(
+        self, service_id: str, state: str, error: str | None
+    ) -> bool:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        """UPDATE registered_services
+                           SET recorded_state=?,state_updated_at=?,state_error=? WHERE id=?""",
+                        (state, utc_now(), error, service_id),
+                    )
+                    return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"保存服务状态失败: {exc}") from exc
 
     def delete_registered_service(self, service_id: str) -> bool:
         try:
@@ -614,7 +712,7 @@ class Database:
         try:
             with self.connect() as connection:
                 rows = connection.execute(
-                    "SELECT * FROM scenes ORDER BY name COLLATE NOCASE, id"
+                    "SELECT * FROM scenes ORDER BY display_order, id"
                 ).fetchall()
                 result: list[dict[str, Any]] = []
                 for row in rows:
@@ -640,9 +738,15 @@ class Database:
         try:
             with self.connect() as connection:
                 with connection:
+                    row = connection.execute(
+                        "SELECT COALESCE(MAX(display_order), -1) + 1 AS next_order FROM scenes"
+                    ).fetchone()
                     connection.execute(
-                        "INSERT INTO scenes(id,name,description,created_at,updated_at) VALUES (?,?,?,?,?)",
-                        (item["id"], item["name"], item["description"], now, now),
+                        """INSERT INTO scenes(
+                               id,name,description,display_order,created_at,updated_at
+                           ) VALUES (?,?,?,?,?,?)""",
+                        (item["id"], item["name"], item["description"],
+                         row["next_order"], now, now),
                     )
                     self._replace_scene_services(connection, item["id"], item["service_ids"])
         except sqlite3.IntegrityError as exc:
@@ -675,6 +779,31 @@ class Database:
                     return cursor.rowcount == 1
         except sqlite3.Error as exc:
             raise DatabaseError(f"删除场景失败: {exc}") from exc
+
+    def reorder_scenes(self, scene_ids: list[str], username: str, source_ip: str) -> None:
+        if len(scene_ids) != len(set(scene_ids)):
+            raise DatabaseError("场景排序包含重复 ID")
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    known = {
+                        row["id"] for row in connection.execute("SELECT id FROM scenes").fetchall()
+                    }
+                    if set(scene_ids) != known:
+                        raise DatabaseError("场景排序必须包含全部现有场景")
+                    now = utc_now()
+                    for display_order, scene_id in enumerate(scene_ids):
+                        connection.execute(
+                            "UPDATE scenes SET display_order=?,updated_at=? WHERE id=?",
+                            (display_order, now, scene_id),
+                        )
+                    self.insert_audit(
+                        connection, source_ip, "management.scene.reorder", "success",
+                        {"scene_ids": scene_ids, "requested_by": username},
+                    )
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"保存场景排序失败: {exc}") from exc
 
     @staticmethod
     def _replace_scene_services(

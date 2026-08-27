@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#0b0f10">
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260827-5">
 </head>
 <body class="auth-pending">
   <svg class="svg-sprite" aria-hidden="true">
@@ -73,11 +73,16 @@
             <div>
               <p class="eyebrow">当前工作场景</p>
               <h1><span class="scene-indicator"></span><span id="activeSceneName">场景检测尚未配置</span></h1>
-              <p id="activeSceneSummary">场景状态由已登记服务的脚本状态计算。</p>
+              <p id="activeSceneSummary">场景状态由已登记服务最后保存的状态计算。</p>
             </div>
             <div class="heading-actions">
               <button class="button secondary" data-nav="scenes">查看场景</button>
-              <button class="button primary" id="switchSceneButton" disabled title="等待场景状态加载"><svg><use href="#i-layers"/></svg><span>一键切换</span></button>
+              <label class="overview-scene-switch" title="选择后立即切换场景">
+                <svg><use href="#i-layers"/></svg>
+                <select id="overviewSceneSelect" aria-label="切换场景" disabled>
+                  <option value="">切换场景</option>
+                </select>
+              </label>
             </div>
           </div>
 
@@ -135,7 +140,7 @@
 
           <div class="overview-lower">
             <section class="running-section">
-              <div class="section-heading"><div><h2>已登记服务</h2><p>状态由后端每 5 秒统一调用管理脚本更新</p></div><button class="text-button" data-nav="environments">全部服务 <svg><use href="#i-chevron"/></svg></button></div>
+              <div class="section-heading"><div><h2>已登记服务</h2><p>页面读取已保存状态，不会自动执行状态脚本</p></div><button class="text-button" data-nav="environments">全部服务 <svg><use href="#i-chevron"/></svg></button></div>
               <div class="service-list" id="serviceList">
                 <p class="empty-state">登录后加载真实服务状态。</p>
               </div>
@@ -151,17 +156,17 @@
         </section>
 
         <section class="page" id="page-scenes" data-title="工作场景">
-          <div class="page-heading"><div><p class="eyebrow">服务组合</p><h1>工作场景</h1><p>场景按配置顺序停止未选服务，再启动所需服务。</p></div><button class="button primary" id="addSceneButton"><span>＋</span>添加场景</button></div>
+          <div class="page-heading"><div><p class="eyebrow">服务组合</p><h1>工作场景</h1><p>新场景添加在末尾；拖动卡片或使用上移、下移调整顺序。</p></div><button class="button primary" id="addSceneButton"><span>＋</span>添加场景</button></div>
           <div class="scene-selector" id="sceneList"><p class="empty-state">尚未添加场景。</p></div>
           <section class="switch-rules">
             <div class="section-heading"><div><h2>切换规则</h2><p>不执行自动回滚，最终状态和失败原因写入操作日志。</p></div></div>
-            <div class="rule-flow"><span><b>01</b>停止未选服务<small>逐个调用 stop</small></span><i></i><span><b>02</b>检查停止结果<small>任一失败则不启动</small></span><i></i><span><b>03</b>启动目标服务<small>按场景顺序调用 start</small></span><i></i><span><b>04</b>刷新最终状态<small>标记激活或部分完成</small></span></div>
+            <div class="rule-flow"><span><b>01</b>停止未选服务<small>逐个调用 stop</small></span><i></i><span><b>02</b>记录停止结果<small>任一失败则不启动</small></span><i></i><span><b>03</b>启动目标服务<small>按场景顺序调用 start</small></span><i></i><span><b>04</b>保存最终状态<small>标记激活或部分完成</small></span></div>
           </section>
         </section>
 
         <section class="page" id="page-environments" data-title="已登记服务">
-          <div class="page-heading"><div><p class="eyebrow">脚本服务</p><h1>已登记服务</h1><p>一个管理脚本提供 start、stop、restart 和 status 四个动作。</p></div><button class="button primary" id="addServiceButton"><span>＋</span>添加服务</button></div>
-          <div class="toolbar"><div class="search"><svg><use href="#i-search"/></svg><input id="serviceSearch" type="search" placeholder="搜索服务、说明、GPU 或端口"></div><div class="filter-group" id="serviceFilters"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="running">运行中</button><button class="filter" data-filter="unhealthy">异常</button><button class="filter" data-filter="stopped">已停止</button></div></div>
+          <div class="page-heading"><div><p class="eyebrow">脚本服务</p><h1>已登记服务</h1><p>启停结果永久保存；status 仅在点击“检查状态”时调用一次。</p></div><div class="heading-actions"><button class="button secondary" id="stopAllServicesButton">停止全部服务</button><button class="button primary" id="addServiceButton"><span>＋</span>添加服务</button></div></div>
+            <div class="toolbar"><div class="search"><svg><use href="#i-search"/></svg><input id="serviceSearch" type="search" placeholder="搜索服务、说明、GPU 或端口"></div><div class="filter-group" id="serviceFilters"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="running">已启动</button><button class="filter" data-filter="unhealthy">异常</button><button class="filter" data-filter="stopped">已停止</button></div></div>
           <div class="data-table env-table">
             <div class="table-head"><span>服务名称</span><span>说明</span><span>GPU</span><span>端口</span><span>状态</span><span></span></div>
             <div id="registeredServiceRows"><p class="empty-state">尚未添加服务。</p></div>
@@ -194,9 +199,9 @@
         <label for="usernameInput">管理员用户名</label>
         <input id="usernameInput" name="username" autocomplete="username" minlength="3" maxlength="64" required>
         <label for="passwordInput">密码</label>
-        <input id="passwordInput" name="password" type="password" autocomplete="current-password" minlength="12" maxlength="1024" required>
+        <input id="passwordInput" name="password" type="password" autocomplete="current-password" minlength="4" maxlength="1024" required>
         <label id="confirmPasswordLabel" for="confirmPasswordInput" hidden>确认密码</label>
-        <input id="confirmPasswordInput" name="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="1024" hidden>
+        <input id="confirmPasswordInput" name="confirmPassword" type="password" autocomplete="new-password" minlength="4" maxlength="1024" hidden>
         <p class="auth-error" id="authError" role="alert"></p>
         <button class="button primary" id="authSubmit" type="submit">继续</button>
       </form>
@@ -229,7 +234,18 @@
       <div class="dialog-actions"><button class="button secondary" type="button" data-close="sceneDialog">取消</button><button class="button primary" type="submit">保存场景</button></div>
     </form>
   </dialog>
+  <dialog class="control-dialog scene-progress-dialog" id="sceneProgressDialog">
+    <section>
+      <p class="eyebrow">场景切换进度</p>
+      <div class="scene-progress-heading"><div><h2 id="sceneProgressTitle">正在切换场景</h2><p id="sceneProgressSummary">正在准备服务操作。</p></div><strong id="sceneProgressPercent">0%</strong></div>
+      <div class="scene-progress-track" aria-hidden="true"><i id="sceneProgressBar"></i></div>
+      <div class="scene-progress-current"><span class="status-dot live"></span><div><small>当前步骤</small><strong id="sceneProgressCurrent">等待管理器响应</strong></div></div>
+      <ol class="scene-progress-log" id="sceneProgressLog" aria-live="polite"><li>等待第一条服务操作记录。</li></ol>
+      <p class="scene-progress-note">终止请求会在当前脚本执行完成后生效，已经完成的服务动作不会自动回滚。</p>
+      <div class="dialog-actions"><button class="button secondary" id="cancelSceneSwitchButton" type="button">终止切换并返回</button><button class="button primary" id="closeSceneProgressButton" type="button" hidden>返回工作场景</button></div>
+    </section>
+  </dialog>
   <script src="request-guard.js?v=20260827-5"></script>
-  <script src="app.js?v=20260827-6"></script>
+  <script src="app.js?v=20260827-12"></script>
 </body>
 </html>

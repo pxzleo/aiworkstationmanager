@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .database import Database, DatabaseError, OperationBusyError, utc_now
+from .redaction import redact_value
 
 
 SERVICE_STATES = {"running", "stopped", "unhealthy", "unknown"}
@@ -86,6 +88,9 @@ class ScriptResult:
 
 
 class ScriptRunner:
+    OUTPUT_LIMIT = 4096
+    OUTPUT_READ_BYTES = OUTPUT_LIMIT * 4 + 3
+
     def __init__(self, action_timeout_seconds: float = 600.0,
                  status_timeout_seconds: float = 3.0) -> None:
         self.action_timeout_seconds = action_timeout_seconds
@@ -116,26 +121,39 @@ class ScriptRunner:
         invocation = f'call "{path}" {action}'
         return [executable, "/d", "/s", "/c", invocation]
 
+    @classmethod
+    def _read_output_tail(cls, stream: Any) -> str:
+        stream.flush()
+        size = stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, size - cls.OUTPUT_READ_BYTES))
+        return stream.read(cls.OUTPUT_READ_BYTES).decode(
+            "utf-8", errors="replace"
+        )[-cls.OUTPUT_LIMIT:].strip()
+
     def run(self, script_path: str, action: str) -> ScriptResult:
         if action not in SERVICE_ACTIONS | {"status"}:
             raise RegistryError(422, "invalid_action", "脚本动作无效")
         path = self.validate_path(script_path)
         timeout = self.status_timeout_seconds if action == "status" else self.action_timeout_seconds
         try:
-            completed = subprocess.run(
-                self._command(path, action), cwd=path.parent, shell=False,
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=timeout, check=False,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
+            with tempfile.TemporaryFile(mode="w+b") as stdout_file, \
+                    tempfile.TemporaryFile(mode="w+b") as stderr_file:
+                completed = subprocess.run(
+                    self._command(path, action), cwd=path.parent, shell=False,
+                    stdout=stdout_file, stderr=stderr_file,
+                    timeout=timeout, check=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                stdout = self._read_output_tail(stdout_file)
+                stderr = self._read_output_tail(stderr_file)
         except subprocess.TimeoutExpired as exc:
             raise RegistryError(504, "script_timeout", f"脚本动作 {action} 执行超时") from exc
         except OSError as exc:
             raise RegistryError(500, "script_launch_failed", f"无法启动管理脚本: {exc}") from exc
         return ScriptResult(
             completed.returncode,
-            completed.stdout[-4096:].strip(),
-            completed.stderr[-4096:].strip(),
+            stdout,
+            stderr,
         )
 
 
@@ -185,54 +203,55 @@ def validate_scene_input(payload: dict[str, Any], database: Database) -> dict[st
 
 
 class RegisteredServiceManager:
-    def __init__(self, database: Database, runner: ScriptRunner | None = None,
-                 poll_interval_seconds: float = 5.0) -> None:
+    def __init__(self, database: Database, runner: ScriptRunner | None = None) -> None:
         self.database = database
         self.runner = runner or ScriptRunner()
-        self.poll_interval_seconds = poll_interval_seconds
-        self.statuses: dict[str, dict[str, Any]] = {}
-        self._poll_task: asyncio.Task[None] | None = None
+        self.statuses = {
+            item["id"]: self._stored_status(item)
+            for item in self.database.list_registered_services()
+        }
         self._operation_tasks: set[asyncio.Task[None]] = set()
+        self._cancel_requests: dict[str, asyncio.Event] = {}
         self._operation_pending = False
         self._busy_services: set[str] = set()
         self._service_locks: dict[str, asyncio.Lock] = {}
-        self._stop_event = asyncio.Event()
         self._instance_lock = ManagerInstanceLock(self.database.path)
-        self.last_poll_error: str | None = None
         self.last_operation_error: str | None = None
+
+    @staticmethod
+    def _stored_status(service: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "state": service.get("recorded_state", "unknown"),
+            "checked_at": service.get("state_updated_at"),
+            "error": service.get("state_error"),
+        }
+
+    def _set_status(self, service_id: str, state: str, error: str | None = None) -> dict[str, Any]:
+        if state not in SERVICE_STATES:
+            raise RegistryError(500, "invalid_stored_state", "无法保存无效的服务状态")
+        safe_error = redact_value(error) if error is not None else None
+        if not self.database.update_registered_service_status(service_id, state, safe_error):
+            raise RegistryError(404, "service_not_found", "已登记服务不存在")
+        status = {"state": state, "checked_at": utc_now(), "error": safe_error}
+        self.statuses[service_id] = status
+        return status
 
     async def start(self) -> None:
         self._instance_lock.acquire()
-        self._stop_event.clear()
         try:
             self.database.interrupt_simple_operations()
-            await self.refresh_all_statuses()
-            self._poll_task = asyncio.create_task(self._poll_loop())
+            self.statuses = {
+                item["id"]: self._stored_status(item)
+                for item in self.database.list_registered_services()
+            }
         except Exception:
             self._instance_lock.release()
             raise
 
     async def shutdown(self) -> None:
-        self._stop_event.set()
-        if self._poll_task is not None:
-            await asyncio.gather(self._poll_task, return_exceptions=True)
-            self._poll_task = None
         if self._operation_tasks:
             await asyncio.gather(*tuple(self._operation_tasks), return_exceptions=True)
         self._instance_lock.release()
-
-    async def _poll_loop(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=self.poll_interval_seconds
-                )
-            except asyncio.TimeoutError:
-                try:
-                    await self.refresh_all_statuses()
-                    self.last_poll_error = None
-                except DatabaseError as exc:
-                    self.last_poll_error = str(exc)
 
     async def _probe_status(self, service: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -258,14 +277,18 @@ class RegisteredServiceManager:
         service_id = service["id"]
         async with self._service_lock(service_id):
             status = await self._probe_status(service)
-            self.statuses[service_id] = status
-            return status
+            return self._set_status(service_id, status["state"], status["error"])
 
-    async def refresh_all_statuses(self) -> None:
-        services = self.database.list_registered_services()
-        await asyncio.gather(*(self.refresh_status(item) for item in services))
-        known = {item["id"] for item in services}
-        self.statuses = {key: value for key, value in self.statuses.items() if key in known}
+    async def check_service_status(self, service_id: str) -> dict[str, Any]:
+        self._require_idle()
+        service = self._require_service(service_id)
+        self._operation_pending = True
+        self._busy_services.add(service_id)
+        try:
+            return await self.refresh_status(service)
+        finally:
+            self._busy_services.discard(service_id)
+            self._operation_pending = False
 
     def list_services(self) -> list[dict[str, Any]]:
         result = []
@@ -274,7 +297,8 @@ class RegisteredServiceManager:
             enriched["status"] = self.statuses.get(
                 item["id"], {"state": "unknown", "checked_at": None, "error": None}
             )
-            enriched["busy"] = self._operation_pending
+            enriched["busy"] = item["id"] in self._busy_services
+            enriched["operation_pending"] = self._operation_pending
             result.append(enriched)
         return result
 
@@ -288,7 +312,9 @@ class RegisteredServiceManager:
         self.database.append_audit(source_ip, "management.service.create", "success",
                                    {"service_id": item["id"], "name": item["name"],
                                     "requested_by": username})
-        await self.refresh_status(item)
+        self.statuses[item["id"]] = self._stored_status(
+            self.database.get_registered_service(item["id"]) or item
+        )
         return next(service for service in self.list_services() if service["id"] == item["id"])
 
     async def update_service(self, service_id: str, payload: dict[str, Any],
@@ -305,8 +331,10 @@ class RegisteredServiceManager:
         self.database.append_audit(source_ip, "management.service.update", "success",
                                    {"service_id": service_id, "name": item["name"],
                                     "requested_by": username})
-        service = self._require_service(service_id)
-        await self.refresh_status(service)
+        stored = self.database.get_registered_service(service_id)
+        if stored is None:
+            raise RegistryError(404, "service_not_found", "已登记服务不存在")
+        self.statuses[service_id] = self._stored_status(stored)
         return next(value for value in self.list_services() if value["id"] == service_id)
 
     def delete_service(self, service_id: str, username: str, source_ip: str) -> None:
@@ -359,6 +387,16 @@ class RegisteredServiceManager:
                                    {"scene_id": scene_id, "name": scene["name"],
                                     "requested_by": username})
 
+    def reorder_scenes(self, scene_ids: list[str], username: str, source_ip: str) -> list[dict[str, Any]]:
+        self._require_idle()
+        known = {scene["id"] for scene in self.database.list_scenes()}
+        if len(scene_ids) != len(set(scene_ids)) or any(
+            ID_RE.fullmatch(scene_id) is None for scene_id in scene_ids
+        ) or set(scene_ids) != known:
+            raise RegistryError(422, "invalid_scene_order", "场景排序必须包含全部现有场景且不能重复")
+        self.database.reorder_scenes(scene_ids, username, source_ip)
+        return self.list_scenes()
+
     def list_scenes(self) -> list[dict[str, Any]]:
         return [self._scene_with_state(item) for item in self.database.list_scenes()]
 
@@ -370,9 +408,25 @@ class RegisteredServiceManager:
         matches = True
         for service in services:
             state = self.statuses.get(service["id"], {}).get("state", "unknown")
-            expected = "running" if service["id"] in target else "stopped"
-            matches = matches and state == expected
+            if service["id"] in target:
+                matches = matches and state == "running"
+            else:
+                matches = matches and state != "running"
         item = dict(scene)
+        service_map = {service["id"]: service for service in services}
+        item["services"] = [
+            {
+                "id": service_id,
+                "name": service_map[service_id]["name"],
+                "ui_url": service_map[service_id]["ui_url"],
+                "status": self.statuses.get(
+                    service_id, {"state": "unknown", "checked_at": None, "error": None}
+                ),
+                "busy": service_id in self._busy_services,
+            }
+            for service_id in scene["service_ids"]
+            if service_id in service_map
+        ]
         item["state"] = "active" if matches else "partial"
         item["busy"] = self._operation_pending
         return item
@@ -390,19 +444,51 @@ class RegisteredServiceManager:
         return self._submit("scene", scene_id, "activate", username, source_ip,
                             self._run_scene_operation)
 
+    def submit_stop_all(self, username: str, source_ip: str) -> str:
+        return self._submit("service_group", "all", "stop_all", username, source_ip,
+                            self._run_stop_all_operation)
+
+    def request_scene_cancel(self, operation_id: str, username: str,
+                             source_ip: str) -> dict[str, str]:
+        if ID_RE.fullmatch(operation_id) is None:
+            raise RegistryError(404, "operation_not_found", "操作记录不存在")
+        cancel_event = self._cancel_requests.get(operation_id)
+        if cancel_event is None:
+            operation = self.database.get_operation(operation_id)
+            if operation is None:
+                raise RegistryError(404, "operation_not_found", "操作记录不存在")
+            if operation["kind"] != "scene":
+                raise RegistryError(409, "operation_not_cancellable", "只能终止场景切换")
+            raise RegistryError(409, "operation_finished", "场景切换已经结束")
+        result = self.database.request_scene_operation_cancel(
+            operation_id, username, source_ip
+        )
+        if result == "missing":
+            raise RegistryError(404, "operation_not_found", "操作记录不存在")
+        if result == "not_scene":
+            raise RegistryError(409, "operation_not_cancellable", "只能终止场景切换")
+        if result == "finished":
+            raise RegistryError(409, "operation_finished", "场景切换已经结束")
+        cancel_event.set()
+        return {"operation_id": operation_id, "status": "cancellation_requested"}
+
     def _submit(self, kind: str, target_id: str, action: str, username: str,
                 source_ip: str, worker: Any) -> str:
         if self._operation_pending:
             raise RegistryError(409, "operation_busy", "已有服务或场景操作正在执行")
         operation_id = uuid.uuid4().hex
         self._operation_pending = True
+        cancel_event = asyncio.Event()
+        self._cancel_requests[operation_id] = cancel_event
         try:
             self.database.create_operation(operation_id, kind, target_id, action, username, source_ip)
         except OperationBusyError as exc:
             self._operation_pending = False
+            self._cancel_requests.pop(operation_id, None)
             raise RegistryError(409, "operation_busy", str(exc)) from exc
         except Exception:
             self._operation_pending = False
+            self._cancel_requests.pop(operation_id, None)
             raise
         task = asyncio.create_task(
             self._guard_operation(worker, operation_id, target_id, action)
@@ -432,6 +518,7 @@ class RegisteredServiceManager:
             else:
                 self.last_operation_error = None
         finally:
+            self._cancel_requests.pop(operation_id, None)
             if release_pending:
                 self._operation_pending = False
 
@@ -445,35 +532,38 @@ class RegisteredServiceManager:
             self._busy_services.add(service_id)
             try:
                 result = await asyncio.to_thread(self.runner.run, service["script_path"], action)
-                status = await self._probe_status(service)
-                self.statuses[service_id] = status
                 expected = "stopped" if action == "stop" else "running"
-                success = result.returncode == 0 and status["state"] == expected
+                success = result.returncode == 0
                 if result.returncode != 0:
                     error = result.stderr or result.stdout or f"脚本退出码 {result.returncode}"
-                elif status["state"] != expected:
-                    error = f"动作完成后状态为 {status['state']}，预期 {expected}"
-                    if status.get("error"):
-                        error = f"{error}；{status['error']}"
                 else:
                     error = None
+                status = self._set_status(
+                    service_id, expected if success else "unknown", error
+                )
                 self.database.finish_operation_step(
                     operation_id, sequence, "succeeded" if success else "failed",
                     status["state"], "success" if success else "failure", error,
                 )
                 return success
             except RegistryError as exc:
+                try:
+                    self._set_status(service_id, "unknown", exc.message)
+                except (DatabaseError, RegistryError):
+                    self.statuses[service_id] = {"state": "unknown", "checked_at": utc_now(),
+                                                 "error": exc.message}
                 self.database.finish_operation_step(operation_id, sequence, "failed", "unknown",
                                                     "failure", exc.message)
-                self.statuses[service_id] = {"state": "unknown", "checked_at": utc_now(),
-                                             "error": exc.message}
                 return False
             except Exception as exc:
                 message = f"{type(exc).__name__}: {exc}"
+                try:
+                    self._set_status(service_id, "unknown", message)
+                except (DatabaseError, RegistryError):
+                    self.statuses[service_id] = {"state": "unknown", "checked_at": utc_now(),
+                                                 "error": message}
                 self.database.finish_operation_step(operation_id, sequence, "failed", "unknown",
                                                     "failure", message)
-                self.statuses[service_id] = {"state": "unknown", "checked_at": utc_now(),
-                                             "error": message}
                 return False
             finally:
                 self._busy_services.discard(service_id)
@@ -488,7 +578,29 @@ class RegisteredServiceManager:
         self.database.finish_operation_with_audit(
             operation_id, "succeeded" if success else "failed",
             "success" if success else "failure", before, after,
-            None if success else "服务脚本执行失败或最终状态不符合预期",
+            None if success else "服务脚本执行失败",
+        )
+
+    async def _run_stop_all_operation(self, operation_id: str, _: str, __: str) -> None:
+        before = {key: value.get("state", "unknown") for key, value in self.statuses.items()}
+        self.database.update_operation(operation_id, status="running", started_at=utc_now(),
+                                       before_state=str(before))
+        services = self.database.list_registered_services()
+        success = True
+        for sequence, service in enumerate(services, start=1):
+            success = await self._run_script_action(
+                operation_id, sequence, "stop_all", service, "stop"
+            ) and success
+        all_stopped = all(
+            self.statuses.get(service["id"], {}).get("state") == "stopped"
+            for service in services
+        )
+        success = success and all_stopped
+        self.database.finish_operation_with_audit(
+            operation_id, "succeeded" if success else "failed",
+            "success" if success else "partial", str(before),
+            "stopped" if all_stopped else "partial",
+            None if success else "部分服务未能停止",
         )
 
     async def _run_scene_operation(self, operation_id: str, scene_id: str, _: str) -> None:
@@ -501,21 +613,44 @@ class RegisteredServiceManager:
         services = {item["id"]: item for item in self.database.list_registered_services()}
         sequence = 0
         stop_ok = True
+        cancelled = False
+        cancel_event = self._cancel_requests[operation_id]
         for service in services.values():
-            if service["id"] not in target:
+            if cancel_event.is_set():
+                cancelled = True
+                break
+            if service["id"] not in target and self.statuses.get(
+                service["id"], {}
+            ).get("state") == "running":
                 sequence += 1
                 stop_ok = await self._run_script_action(
                     operation_id, sequence, "stop_unselected", service, "stop"
                 ) and stop_ok
+                if cancel_event.is_set():
+                    cancelled = True
+                    break
         start_ok = True
-        if stop_ok:
+        if stop_ok and not cancelled:
             for service_id in target_ids:
+                if cancel_event.is_set():
+                    cancelled = True
+                    break
                 sequence += 1
                 start_ok = await self._run_script_action(
                     operation_id, sequence, "start_selected", services[service_id], "start"
                 ) and start_ok
-        await self.refresh_all_statuses()
+                if cancel_event.is_set():
+                    cancelled = True
+                    break
         final_scene = self._scene_with_state(scene)
+        if cancel_event.is_set():
+            cancelled = True
+        if cancelled:
+            self.database.finish_operation_with_audit(
+                operation_id, "interrupted", "cancelled", str(before), final_scene["state"],
+                "用户终止了场景切换；已完成的服务动作不会自动回滚",
+            )
+            return
         success = stop_ok and start_ok and final_scene["state"] == "active"
         result = "success" if success else ("stop_failed" if not stop_ok else "partial")
         self.database.finish_operation_with_audit(

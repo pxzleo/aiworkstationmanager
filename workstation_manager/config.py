@@ -44,7 +44,6 @@ class Settings:
     audit_retention_days: int = 90
     login_failure_max_rows: int = 10_000
     operation_retention_max: int = 1000
-    service_status_interval_seconds: float = 5.0
     script_status_timeout_seconds: float = 3.0
     script_action_timeout_seconds: float = 600.0
     manager_log_path: Path = PROJECT_ROOT / "logs" / "manager.log"
@@ -271,7 +270,6 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         "WM_AUDIT_RETENTION_DAYS": "audit_retention_days",
         "WM_LOGIN_FAILURE_MAX_ROWS": "login_failure_max_rows",
         "WM_OPERATION_RETENTION_MAX": "operation_retention_max",
-        "WM_SERVICE_STATUS_INTERVAL_SECONDS": "service_status_interval_seconds",
         "WM_SCRIPT_STATUS_TIMEOUT_SECONDS": "script_status_timeout_seconds",
         "WM_SCRIPT_ACTION_TIMEOUT_SECONDS": "script_action_timeout_seconds",
         "WM_MANAGER_LOG_PATH": "manager_log_path",
@@ -343,10 +341,6 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         ),
         operation_retention_max=_bounded_integer(
             data.get("operation_retention_max", 1000), "operation_retention_max", 100, 100_000
-        ),
-        service_status_interval_seconds=_bounded_number(
-            data.get("service_status_interval_seconds", 5),
-            "service_status_interval_seconds", 1, 3600,
         ),
         script_status_timeout_seconds=_bounded_number(
             data.get("script_status_timeout_seconds", 3),

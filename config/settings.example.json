@@ -15,7 +15,6 @@
   "audit_retention_days": 90,
   "login_failure_max_rows": 10000,
   "operation_retention_max": 1000,
-  "service_status_interval_seconds": 5,
   "script_status_timeout_seconds": 3,
   "script_action_timeout_seconds": 600,
   "manager_log_path": "logs/manager.log",
