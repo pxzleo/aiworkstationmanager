@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0f10">
+  <title>AXIS · AI 工作站</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="auth-pending">
+  <svg class="svg-sprite" aria-hidden="true">
+    <symbol id="i-grid" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Zm-7.5 9 7.5 4 7.5-4M4.5 16l7.5 4 7.5-4"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5v-9ZM4 7.5l8 4.5 8-4.5M12 12v9"/></symbol>
+    <symbol id="i-window" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m5 7 4 4-4 4M11 17h7"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h4"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2.1-.7-.6-1.5 1-2-2.1-2.1-2 1-1.5-.6L10.5 3h-3l-.7 2.1-1.5.6-2-1L1.2 6.8l1 2-.6 1.5-2.1.7v3l2.1.7.6 1.5-1 2 2.1 2.1 2-1 1.5.6.7 2.1h3l.7-2.1 1.5-.6 2 1 2.1-2.1-1-2 .6-1.5z" transform="translate(2.5 -1) scale(.8)"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 13v6H5V6h6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M18.5 9A7 7 0 0 0 6 6.5L4 9M5.5 15A7 7 0 0 0 18 17.5l2-2.5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5M12 17h.01"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark"><span></span><span></span></div>
+        <div><strong>AXIS</strong><small>AI WORKSTATION</small></div>
+      </div>
+
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-item active" data-page="overview"><svg><use href="#i-grid"/></svg><span>总览</span></button>
+        <button class="nav-item" data-page="scenes"><svg><use href="#i-layers"/></svg><span>工作场景</span><b>2</b></button>
+        <button class="nav-item" data-page="environments"><svg><use href="#i-box"/></svg><span>工作环境</span></button>
+        <button class="nav-item" data-page="webuis"><svg><use href="#i-window"/></svg><span>现有 WebUI</span></button>
+        <button class="nav-item" data-page="monitor"><svg><use href="#i-pulse"/></svg><span>资源监控</span></button>
+        <button class="nav-item" data-page="logs"><svg><use href="#i-terminal"/></svg><span>日志中心</span></button>
+        <button class="nav-item" data-page="scripts"><svg><use href="#i-file"/></svg><span>脚本导入</span><i></i></button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="host-mini">
+          <span class="status-dot live"></span>
+          <div><strong>AI 工作站</strong><small>地址由当前部署提供</small></div>
+          <span class="host-load">12%</span>
+        </div>
+        <button class="nav-item settings-button"><svg><use href="#i-settings"/></svg><span>系统设置</span></button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="mobile-menu" id="menuButton" aria-label="打开导航" aria-controls="sidebar" aria-expanded="false"><svg><use href="#i-menu"/></svg></button>
+        <div class="breadcrumb"><span>工作站</span><svg><use href="#i-chevron"/></svg><strong id="pageTitle">总览</strong></div>
+        <div class="top-actions">
+          <div class="freshness" id="freshness" aria-live="polite"><span class="status-dot"></span><span id="freshnessLabel">正在连接</span><time id="clock">--:--:--</time></div>
+          <button class="icon-button" aria-label="刷新数据" id="refreshButton"><svg><use href="#i-refresh"/></svg></button>
+          <button class="user-button" id="logoutButton" aria-label="退出登录" title="退出登录">--</button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <section class="page active" id="page-overview" data-title="总览">
+          <div class="page-heading overview-heading">
+            <div>
+              <p class="eyebrow">当前工作场景</p>
+              <h1><span class="scene-indicator"></span><span id="activeSceneName">场景检测尚未配置</span></h1>
+              <p id="activeSceneSummary">以下模板仅用于规划；当前状态以真实资源与服务列表为准。</p>
+            </div>
+            <div class="heading-actions">
+              <button class="button secondary" data-nav="scenes">查看场景</button>
+              <button class="button primary" id="switchSceneButton" disabled title="等待场景状态加载"><svg><use href="#i-layers"/></svg><span>一键切换</span></button>
+            </div>
+          </div>
+
+          <div class="status-banner" id="collectorStatus" hidden aria-live="polite"></div>
+          <div class="system-line" aria-label="主机状态">
+            <div><span>CPU</span><strong id="cpuMetric">--</strong><small id="cpuDetail">等待数据</small></div>
+            <div><span>内存</span><strong id="memoryMetric">--</strong><small id="memoryDetail">等待数据</small></div>
+            <div id="diskMetricBox"><span id="diskLabel">磁盘可用</span><strong id="diskMetric">--</strong><small id="diskDetail">等待数据</small></div>
+            <div><span>Docker</span><strong id="dockerMetric">--</strong><small id="dockerDetail">等待数据</small></div>
+          </div>
+
+          <div class="gpu-stage">
+            <article class="gpu-lane gpu-primary">
+              <div class="gpu-head">
+                <div><span class="gpu-index">GPU 0</span><h2 id="gpu0Name">等待检测</h2><p id="gpu0Role">等待真实数据</p></div>
+                <div class="gpu-util"><strong id="gpu0Util">--</strong><span>% 负载</span></div>
+              </div>
+              <div class="gpu-telemetry">
+                <div class="memory-visual" style="--used:0%">
+                  <div class="memory-ring"><span><strong id="gpu0MemoryValue">--</strong><small>/ -- GB</small></span></div>
+                  <div class="memory-copy"><span>显存占用</span><strong id="gpu0MemoryPercent">--</strong><small id="gpu0MemoryFree">等待数据</small></div>
+                </div>
+                <div class="gpu-load-trend"><div class="trend-head"><span>GPU 负载趋势</span><small>最近 15 分钟</small></div><div class="trend-plot"><span class="trend-scale"><i>100%</i><i>50%</i><i>0</i></span><svg viewBox="0 0 300 120" preserveAspectRatio="none" role="img" aria-label="GPU 0 负载曲线：暂无数据"><path class="spark-grid" d="M0 10H300M0 60H300M0 110H300"/><polyline id="gpu0Sparkline" points=""/></svg></div><div class="trend-axis"><span>-15m</span><span>-10m</span><span>-5m</span><span>现在</span></div></div>
+              </div>
+              <div class="active-workload">
+                <div class="workload-icon" id="gpu0WorkloadIcon">N</div>
+                <div><strong id="gpu0WorkloadName">服务映射尚未配置</strong><span id="gpu0WorkloadMeta">只展示真实硬件指标</span></div>
+                <button class="quiet-link" data-nav="environments">查看只读状态 <svg><use href="#i-chevron"/></svg></button>
+              </div>
+              <div class="metric-row"><span><b id="gpu0Temp">--</b>温度</span><span><b id="gpu0Power">--</b>功耗</span><span><b id="gpu0Uuid">--</b>UUID</span><span><b id="gpu0State">等待</b>状态</span></div>
+            </article>
+
+            <div class="scene-flow" aria-hidden="true"><span></span><i></i><small id="sceneFlowLabel">开发/agent场景</small><i></i><span></span></div>
+
+            <article class="gpu-lane">
+              <div class="gpu-head">
+                <div><span class="gpu-index">GPU 1</span><h2 id="gpu1Name">等待检测</h2><p id="gpu1Role">等待真实数据</p></div>
+                <div class="gpu-util idle"><strong id="gpu1Util">--</strong><span>% 负载</span></div>
+              </div>
+              <div class="gpu-telemetry">
+                <div class="memory-visual" style="--used:0%">
+                  <div class="memory-ring"><span><strong id="gpu1MemoryValue">--</strong><small>/ -- GB</small></span></div>
+                  <div class="memory-copy"><span>显存占用</span><strong id="gpu1MemoryPercent">--</strong><small id="gpu1MemoryFree">等待数据</small></div>
+                </div>
+                <div class="gpu-load-trend idle"><div class="trend-head"><span>GPU 负载趋势</span><small>最近 15 分钟</small></div><div class="trend-plot"><span class="trend-scale"><i>100%</i><i>50%</i><i>0</i></span><svg viewBox="0 0 300 120" preserveAspectRatio="none" role="img" aria-label="GPU 1 负载曲线：暂无数据"><path class="spark-grid" d="M0 10H300M0 60H300M0 110H300"/><polyline id="gpu1Sparkline" points=""/></svg></div><div class="trend-axis"><span>-15m</span><span>-10m</span><span>-5m</span><span>现在</span></div></div>
+              </div>
+              <div class="queued-workloads">
+                <span><i class="service-glyph image" id="gpu1ServiceIcon">?</i><b id="gpu1ServiceName">服务映射</b><small id="gpu1ServiceState">未配置</small></span>
+                <span><i class="service-glyph audio">A</i>SenseVoiceSmall<small id="gpu1AsrState">等待状态</small></span>
+                <span><i class="service-glyph tts">T</i>IndexTTS 1.5<small id="gpu1TtsState">等待状态</small></span>
+              </div>
+              <div class="metric-row"><span><b id="gpu1Temp">--</b>温度</span><span><b id="gpu1Power">--</b>功耗</span><span><b id="gpu1Uuid">--</b>UUID</span><span><b id="gpu1OperationalState">等待</b>状态</span></div>
+            </article>
+          </div>
+
+          <div class="overview-lower">
+            <section class="running-section">
+              <div class="section-heading"><div><h2>运行状态</h2><p>Docker 容器与关键监听端口的只读快照</p></div><button class="text-button" data-nav="environments">全部环境 <svg><use href="#i-chevron"/></svg></button></div>
+              <div class="service-list" id="serviceList">
+                <p class="empty-state">登录后加载真实服务状态。</p>
+              </div>
+            </section>
+
+            <aside class="activity-section">
+              <div class="section-heading"><div><h2>最近事件</h2><p>最近 30 分钟</p></div></div>
+              <ol class="timeline" id="auditTimeline">
+                <li class="empty-state">登录后加载真实审计事件。</li>
+              </ol>
+            </aside>
+          </div>
+        </section>
+
+        <section class="page" id="page-scenes" data-title="工作场景">
+          <div class="page-heading"><div><p class="eyebrow">资源编排</p><h1>工作场景</h1><p>一次确认，完成双 GPU 环境切换与健康验证。</p></div><div class="heading-actions"><button class="button secondary scene-quick-action" data-switch="development" disabled><svg><use href="#i-terminal"/></svg><span>一键切换到开发/agent场景</span></button><button class="button primary scene-quick-action" data-switch="video" disabled><svg><use href="#i-play"/></svg><span>一键切换到视频制作</span></button></div></div>
+          <div class="scene-selector">
+            <article class="scene-panel selected" data-scene="development">
+              <div class="scene-panel-top"><span>场景 01</span><i>规划模板</i></div>
+              <h2>开发/agent场景</h2><p>语言模型常驻，图像和语音能力按需进入 3090。</p>
+              <div class="scene-map"><div><span>RTX 4090</span><strong>NInfer · Qwen3.8</strong><small>API 8080 · 262K context</small></div><div><span>RTX 3090</span><strong>Krea2 生图 / H3 视频 · ASR · TTS</strong><small>队列 / 按需加载</small></div></div>
+              <button class="button secondary scene-action" data-switch="development" disabled><svg><use href="#i-x"/></svg><span>加载场景状态…</span></button>
+            </article>
+            <article class="scene-panel" data-scene="video">
+              <div class="scene-panel-top"><span>场景 02</span><i>规划模板</i></div>
+              <h2>视频制作</h2><p>4090 专注 H3 视频，3090 承担整条音频与分析流。</p>
+              <div class="scene-map"><div><span>RTX 4090</span><strong>ComfyUI · MiniMax H3</strong><small>端口 8000 · 8-step</small></div><div><span>RTX 3090</span><strong>Qwen TTS · ACE-Step · ASR</strong><small>端口 8001 · 单任务队列</small></div></div>
+              <button class="button primary scene-action" data-switch="video" disabled><svg><use href="#i-x"/></svg><span>加载场景状态…</span></button>
+            </article>
+          </div>
+          <section class="switch-rules">
+            <div class="section-heading"><div><h2>切换规则</h2><p>所有步骤均由实际状态驱动，不修改开机启动策略。</p></div></div>
+            <div class="rule-flow"><span><b>01</b>阻止新任务<small>检查 NInfer / Comfy 队列</small></span><i></i><span><b>02</b>等待排空<small>活跃任务默认不打断</small></span><i></i><span><b>03</b>释放显存<small>验证实际 GPU 占用</small></span><i></i><span><b>04</b>启动目标<small>逐项健康检查</small></span></div>
+          </section>
+        </section>
+
+        <section class="page" id="page-environments" data-title="工作环境">
+          <div class="page-heading"><div><p class="eyebrow">规划清单</p><h1>工作环境</h1><p>已登记环境会显示真实运行状态；只有通过安全验收并允许控制动作的环境才能启动、停止或重启。</p></div><button class="button primary"><span>＋</span>尚未配置</button></div>
+          <div class="toolbar"><div class="search"><svg><use href="#i-search"/></svg><input type="search" placeholder="搜索环境、模型或端口"></div><div class="filter-group"><button class="filter active">全部</button><button class="filter">运行中</button><button class="filter">异常</button><button class="filter">已停止</button></div></div>
+          <div class="data-table env-table">
+            <div class="table-head"><span>环境</span><span>运行方式</span><span>资源</span><span>端口</span><span>状态</span><span></span></div>
+            <p class="empty-state">尚未加载环境配置；此处不会展示示例运行状态。</p>
+          </div>
+        </section>
+
+        <section class="page" id="page-webuis" data-title="现有 WebUI">
+          <div class="page-heading"><div><p class="eyebrow">隔离只读预览</p><h1>现有 WebUI</h1><p>在不共享管理器权限的浏览器沙箱中查看基础页面与静态资源。</p></div></div>
+          <p class="integration-note" id="webuiConfigNote">登录后读取固定白名单配置。WebSocket/交互通道在 MVP 中可能受限。</p>
+          <div class="webui-list" id="webuiList" aria-live="polite">
+            <p class="empty-state">登录后检查 WebUI 配置。</p>
+          </div>
+        </section>
+
+        <section class="page" id="page-monitor" data-title="资源监控">
+          <div class="page-heading"><div><p class="eyebrow">真实采样 · 最近 15 分钟</p><h1>资源监控</h1><p>CPU、内存及每张 GPU 的负载与显存均来自同源历史采样。</p></div><div class="range-select"><button class="active">15 分钟</button><button disabled title="当前 API 尚未开放此范围">1 小时</button><button disabled title="当前 API 尚未开放此范围">24 小时</button></div></div>
+          <div class="monitor-grid">
+            <p class="empty-state">登录后加载真实历史曲线。</p>
+          </div>
+        </section>
+
+        <section class="page" id="page-logs" data-title="日志中心">
+          <div class="page-heading"><div><p class="eyebrow">集中诊断</p><h1>日志中心</h1><p>仅访问服务器端固定配置的日志来源；不提供任意命令、路径或 grep。</p></div></div>
+          <div class="log-toolbar">
+            <label>来源<select id="logSourceSelect" aria-label="日志来源"></select></label>
+            <label>行数<select id="logLinesSelect" aria-label="日志行数"><option>100</option><option selected>200</option><option>500</option><option>1000</option></select></label>
+            <button class="button secondary" id="refreshLogsButton">刷新日志</button>
+            <label class="auto-refresh"><input type="checkbox" id="autoRefreshLogs"> 每 5 秒自动刷新</label>
+          </div>
+          <p class="integration-note" id="logConfigNote">登录后读取日志来源。</p>
+          <div class="log-console source-log-console" id="sourceLogConsole" aria-live="polite"><p class="empty-state">请选择已配置的日志来源。</p></div>
+          <div class="section-heading"><div><h2>控制操作</h2><p>持久化 operation 与步骤</p></div></div>
+          <section class="operation-list" id="operationList" aria-live="polite"><p class="empty-state">登录后加载真实控制操作。</p></section>
+          <div class="section-heading"><div><h2>操作审计</h2><p>登录、扫描、控制和日志读取事件</p></div></div>
+          <div class="log-console" id="auditLogConsole">
+            <p class="empty-state">登录后加载真实审计事件。</p>
+          </div>
+        </section>
+
+        <section class="page" id="page-scripts" data-title="脚本导入">
+          <div class="page-heading"><div><p class="eyebrow">受控迁移</p><h1>脚本导入</h1><p>只读扫描现有启动入口，审核后转换为非交互适配器。</p></div><button class="button primary" id="scanScriptsButton"><svg><use href="#i-refresh"/></svg>重新扫描</button></div>
+          <div class="path-bar"><svg><use href="#i-file"/></svg><code id="discoveryPath">等待登录</code><span id="discoveryCount">--</span><i id="discoveryTime">尚未读取</i></div>
+          <div class="import-layout">
+            <div class="script-list" id="scriptList">
+              <div class="script-list-head"><span>来源</span><span>解析结果</span><span>审核</span></div>
+              <p class="empty-state">登录后加载真实扫描结果。</p>
+            </div>
+            <aside class="script-inspector">
+              <div class="inspector-head"><div><span>解析预览</span><h2 id="scriptInspectorTitle">等待扫描</h2></div><i class="status-label partial">未执行</i></div>
+              <dl><div><dt>运行方式</dt><dd id="scriptRuntime">等待数据</dd></div><div><dt>GPU</dt><dd id="scriptGpu">等待数据</dd></div><div><dt>API / UI</dt><dd id="scriptPorts">等待数据</dd></div><div><dt>健康检查</dt><dd id="scriptHealth">等待数据</dd></div><div><dt>动作</dt><dd id="scriptActions">尚未配置</dd></div></dl>
+              <div class="risk-box"><svg><use href="#i-alert"/></svg><div><strong>需要人工确认</strong><p id="scriptRisk">尚无真实扫描结果。</p></div></div>
+              <div class="inspector-actions"><button class="button secondary">查看原文件</button><button class="button primary">批准并导入</button></div>
+            </aside>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="auth-gate" id="authGate" role="presentation">
+    <section class="auth-panel" role="dialog" aria-modal="true" aria-labelledby="authTitle" aria-describedby="authDescription">
+      <div class="brand auth-brand"><div class="brand-mark"><span></span><span></span></div><div><strong>AXIS</strong><small>SECURE CONSOLE</small></div></div>
+      <p class="eyebrow" id="authEyebrow">安全访问</p>
+      <h1 id="authTitle">正在检查管理器</h1>
+      <p id="authDescription">正在确认首次设置与登录状态。</p>
+      <form id="authForm" hidden novalidate>
+        <label for="usernameInput">管理员用户名</label>
+        <input id="usernameInput" name="username" autocomplete="username" minlength="3" maxlength="64" required>
+        <label for="passwordInput">密码</label>
+        <input id="passwordInput" name="password" type="password" autocomplete="current-password" minlength="12" maxlength="1024" required>
+        <label id="confirmPasswordLabel" for="confirmPasswordInput" hidden>确认密码</label>
+        <input id="confirmPasswordInput" name="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="1024" hidden>
+        <p class="auth-error" id="authError" role="alert"></p>
+        <button class="button primary" id="authSubmit" type="submit">继续</button>
+      </form>
+    </section>
+  </div>
+
+  <div class="toast" id="toast"><svg><use href="#i-check"/></svg><span>数据已刷新</span></div>
+  <dialog class="control-dialog" id="controlDialog">
+    <form method="dialog" id="controlDialogForm">
+      <p class="eyebrow">安全预检</p>
+      <h2 id="controlDialogTitle">确认控制操作</h2>
+      <div class="control-plan" id="controlDialogPlan"></div>
+      <label for="controlConfirmationInput">输入精确确认文本 <code id="controlConfirmationExpected"></code></label>
+      <input id="controlConfirmationInput" autocomplete="off" maxlength="160" required>
+      <p class="auth-error" id="controlDialogError" role="alert"></p>
+      <div class="dialog-actions"><button class="button secondary" id="controlDialogCancel" type="button">取消</button><button class="button primary" id="controlDialogSubmit" type="submit" value="default">提交操作</button></div>
+    </form>
+  </dialog>
+  <script src="request-guard.js?v=20260827-5"></script>
+  <script src="app.js?v=20260827-5"></script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "control_enabled": false,
+  "environments": [
+    {
+      "id": "ninfer4090",
+      "name": "4090 NInfer Docker Compose",
+      "configured": false,
+      "missing_reason": "请现场核对 WSL 发行版、Compose 绝对目录、project 与 service 名后再填写 adapter",
+      "adapter": null,
+      "gpu_ai": true,
+      "health_checks": [],
+      "safety_profile": "gpu_ai",
+      "preflight_checks": [],
+      "allowed_actions": []
+    },
+    {
+      "id": "ninfer4090_ui",
+      "name": "4090 NInfer UI systemd",
+      "configured": false,
+      "missing_reason": "请核对 user scope 与严格的 .service unit 名",
+      "adapter": null,
+      "gpu_ai": true,
+      "health_checks": [],
+      "safety_profile": "gpu_ai",
+      "preflight_checks": [],
+      "allowed_actions": []
+    },
+    {
+      "id": "q27_4090",
+      "name": "4090 q27 system service",
+      "configured": false,
+      "missing_reason": "请核对发行版和 system scope 的 .service unit 名",
+      "adapter": null,
+      "gpu_ai": true,
+      "health_checks": [],
+      "safety_profile": "gpu_ai",
+      "preflight_checks": [],
+      "allowed_actions": []
+    },
+    {
+      "id": "vllm4090",
+      "name": "4090 vLLM user service",
+      "configured": false,
+      "missing_reason": "现有入口可能是 transient user unit；必须固化并核对准确 unit 后才能配置",
+      "adapter": null,
+      "gpu_ai": true,
+      "health_checks": [],
+      "safety_profile": "gpu_ai",
+      "preflight_checks": [],
+      "allowed_actions": []
+    },
+    {
+      "id": "ninfer3090",
+      "name": "3090 NInfer",
+      "configured": false,
+      "missing_reason": "请核对 Compose 项目、service 与 UI systemd 的准确入口；多组件应拆成独立环境",
+      "adapter": null,
+      "gpu_ai": true,
+      "health_checks": [],
+      "safety_profile": "gpu_ai",
+      "preflight_checks": [],
+      "allowed_actions": []
+    },
+    {
+      "id": "dev3090_image",
+      "name": "3090 ComfyUI Krea2 生图 / H3 视频",
+      "configured": false,
+      "missing_reason": "缺少经现场验收的启动入口、健康检查与显存驻留策略",
+      "adapter": null,
+      "gpu_ai": true,
+      "health_checks": [],
+      "safety_profile": "gpu_ai",
+      "preflight_checks": [],
+      "allowed_actions": []
+    },
+    {
+      "id": "dev3090_asr",
+      "name": "3090 语音识别",
+      "configured": false,
+      "missing_reason": "缺少准确的 ASR 生命周期入口",
+      "adapter": null,
+      "gpu_ai": true,
+      "health_checks": [],
+      "safety_profile": "gpu_ai",
+      "preflight_checks": [],
+      "allowed_actions": []
+    },
+    {
+      "id": "dev3090_tts",
+      "name": "3090 语音合成",
+      "configured": false,
+      "missing_reason": "缺少准确的 TTS 生命周期入口",
+      "adapter": null,
+      "gpu_ai": true,
+      "health_checks": [],
+      "safety_profile": "gpu_ai",
+      "preflight_checks": [],
+      "allowed_actions": []
+    },
+    {
+      "id": "video_h3_4090",
+      "name": "4090 ComfyUI MiniMax H3 :8000",
+      "configured": false,
+      "missing_reason": "缺少已审核的固定 Windows 生命周期适配器；禁止猜测或直接运行桌面脚本",
+      "adapter": null,
+      "gpu_ai": true,
+      "health_checks": [],
+      "safety_profile": "h3_video",
+      "preflight_checks": [],
+      "allowed_actions": []
+    },
+    {
+      "id": "video_aux_3090",
+      "name": "3090 视频辅助 :8001",
+      "configured": false,
+      "missing_reason": "缺少 TTS、音乐、ASR 配套服务的准确入口与队列健康检查",
+      "adapter": null,
+      "gpu_ai": true,
+      "health_checks": [],
+      "safety_profile": "gpu_ai",
+      "preflight_checks": [],
+      "allowed_actions": []
+    }
+  ],
+  "scenes": [
+    {
+      "id": "development",
+      "name": "开发/agent场景",
+      "desired": ["ninfer4090", "ninfer4090_ui", "dev3090_image", "dev3090_asr", "dev3090_tts"],
+      "conflicts": ["video_h3_4090", "video_aux_3090"]
+    },
+    {
+      "id": "video",
+      "name": "视频制作场景",
+      "desired": ["video_h3_4090", "video_aux_3090"],
+      "conflicts": ["ninfer4090", "ninfer4090_ui"]
+    }
+  ]
+}

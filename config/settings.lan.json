@@ -1,0 +1,13 @@
+{
+  "host": "0.0.0.0",
+  "port": 19100,
+  "database_path": "data/workstation-manager.db",
+  "discovery_scripts_path": "C:\\Users\\xu\\Desktop\\本地模型启动",
+  "control_config_path": "config/control.json",
+  "integrations_config_path": "config/integrations.json",
+  "manager_log_path": "logs/manager.log",
+  "cookie_secure": false,
+  "setup_disabled": true,
+  "allowed_public_origins": [],
+  "trusted_proxy_ips": []
+}

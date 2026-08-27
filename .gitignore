@@ -1,0 +1,12 @@
+data/*.db
+data/*.db-*
+data/*.lock
+*.pyc
+__pycache__/
+logs/
+output/
+.playwright-cli/
+%SystemDrive%/
+config/settings.json
+config/integrations.json
+config/control.json

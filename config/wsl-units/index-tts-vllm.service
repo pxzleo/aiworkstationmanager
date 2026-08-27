@@ -1,0 +1,19 @@
+[Unit]
+Description=IndexTTS 1.5 vLLM API for development scene
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/xu/ai_stud/xz_server/index-tts-vllm
+Environment=PYTHONUNBUFFERED=1
+Environment=VLLM_WORKER_MULTIPROC_METHOD=spawn
+Environment=CUDA_VISIBLE_DEVICES=1
+ExecStart=/home/xu/ai_stud/xz_server/index-tts-vllm/.venv/bin/python /home/xu/ai_stud/xz_server/index-tts-vllm/api_server.py --host 0.0.0.0 --port 6006 --model_dir /home/xu/ai_stud/xz_server/index-tts-vllm/model_dir/IndexTTS-1.5 --gpu_memory_utilization 0.10
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=600
+TimeoutStopSec=330
+
+[Install]
+WantedBy=default.target
