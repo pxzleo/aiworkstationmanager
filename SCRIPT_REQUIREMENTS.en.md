@@ -1,6 +1,6 @@
 # Registered Service Management Script Requirements
 
-English | [简体中文](脚本要求.md)
+English | [简体中文](scriptspec.md)
 
 This document defines the script interface required by AXIS Workstation Manager for registered services.
 

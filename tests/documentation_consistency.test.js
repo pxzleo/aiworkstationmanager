@@ -9,7 +9,7 @@ const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 test('local documentation links resolve to repository files', () => {
-  for (const relative of ['README.md', 'README.en.md', 'DEVELOPMENT.md', 'DEVELOPMENT.en.md', '脚本要求.md', 'SCRIPT_REQUIREMENTS.en.md']) {
+  for (const relative of ['README.md', 'README.en.md', 'DEVELOPMENT.md', 'DEVELOPMENT.en.md', 'scriptspec.md', 'SCRIPT_REQUIREMENTS.en.md']) {
     const source = read(relative);
     const links = [...source.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map((match) => match[1]);
     for (const link of links) {
@@ -64,7 +64,7 @@ test('development guides document every supported environment variable', () => {
 
 test('release contains runtime language assets and both documentation languages', () => {
   const release = read('Build-Release.ps1');
-  for (const file of ['i18n.js', 'gpu-layout.js', 'monitor-chart.js', 'theme.js', 'README.md', 'README.en.md', 'DEVELOPMENT.md', 'DEVELOPMENT.en.md', '脚本要求.md', 'SCRIPT_REQUIREMENTS.en.md']) {
+  for (const file of ['i18n.js', 'gpu-layout.js', 'monitor-chart.js', 'theme.js', 'README.md', 'README.en.md', 'DEVELOPMENT.md', 'DEVELOPMENT.en.md', 'scriptspec.md', 'SCRIPT_REQUIREMENTS.en.md']) {
     assert.ok(release.includes(`"${file}"`), `release is missing ${file}`);
   }
   const schema = /SCHEMA_VERSION = (\d+)/.exec(read('workstation_manager/database.py'))[1];

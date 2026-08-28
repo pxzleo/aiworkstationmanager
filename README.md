@@ -2,9 +2,7 @@
 
 [English](README.en.md) | 简体中文
 
-AXIS 将 AI 工作站的各种服务统一管理并整合进不同场景，可一键在各个场景间切换所需服务，并实时监控服务器状态，支持通过手机随时随地监控和配置。
-
-AXIS 是运行在 Windows 工作站上的本地 Web 管理器，用一个简洁界面管理本机 AI 服务。它通过用户登记的脚本启动、停止和重启服务，并保留资源监控、场景切换、用户管理和操作记录。
+AXIS 将 AI 工作站的各种服务统一管理并整合进不同场景，可一键在各个场景间切换各种所需服务，并实时监控服务器状态。UI 设计适应 PC 到手机屏幕的监控和配置，可适应任意服务，让 AI 按 [scriptspec.md](scriptspec.md) 要求编写或改写现有脚本即可。它是一个界面简洁的 AI 工作站服务管理系统。
 
 ## 界面预览
 
@@ -71,7 +69,7 @@ D:\AIWork\example\manage.ps1 status
 
 管理器不会持续轮询脚本。启动、停止和重启成功后会保存服务状态；只有用户点击“检查状态”时才调用一次 `status`。
 
-完整脚本规范与示例见 [脚本要求.md](脚本要求.md)。
+完整脚本规范与示例见 [scriptspec.md](scriptspec.md)。
 
 ## 使用场景
 
@@ -122,6 +120,6 @@ Copy-Item .\config\settings.example.json .\config\settings.json
 
 ## 更多文档
 
-- [脚本接口要求](脚本要求.md)
+- [脚本接口要求](scriptspec.md)
 - [开发文档、完整 API 与高级配置](DEVELOPMENT.md)
 - [English README](README.en.md)
