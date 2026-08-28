@@ -71,7 +71,11 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(js.includes("plot.addEventListener('pointerup'"));
   assert.ok(js.includes("plot.addEventListener('pointercancel'"));
   assert.ok(css.includes('touch-action: pan-y'));
-  assert.ok(js.includes("range.type = 'range'"));
+  assert.ok(!js.includes("range.type = 'range'"));
+  assert.ok(!css.includes('.correlation-control input'));
+  assert.ok(js.includes("'同步时间'"));
+  assert.ok(css.includes('.correlation-time'));
+  assert.ok(css.includes('.range-select button { min-width: 52px; min-height: 42px;'));
   assert.ok(js.includes("announcement.setAttribute('aria-live', 'polite')"));
   assert.ok(js.includes('monitorChart.nearestSample'));
   assert.ok(i18n.includes("'处理器负载': 'Processor load'"));

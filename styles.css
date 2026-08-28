@@ -269,6 +269,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .filter-group, .range-select { display: flex; gap: 4px; }
 .filter, .range-select button { border: 0; background: transparent; color: var(--muted); padding: 7px 10px; border-radius: 5px; font-size: 10px; cursor: pointer; }
 .filter.active, .range-select button.active { background: var(--surface-3); color: var(--text); }
+.range-select { gap: 6px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--surface) 82%, var(--bg)); }
+.range-select button { min-width: 52px; min-height: 42px; padding: 8px 13px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; font-weight: 750; letter-spacing: .03em; }
+.range-select button.active { border-color: color-mix(in srgb, var(--accent) 52%, var(--line)); background: color-mix(in srgb, var(--accent) 18%, var(--surface-3)); color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent), 0 0 16px color-mix(in srgb, var(--accent) 12%, transparent); }
 .range-select.loading { opacity: .58; pointer-events: none; }
 .range-select.loading::after { content: ""; width: 12px; height: 12px; align-self: center; margin-left: 4px; border: 1px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .75s linear infinite; }
 .data-table { border-top: 1px solid var(--line-strong); }
@@ -372,10 +375,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .correlation-heading, .context-heading { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 22px 0 25px; border-bottom: 1px solid var(--line); color: var(--text); font-size: 10px; font-weight: 650; letter-spacing: .04em; }
 .correlation-heading small { color: var(--muted); font-size: 8px; font-weight: 450; letter-spacing: 0; }
 .context-heading { color: var(--muted); font-size: 9px; }
-.correlation-control { width: min(240px, 42%); display: grid; gap: 3px; }
-.correlation-control input { width: 100%; height: 14px; accent-color: var(--monitor-color); cursor: ew-resize; }
-.correlation-control input:focus-visible { outline: 1px solid var(--monitor-color); outline-offset: 3px; }
-.correlation-selection { overflow: hidden; color: var(--muted); font-size: 7px; font-variant-numeric: tabular-nums; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.correlation-time { display: grid; justify-items: end; gap: 2px; }
+.correlation-time small { color: var(--muted); font-size: 8px; font-weight: 650; letter-spacing: .08em; }
+.correlation-time-value { color: var(--monitor-color); font-size: 16px; line-height: 1.1; font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; text-shadow: 0 0 14px color-mix(in srgb, var(--monitor-color) 28%, transparent); }
 .chart-section { min-width: 0; padding: 20px 22px 19px 25px; }
 .chart-section + .chart-section { border-left: 1px solid var(--line); }
 .gpu-correlation-stack .chart-section + .chart-section { border-left: 0; border-top: 1px solid var(--line); }
@@ -642,8 +644,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .monitor-detail:first-child { border-left: 0; padding-left: 0; }
   .monitor-chart-grid { grid-template-columns: 1fr; }
   .correlation-heading { align-items: flex-start; flex-direction: column; gap: 8px; padding-block: 12px; }
-  .correlation-control { width: 100%; }
-  .correlation-selection { text-align: left; }
+  .correlation-time { justify-items: start; }
   .chart-section { padding: 18px 15px 17px 18px; }
   .chart-section + .chart-section { border-left: 0; border-top: 1px solid var(--line); }
   .chart-frame { grid-template-rows: 180px 20px; }
