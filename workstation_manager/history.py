@@ -39,6 +39,8 @@ class HistoryStore:
                         "memory_total_mib": gpu.get("memory_total_mib"),
                         "memory_percent": gpu.get("memory_percent"),
                         "temperature_c": gpu.get("temperature_c"),
+                        "power_w": gpu.get("power_w"),
+                        "graphics_clock_mhz": gpu.get("graphics_clock_mhz"),
                     }
                     for gpu in snapshot.get("gpus", [])
                 ],

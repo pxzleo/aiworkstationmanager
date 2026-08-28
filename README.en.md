@@ -76,7 +76,7 @@ Most installations need only these fields:
 | `script_status_timeout_seconds` | `3` | Timeout for a manual single-service status check |
 | `script_action_timeout_seconds` | `600` | Service-action timeout |
 
-Resource monitoring writes one SQLite sample every 5 seconds by default and retains the latest 24 hours. The UI supports `15m`, `1h`, and `24h`; longer windows are aggregated by the server before they are returned. Only the latest 15 minutes remain in memory, so 24-hour history does not create a large in-memory buffer.
+Resource monitoring writes one SQLite sample every 5 seconds by default and retains the latest 24 hours. The UI supports `15m`, `1h`, and `24h`; longer windows are aggregated by the server before they are returned. For each GPU, aligned charts and a linked pointer compare core load, clock, power, and temperature, while VRAM capacity remains separate. Only the latest 15 minutes remain in memory, so 24-hour history does not create a large in-memory buffer.
 
 LAN mode does not provide HTTPS. Credentials travel over unencrypted HTTP, so use it only on a trusted LAN and never expose it directly to the internet.
 

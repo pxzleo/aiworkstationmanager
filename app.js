@@ -20,7 +20,7 @@ const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], users: [], operations: [], timers: new Map(),
   historyWindowMinutes: 15, historyMeta: null, historyLoading: false,
-  chartSpecs: [], monitorDetails: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
+  chartSpecs: [], correlationControllers: [], monitorDetails: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
 
 class ApiError extends Error {
@@ -196,36 +196,74 @@ function syncGpuCards(gpus) {
 function renderPolyline(polyline, values, device) { if (!polyline) return; polyline.closest('svg').setAttribute('aria-label', ui(`${device} GPU 负载曲线`)); const normalized = values.map(normalizedPercent).filter((value) => value !== null); if (!normalized.length) { polyline.setAttribute('points', ''); return; } polyline.setAttribute('points', normalized.map((value, index) => `${normalized.length === 1 ? 150 : index * (300 / (normalized.length - 1))},${110 - value}`).join(' ')); }
 function renderCollectorErrors(errors) { const banner = byId('collectorStatus'); banner.hidden = !errors.length; banner.replaceChildren(); if (errors.length) banner.append(element('strong', '', '部分数据降级'), element('span', '', errors.map((error) => error.message || '采集失败').join('；'))); }
 function monitorDetail(label) { const node = element('span', 'monitor-detail'); node.append(element('small', '', label), userElement('strong', '', '--')); return { node, value: node.querySelector('strong') }; }
+function niceMetricMaximum(samples, getter, step, fallback) { const peak = Math.max(0, ...(samples || []).map(getter).filter(finite)); return Math.max(fallback, Math.ceil(peak / step) * step); }
+function chartScale(spec, samples) { return { minimum: spec.minimum ?? 0, maximum: typeof spec.maximum === 'function' ? spec.maximum(samples) : spec.maximum ?? 100 }; }
+function chartValue(value, spec, includeUnit = true) { if (value === '--' || !finite(value)) return '--'; const rendered = String(Math.round(value)); if (!includeUnit || !spec.unit) return rendered; return `${rendered}${['%', '°C'].includes(spec.unit) ? '' : ' '}${spec.unit}`; }
+function chartAxisValues(scale, spec) { return [1, .75, .5, .25, 0].map((ratio) => chartValue(scale.minimum + (scale.maximum - scale.minimum) * ratio, spec)); }
+function updateChartCurrent(spec, value, selected = false) { spec.current.firstChild.nodeValue = chartValue(value, spec, false); spec.currentLabel.textContent = `${spec.unit || '%'} ${selected ? ui('选中') : ui('当前')}`; }
 function createMonitorChart(spec, chartIndex) {
-  const section = element('section', 'chart-section'); section.style.setProperty('--chart-color', spec.color);
+  const section = element('section', `chart-section${spec.compact ? ' chart-compact' : ''}${spec.showXAxis === false ? ' chart-no-x-axis' : ''}`); section.style.setProperty('--chart-color', spec.color);
   const heading = element('div', 'chart-title'); const copy = element('div'); copy.append(element('span', 'chart-kicker', spec.kicker), element('h3', '', spec.title), element('p', '', spec.description));
-  const current = element('strong', 'chart-current', '--'); current.append(element('small', '', '% 当前')); heading.append(copy, current);
+  const current = element('strong', 'chart-current', '--'); const currentLabel = element('small', '', `${spec.unit || '%'} 当前`); current.append(currentLabel); heading.append(copy, current);
   const statistics = element('div', 'chart-statistics'); const statisticRefs = {};
   [['average', '平均'], ['peak', '峰值'], ['minimum', '最低']].forEach(([key, label]) => { const item = element('span'); const value = userElement('b', '', '--'); item.append(element('small', '', label), value); statistics.append(item); statisticRefs[key] = value; });
-  const frame = element('div', 'chart-frame'); const yAxis = element('span', 'chart-y-axis'); ['100%', '75%', '50%', '25%', '0'].forEach((label) => yAxis.append(element('i', '', label)));
+  const frame = element('div', 'chart-frame'); const yAxis = element('span', 'chart-y-axis'); chartAxisValues({ minimum: spec.minimum ?? 0, maximum: typeof spec.maximum === 'number' ? spec.maximum : 100 }, spec).forEach((label) => yAxis.append(element('i', '', label)));
   const plot = element('div', 'chart-plot'); const svg = svgElement('svg', { class: 'line-chart', viewBox: '0 0 900 200', preserveAspectRatio: 'none', role: 'img', 'aria-label': `${ui(spec.title)} · ${historyWindowLabel()}` });
   const gradientId = `monitorGradient${chartIndex}`; const defs = svgElement('defs'); const gradient = svgElement('linearGradient', { id: gradientId, x1: '0', y1: '0', x2: '0', y2: '1' }); gradient.append(svgElement('stop', { class: 'chart-gradient-start', offset: '0%' }), svgElement('stop', { class: 'chart-gradient-end', offset: '100%' })); defs.append(gradient);
-  const grid = svgElement('path', { class: 'chart-grid-lines', d: 'M0 1H900M0 50H900M0 100H900M0 150H900M0 199H900M1 0V200M300 0V200M600 0V200M899 0V200' }); const areaLayer = svgElement('g', { class: 'chart-areas' }); const lineLayer = svgElement('g', { class: 'chart-lines' }); const isolatedLayer = svgElement('g', { class: 'chart-isolated-points' }); const marker = svgElement('circle', { class: 'chart-marker', cx: '0', cy: '0', r: '4', hidden: '' }); svg.append(defs, grid, areaLayer, lineLayer, isolatedLayer, marker);
-  const noData = element('span', 'chart-no-data', '暂无采样数据'); plot.append(svg, noData); const xAxis = element('div', 'chart-x-axis'); monitorChart.axisLabels(state.historyWindowMinutes).forEach((label) => xAxis.append(element('span', '', label))); frame.append(yAxis, plot, xAxis);
-  section.append(heading, statistics, frame); return { ...spec, section, current, statisticRefs, svg, gradientId, areaLayer, lineLayer, isolatedLayer, marker, noData };
+  const grid = svgElement('path', { class: 'chart-grid-lines', d: 'M0 1H900M0 50H900M0 100H900M0 150H900M0 199H900M1 0V200M300 0V200M600 0V200M899 0V200' }); const areaLayer = svgElement('g', { class: 'chart-areas' }); const lineLayer = svgElement('g', { class: 'chart-lines' }); const isolatedLayer = svgElement('g', { class: 'chart-isolated-points' }); const cursor = svgElement('line', { class: 'chart-cursor', x1: '0', x2: '0', y1: '0', y2: '200', hidden: '' }); const marker = svgElement('circle', { class: 'chart-marker', cx: '0', cy: '0', r: '4', hidden: '' }); svg.append(defs, grid, areaLayer, lineLayer, isolatedLayer, cursor, marker);
+  const noData = element('span', 'chart-no-data', '暂无采样数据'); plot.append(svg, noData); const xAxis = element('div', 'chart-x-axis'); monitorChart.axisLabels(state.historyWindowMinutes).forEach((label) => xAxis.append(element('span', '', label))); xAxis.hidden = spec.showXAxis === false; frame.append(yAxis, plot, xAxis);
+  section.append(heading, statistics, frame); return { ...spec, section, current, currentLabel, statisticRefs, yAxis, svg, gradientId, areaLayer, lineLayer, isolatedLayer, cursor, marker, noData, lastModel: null };
 }
-function createMonitorGroup({ className, kicker, title, description, descriptionDetail = '', titleIsUserData = false, color, details, charts }) {
+function bindCorrelationCursor(charts, range, announcement) {
+  let selectedTimestamp = null;
+  const availableSamples = () => { const model = charts[0]?.lastModel; if (!model) return []; return currentSeries().filter((sample) => { const timestamp = Date.parse(sample?.sampled_at); return Number.isFinite(timestamp) && timestamp >= model.startTimeMs && timestamp <= model.endTimeMs; }).sort((left, right) => Date.parse(left.sampled_at) - Date.parse(right.sampled_at)); };
+  const selectionText = (sample) => `${formatDate(sample.sampled_at, true)} · ${charts.map((chart) => `${ui(chart.title)} ${chartValue(chart.getter(sample), chart)}`).join(' · ')}`;
+  const selectSample = (sample, persist = false) => {
+    const model = charts[0]?.lastModel; if (!sample || !model) return;
+    const timestamp = Date.parse(sample.sampled_at); if (persist) selectedTimestamp = timestamp; const x = Math.min(900, Math.max(0, ((timestamp - model.startTimeMs) / (model.endTimeMs - model.startTimeMs)) * 900));
+    charts.forEach((chart) => { chart.cursor.setAttribute('x1', String(x)); chart.cursor.setAttribute('x2', String(x)); chart.cursor.removeAttribute('hidden'); updateChartCurrent(chart, chart.getter(sample), true); });
+    const message = selectionText(sample); announcement.textContent = message; range.setAttribute('aria-valuetext', message);
+  };
+  const currentValueText = (samples) => samples.length ? `${ui('当前实时值')} · ${selectionText(samples.at(-1))}` : ui('暂无采样数据');
+  const sync = () => { const samples = availableSamples(); range.max = String(Math.max(0, samples.length - 1)); range.disabled = !samples.length; const selectedIndex = selectedTimestamp === null ? -1 : samples.findIndex((sample) => Date.parse(sample.sampled_at) === selectedTimestamp); if (selectedIndex >= 0) { range.value = String(selectedIndex); selectSample(samples[selectedIndex], true); } else { selectedTimestamp = null; range.value = String(Math.max(0, samples.length - 1)); range.setAttribute('aria-valuetext', currentValueText(samples)); } };
+  const restoreSelection = () => { const samples = availableSamples(); const selectedIndex = selectedTimestamp === null ? -1 : samples.findIndex((sample) => Date.parse(sample.sampled_at) === selectedTimestamp); if (selectedIndex >= 0) { range.value = String(selectedIndex); selectSample(samples[selectedIndex], true); return; } range.value = String(Math.max(0, samples.length - 1)); range.setAttribute('aria-valuetext', currentValueText(samples)); charts.forEach((chart) => { chart.cursor.setAttribute('hidden', ''); updateChartCurrent(chart, chart.lastModel?.current ?? '--'); }); announcement.textContent = ui('当前实时值'); };
+  const hover = (event) => {
+    const model = charts[0]?.lastModel; const plot = charts[0]?.section.querySelector('.chart-plot'); if (!model || !plot) return;
+    const bounds = plot.getBoundingClientRect(); const ratio = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)); const targetTimestamp = model.startTimeMs + ratio * (model.endTimeMs - model.startTimeMs); const samples = availableSamples(); const sample = monitorChart.nearestSample(samples, targetTimestamp, model.startTimeMs, model.endTimeMs); if (!sample) return; range.value = String(samples.indexOf(sample)); selectSample(sample);
+  };
+  charts.forEach((chart) => { const plot = chart.section.querySelector('.chart-plot'); plot.addEventListener('pointermove', hover); plot.addEventListener('pointerleave', restoreSelection); });
+  range.addEventListener('input', () => selectSample(availableSamples()[Number(range.value)], true));
+  return { sync };
+}
+function createMonitorGroup({ className, kicker, title, description, descriptionDetail = '', titleIsUserData = false, color, details, charts = [], correlationCharts = [], contextCharts = [] }) {
   const group = element('section', `monitor-group ${className}`); group.style.setProperty('--monitor-color', color);
   const header = element('div', 'monitor-group-header'); const identity = element('div'); const descriptionNode = element('p', '', description); if (descriptionDetail) descriptionNode.append(document.createTextNode(' · '), userElement('span', '', descriptionDetail)); identity.append(element('span', 'monitor-group-kicker', kicker), titleIsUserData ? userElement('h2', '', title) : element('h2', '', title), descriptionNode); const detailRow = element('div', 'monitor-detail-row'); details.forEach((detail) => detailRow.append(detail.node)); header.append(identity, detailRow);
-  const body = element('div', 'monitor-chart-grid'); charts.forEach((chart) => body.append(chart.section)); group.append(header, body); return group;
+  const body = element('div', `monitor-chart-grid${correlationCharts.length ? ' monitor-gpu-layout' : ''}`);
+  if (correlationCharts.length) {
+    const correlation = element('section', 'gpu-correlation-stack'); const correlationHead = element('div', 'correlation-heading'); const copy = element('div'); copy.append(element('div', '', '核心遥测相关性'), element('small', '', '移动指针或使用方向键对比同一时刻')); const control = element('label', 'correlation-control'); control.append(element('span', 'sr-only', '选择采样时刻')); const range = document.createElement('input'); range.type = 'range'; range.min = '0'; range.max = '0'; range.value = '0'; range.step = '1'; range.setAttribute('aria-label', '选择采样时刻'); const announcement = element('output', 'correlation-selection', '当前实时值'); announcement.setAttribute('aria-live', 'polite'); control.append(range, announcement); correlationHead.append(copy, control);
+    correlation.append(correlationHead, ...correlationCharts.map((chart) => chart.section)); const context = element('aside', 'gpu-context-column'); context.append(element('div', 'context-heading', '容量与分配'), ...contextCharts.map((chart) => chart.section)); body.append(correlation, context);
+    state.correlationControllers.push(bindCorrelationCursor(correlationCharts, range, announcement));
+  } else charts.forEach((chart) => body.append(chart.section));
+  group.append(header, body); return group;
 }
 function buildMonitorCharts() {
-  const container = document.querySelector('.monitor-grid'); container.replaceChildren(); state.chartSpecs = []; const details = { gpus: new Map() }; state.monitorDetails = details;
+  const container = document.querySelector('.monitor-grid'); container.replaceChildren(); state.chartSpecs = []; state.correlationControllers = []; const details = { gpus: new Map() }; state.monitorDetails = details;
   const overview = element('div', 'monitor-overview'); const coverage = monitorDetail('已累计'); const sampleCount = monitorDetail('图表点'); const lastSample = monitorDetail('最近更新'); const deviceCount = monitorDetail('监控设备'); overview.append(coverage.node, sampleCount.node, lastSample.node, deviceCount.node); details.coverage = coverage.value; details.sampleCount = sampleCount.value; details.lastSample = lastSample.value; details.deviceCount = deviceCount.value; container.append(overview);
   let chartIndex = 0; const cpuTemp = monitorDetail('CPU 温度'); const memoryUsage = monitorDetail('内存用量'); details.cpuTemp = cpuTemp.value; details.memoryUsage = memoryUsage.value;
   const hostSpecs = [{ kicker: 'CPU', title: '处理器负载', description: '全部逻辑处理器综合使用率', color: 'var(--accent)', getter: (sample) => sample.cpu_load_percent }, { kicker: 'RAM', title: '系统内存', description: '物理内存实时占用比例', color: '#60a5fa', getter: (sample) => sample.memory_percent }];
   const hostCharts = hostSpecs.map((spec) => { const chart = createMonitorChart(spec, chartIndex++); state.chartSpecs.push(chart); return chart; });
   container.append(createMonitorGroup({ className: 'monitor-host-group', kicker: 'HOST', title: '主机资源', description: '处理器与系统内存使用同一条采样时间线', color: 'var(--accent)', details: [cpuTemp, memoryUsage], charts: hostCharts }));
   state.gpus.forEach((gpu, position) => {
-    const color = MONITOR_GPU_COLORS[position % MONITOR_GPU_COLORS.length]; const temperature = monitorDetail('温度'); const power = monitorDetail('功耗'); const memory = monitorDetail('显存用量'); const uuid = monitorDetail('UUID'); details.gpus.set(gpu._uiKey, { temperature: temperature.value, power: power.value, memory: memory.value, uuid: uuid.value });
-    const specs = [{ kicker: `GPU ${gpu.index}`, title: '核心负载', description: '图形与计算核心综合使用率', color, getter: (sample) => gpuLayout.metricForGpu(sample, gpu, 'load_percent') }, { kicker: `GPU ${gpu.index}`, title: '显存占用', description: '已分配显存占总显存比例', color, getter: (sample) => gpuLayout.metricForGpu(sample, gpu, 'memory_percent') }];
-    const charts = specs.map((spec) => { const chart = createMonitorChart(spec, chartIndex++); state.chartSpecs.push(chart); return chart; });
-    container.append(createMonitorGroup({ className: 'monitor-gpu-group', kicker: `GPU ${gpu.index}`, title: gpu.name || `GPU ${gpu.index}`, titleIsUserData: true, description: '独立设备遥测', descriptionDetail: compactUuid(gpu.uuid), color, details: [temperature, power, memory, uuid], charts }));
+    const color = MONITOR_GPU_COLORS[position % MONITOR_GPU_COLORS.length]; const frequency = monitorDetail('核心频率'); const temperature = monitorDetail('温度'); const power = monitorDetail('功率'); const memory = monitorDetail('显存用量'); details.gpus.set(gpu._uiKey, { frequency: frequency.value, temperature: temperature.value, power: power.value, memory: memory.value });
+    const metric = (field) => (sample) => gpuLayout.metricForGpu(sample, gpu, field); const correlationSpecs = [
+      { kicker: 'LOAD', title: '核心负载', description: '图形与计算核心综合使用率', color, getter: metric('load_percent'), unit: '%', maximum: 100 },
+      { kicker: 'CLOCK', title: '核心频率', description: '当前图形时钟', color: '#38bdf8', getter: metric('graphics_clock_mhz'), unit: 'MHz', maximum: (samples) => niceMetricMaximum(samples, metric('graphics_clock_mhz'), 500, 3000) },
+      { kicker: 'POWER', title: '功率', description: '当前 GPU 板卡功耗', color: '#f59e0b', getter: metric('power_w'), unit: 'W', maximum: (samples) => niceMetricMaximum(samples, metric('power_w'), 50, 500) },
+      { kicker: 'THERMAL', title: '温度', description: '核心温度变化', color: '#f87171', getter: metric('temperature_c'), unit: '°C', maximum: 100, showXAxis: true },
+    ].map((spec, index) => ({ ...spec, compact: true, showXAxis: index === 3 }));
+    const correlationCharts = correlationSpecs.map((spec) => { const chart = createMonitorChart(spec, chartIndex++); state.chartSpecs.push(chart); return chart; });
+    const memoryChart = createMonitorChart({ kicker: 'VRAM', title: '显存占用', description: '已分配显存占总显存比例', color, getter: metric('memory_percent'), unit: '%', maximum: 100 }, chartIndex++); state.chartSpecs.push(memoryChart);
+    container.append(createMonitorGroup({ className: 'monitor-gpu-group', kicker: `GPU ${gpu.index}`, title: gpu.name || `GPU ${gpu.index}`, titleIsUserData: true, description: '独立设备遥测', descriptionDetail: compactUuid(gpu.uuid), color, details: [frequency, power, temperature, memory], correlationCharts, contextCharts: [memoryChart] }));
   });
   if (!state.gpus.length) container.append(element('p', 'empty-state monitor-gpu-empty', '未检测到 NVIDIA GPU，当前仅显示主机资源。'));
   renderCharts();
@@ -235,17 +273,18 @@ function renderMonitorDetails(samples) {
   const details = state.monitorDetails; if (!details) return; const snapshot = state.snapshot || {}; const host = snapshot.host || {}; const memory = host.memory || {};
   details.coverage.textContent = historyCoverageLabel(); details.sampleCount.textContent = String(samples.length); details.lastSample.textContent = samples.length ? formatDate(samples.at(-1).sampled_at) : '--'; details.deviceCount.textContent = `${state.gpus.length + 1}`;
   details.cpuTemp.textContent = finite(host.cpu?.temperature_c) ? `${Math.round(host.cpu.temperature_c)}°C` : ui('不支持'); const used = gib(memory.used_bytes); const total = gib(memory.total_bytes); details.memoryUsage.textContent = used !== null && total !== null ? `${used.toFixed(1)} / ${total.toFixed(1)} GB` : ui('不支持');
-  state.gpus.forEach((gpu) => { const refs = details.gpus.get(gpu._uiKey); if (!refs) return; const gpuUsed = mibToGib(gpu.memory_used_mib); const gpuTotal = mibToGib(gpu.memory_total_mib); refs.temperature.textContent = finite(gpu.temperature_c) ? `${Math.round(gpu.temperature_c)}°C` : ui('不支持'); refs.power.textContent = finite(gpu.power_w) ? `${Math.round(gpu.power_w)} W` : ui('不支持'); refs.memory.textContent = gpuUsed !== null && gpuTotal !== null ? `${gpuUsed.toFixed(1)} / ${gpuTotal.toFixed(1)} GB` : ui('不支持'); refs.uuid.textContent = compactUuid(gpu.uuid); });
+  state.gpus.forEach((gpu) => { const refs = details.gpus.get(gpu._uiKey); if (!refs) return; const gpuUsed = mibToGib(gpu.memory_used_mib); const gpuTotal = mibToGib(gpu.memory_total_mib); refs.frequency.textContent = finite(gpu.graphics_clock_mhz) ? `${Math.round(gpu.graphics_clock_mhz)} MHz` : ui('不支持'); refs.temperature.textContent = finite(gpu.temperature_c) ? `${Math.round(gpu.temperature_c)}°C` : ui('不支持'); refs.power.textContent = finite(gpu.power_w) ? `${Math.round(gpu.power_w)} W` : ui('不支持'); refs.memory.textContent = gpuUsed !== null && gpuTotal !== null ? `${gpuUsed.toFixed(1)} / ${gpuTotal.toFixed(1)} GB` : ui('不支持'); });
 }
 function renderCharts() {
   const samples = currentSeries(); const endTimeMs = Date.now(); renderMonitorDetails(samples); state.chartSpecs.forEach((spec) => {
-    const model = monitorChart.buildChartModel(samples, spec.getter, endTimeMs, monitorChart.windowMilliseconds(state.historyWindowMinutes)); const geometry = monitorChart.buildChartGeometry(model); spec.current.firstChild.nodeValue = String(model.current); Object.entries(spec.statisticRefs).forEach(([key, node]) => { node.textContent = String(model[key]); }); const unit = (value) => value === '--' ? '--' : `${value}%`; spec.svg.setAttribute('aria-label', model.pointCount ? `${ui(spec.title)}: ${ui('当前')} ${unit(model.current)}, ${ui('峰值')} ${unit(model.peak)}, ${ui('平均')} ${unit(model.average)}` : `${ui(spec.title)}: ${ui('暂无采样数据')}`);
+    const scale = chartScale(spec, samples); const model = monitorChart.buildChartModel(samples, spec.getter, endTimeMs, monitorChart.windowMilliseconds(state.historyWindowMinutes), scale); const geometry = monitorChart.buildChartGeometry(model); spec.lastModel = model; updateChartCurrent(spec, model.current); Object.entries(spec.statisticRefs).forEach(([key, node]) => { node.textContent = chartValue(model[key], spec, false); }); const axisValues = chartAxisValues(scale, spec); [...spec.yAxis.children].forEach((node, index) => { node.textContent = axisValues[index]; }); spec.svg.setAttribute('aria-label', model.pointCount ? `${ui(spec.title)}: ${ui('当前')} ${chartValue(model.current, spec)}, ${ui('峰值')} ${chartValue(model.peak, spec)}, ${ui('平均')} ${chartValue(model.average, spec)}` : `${ui(spec.title)}: ${ui('暂无采样数据')}`);
     spec.lineLayer.replaceChildren(...geometry.lines.map((segment) => svgElement('polyline', { class: 'chart-line', points: segment.map(({ x, y }) => `${x},${y}`).join(' ') })));
     spec.areaLayer.replaceChildren(...geometry.areas.map((segment) => { const points = segment.map(({ x, y }) => `${x},${y}`).join(' '); return svgElement('polygon', { class: 'chart-area', fill: `url(#${spec.gradientId})`, points: `${segment[0].x},200 ${points} ${segment.at(-1).x},200` }); }));
     spec.isolatedLayer.replaceChildren(...geometry.isolatedPoints.map((point) => svgElement('circle', { class: 'chart-isolated-point', cx: String(point.x), cy: String(point.y), r: '3' })));
     spec.noData.hidden = Boolean(model.pointCount);
     if (model.lastPoint) { spec.marker.setAttribute('cx', String(model.lastPoint.x)); spec.marker.setAttribute('cy', String(model.lastPoint.y)); spec.marker.removeAttribute('hidden'); } else spec.marker.setAttribute('hidden', '');
   });
+  state.correlationControllers.forEach((controller) => controller.sync());
 }
 
 const statusLabels = { running: '已启动', stopped: '已停止', unhealthy: '异常', unknown: '状态未知' };

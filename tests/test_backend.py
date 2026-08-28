@@ -151,20 +151,22 @@ class CollectorTests(unittest.TestCase):
 
     def test_gpu_csv_is_parsed_per_card(self) -> None:
         output = (
-            "0, GPU-a, NVIDIA GeForce RTX 4090, 98, 46359, 49140, 65, 430.5\n"
-            "1, GPU-b, NVIDIA GeForce RTX 3090, 2, 100, 24576, 37, 25.0\n"
+            "0, GPU-a, NVIDIA GeForce RTX 4090, 98, 46359, 49140, 65, 430.5, 2715\n"
+            "1, GPU-b, NVIDIA GeForce RTX 3090, 2, 100, 24576, 37, 25.0, 210\n"
         )
         gpus = collect_gpus(self.settings, runner=lambda command, timeout: output)
         self.assertEqual([gpu["uuid"] for gpu in gpus], ["GPU-a", "GPU-b"])
         self.assertEqual(gpus[0]["memory_used_mib"], 46359)
+        self.assertEqual(gpus[0]["graphics_clock_mhz"], 2715)
         self.assertAlmostEqual(gpus[1]["memory_percent"], 0.41, places=2)
 
     def test_unsupported_gpu_metric_is_none(self) -> None:
-        output = "0, GPU-a, RTX, N/A, 0, 24576, [N/A], N/A\n"
+        output = "0, GPU-a, RTX, N/A, 0, 24576, [N/A], N/A, N/A\n"
         gpu = collect_gpus(self.settings, runner=lambda command, timeout: output)[0]
         self.assertIsNone(gpu["load_percent"])
         self.assertIsNone(gpu["temperature_c"])
         self.assertIsNone(gpu["power_w"])
+        self.assertIsNone(gpu["graphics_clock_mhz"])
 
     def test_docker_json_lines_are_parsed(self) -> None:
         output = '{"ID":"abc","Names":"ninfer","Image":"image","State":"running","Status":"Up","Ports":"0.0.0.0:8080->8080/tcp","Labels":""}\n'
@@ -293,7 +295,8 @@ class SamplerTests(unittest.IsolatedAsyncioTestCase):
         snapshot = {
             "sampled_at": datetime.now(timezone.utc).isoformat(),
             "host": {"cpu": {"load_percent": 12}, "memory": {"percent": 34}, "disks": [1]},
-            "gpus": [{"uuid": "GPU-a", "index": 0, "name": "RTX", "load_percent": 56}],
+            "gpus": [{"uuid": "GPU-a", "index": 0, "name": "RTX", "load_percent": 56,
+                      "graphics_clock_mhz": 2715, "power_w": 430, "temperature_c": 70}],
             "docker": {"containers": [1]},
         }
         sampler = Sampler(settings, collector=lambda _: snapshot, sample_sink=records.append)
@@ -302,6 +305,8 @@ class SamplerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(records[0]["cpu_load_percent"], 12)
         self.assertEqual(records[0]["gpus"][0]["uuid"], "GPU-a")
+        self.assertEqual(records[0]["gpus"][0]["graphics_clock_mhz"], 2715)
+        self.assertEqual(records[0]["gpus"][0]["power_w"], 430)
         self.assertNotIn("docker", records[0])
         self.assertNotIn("disks", records[0])
 
