@@ -116,7 +116,7 @@
     '同步时间': 'Synchronized time',
     '容量与分配': 'Capacity and allocation', '选中': 'Selected',
     '每张 GPU 的核心负载、频率、功率和温度沿同一时间线对齐，移动指针即可对比关联变化。': 'Each GPU aligns core load, clock, power, and temperature on one timeline; move the pointer to compare related changes.',
-    '显存占用': 'VRAM utilization', '已分配显存占总显存比例': 'Allocated VRAM as a share of total VRAM',
+    '显存占用': 'VRAM usage', '已用显存与物理显存容量': 'Used VRAM against physical capacity',
     '未检测到 NVIDIA GPU，当前仅显示主机资源。': 'No NVIDIA GPU detected. Only host resources are shown.',
     '状态未知': 'Unknown', '已激活': 'Active', '部分启动': 'Partially Started', '未激活': 'Inactive',
     '尚未添加已登记服务。': 'No registered services have been added.', '无说明': 'No description',
