@@ -64,6 +64,8 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(css.includes('.chart-isolated-point'));
   assert.ok(css.includes('.gpu-correlation-stack'));
   assert.ok(css.includes('.chart-cursor'));
+  assert.ok(css.includes('.monitor-gpu-layout { grid-template-columns: 1fr; }'));
+  assert.ok(js.includes('body.append(context, correlation)'));
   assert.ok(js.includes('bindCorrelationCursor'));
   assert.ok(js.includes("range.type = 'range'"));
   assert.ok(js.includes("announcement.setAttribute('aria-live', 'polite')"));
