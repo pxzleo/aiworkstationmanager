@@ -2,7 +2,7 @@
 
 [English](DEVELOPMENT.en.md) | 简体中文
 
-本文档面向需要开发、集成或排查 AXIS 的人员。普通安装和使用请先阅读 [README.md](README.md)，服务脚本协议见 [脚本要求.md](脚本要求.md)。
+本文档面向需要开发、集成或排查 AXIS 的人员。普通安装和使用请先阅读 [README.md](README.md)，服务脚本协议见 [scriptspec.md](scriptspec.md)。
 
 ## 开发环境
 
