@@ -8,7 +8,7 @@
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
   <script src="theme.js?v=20260828-1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260828-8">
+  <link rel="stylesheet" href="styles.css?v=20260828-9">
 </head>
 <body class="auth-pending">
   <svg class="svg-sprite" aria-hidden="true">
@@ -140,7 +140,8 @@
         </section>
 
         <section class="page" id="page-monitor" data-title="资源监控">
-          <div class="page-heading"><div><p class="eyebrow">持久采样 · 最近 24 小时</p><h1>资源监控</h1><p>每张 GPU 的核心负载、频率、功率和温度沿同一时间线对齐，移动指针即可对比关联变化。</p></div><div class="range-select" id="historyRangeSelect" aria-label="历史范围"><button class="active" type="button" data-history-minutes="15" aria-pressed="true">15m</button><button type="button" data-history-minutes="60" aria-pressed="false">1h</button><button type="button" data-history-minutes="1440" aria-pressed="false">24h</button></div></div>
+          <div class="page-heading monitor-heading"><div><p class="eyebrow">持久采样 · 最近 24 小时</p><h1>资源监控</h1><p>先看整机压力，再进入 GPU、主机或系统定位瓶颈。</p></div><div class="range-select" id="historyRangeSelect" aria-label="历史范围"><button class="active" type="button" data-history-minutes="15" aria-pressed="true">15m</button><button type="button" data-history-minutes="60" aria-pressed="false">1h</button><button type="button" data-history-minutes="1440" aria-pressed="false">24h</button></div></div>
+          <nav class="monitor-tabbar" id="monitorTabbar" aria-label="监控分类"><button class="active" type="button" data-monitor-view="summary" aria-pressed="true">总览</button><button type="button" data-monitor-view="gpu" aria-pressed="false">GPU</button><button type="button" data-monitor-view="host" aria-pressed="false">主机</button><button type="button" data-monitor-view="system" aria-pressed="false">系统</button></nav>
           <div class="monitor-grid">
             <p class="empty-state">登录后加载真实历史曲线。</p>
           </div>
@@ -265,10 +266,10 @@
       <div class="dialog-actions"><button class="button secondary" id="cancelSceneSwitchButton" type="button">终止切换并返回</button><button class="button primary" id="closeSceneProgressButton" type="button" hidden>返回工作场景</button></div>
     </section>
   </dialog>
-  <script src="i18n.js?v=20260828-9"></script>
+  <script src="i18n.js?v=20260828-11"></script>
   <script src="request-guard.js?v=20260827-5"></script>
   <script src="gpu-layout.js?v=20260828-1"></script>
   <script src="monitor-chart.js?v=20260828-6"></script>
-  <script src="app.js?v=20260828-10"></script>
+  <script src="app.js?v=20260828-11"></script>
 </body>
 </html>

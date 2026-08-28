@@ -24,13 +24,38 @@ class HistoryStore:
         host = snapshot.get("host", {})
         cpu = host.get("cpu", {})
         memory = host.get("memory", {})
+        primary_network = host.get("primary_network") or {}
+        wsl = host.get("wsl") or {}
         record = {
                 "sampled_at": snapshot["sampled_at"],
                 "cpu_load_percent": cpu.get("load_percent"),
                 "cpu_temperature_c": cpu.get("temperature_c"),
+                "cpu_frequency_mhz": cpu.get("frequency_mhz"),
                 "memory_percent": memory.get("percent"),
                 "memory_used_bytes": memory.get("used_bytes"),
                 "memory_total_bytes": memory.get("total_bytes"),
+                "memory_available_bytes": memory.get("available_bytes"),
+                "commit_used_bytes": memory.get("commit_used_bytes"),
+                "commit_limit_bytes": memory.get("commit_limit_bytes"),
+                "swap_used_bytes": memory.get("swap_used_bytes"),
+                "swap_total_bytes": memory.get("swap_total_bytes"),
+                "network_received_bytes_per_second": primary_network.get(
+                    "received_bytes_per_second"
+                ),
+                "network_sent_bytes_per_second": primary_network.get(
+                    "sent_bytes_per_second"
+                ),
+                "wsl_memory_used_bytes": wsl.get("memory_used_bytes"),
+                "wsl_swap_used_bytes": wsl.get("swap_used_bytes"),
+                "disks": [
+                    {
+                        "name": disk.get("name"),
+                        "read_bytes_per_second": disk.get("read_bytes_per_second"),
+                        "write_bytes_per_second": disk.get("write_bytes_per_second"),
+                        "latency_ms": disk.get("latency_ms"),
+                    }
+                    for disk in host.get("disk_io", [])
+                ],
                 "gpus": [
                     {
                         "uuid": gpu.get("uuid"),
@@ -43,6 +68,11 @@ class HistoryStore:
                         "temperature_c": gpu.get("temperature_c"),
                         "power_w": gpu.get("power_w"),
                         "graphics_clock_mhz": gpu.get("graphics_clock_mhz"),
+                        "memory_utilization_percent": gpu.get(
+                            "memory_utilization_percent"
+                        ),
+                        "encoder_percent": gpu.get("encoder_percent"),
+                        "decoder_percent": gpu.get("decoder_percent"),
                     }
                     for gpu in snapshot.get("gpus", [])
                 ],

@@ -130,6 +130,7 @@ Action endpoints return asynchronous operations. The frontend uses operation det
 ### Query parameters and primary responses
 
 - `/api/v1/history` uses a minute-formatted `window`, defaults to `15m`, and accepts `1m..1440m`. `15m` returns raw samples, `1h` uses 15-second buckets, and `24h` uses 60-second buckets. In addition to `samples`, the response includes `bucket_seconds`, `retention_minutes`, `stored_sample_count`, `stored_since`, and `stored_until` so the UI can show the actual accumulated duration.
+- Host history includes CPU load/frequency/temperature, physical/committed/page-file memory, primary physical-adapter traffic, and WSL memory/swap. `gpus` also stores memory-controller and encoder/decoder utilization, while `disks` stores per-physical-disk throughput and average latency. GPU P-State, fan, PCIe, clock-limit reasons, process ownership, and Docker container resources are live-snapshot data only and are not persisted.
 - If resource-history persistence fails, `/api/v1/health` returns `status: "degraded"`, `readiness.resource_history: "degraded"`, and a `history_persistence_error` without the underlying cause. Live snapshots remain available; persistence retries on the next sample and clears the degraded state after recovery.
 - `/api/v1/operations` and `/api/v1/audit` use `limit`, default 100, range `1..500`, and return `operations` or `events` arrays respectively.
 - Login and setup return `authenticated`, `csrf_token`, and `expires_at`; `auth/me` returns `username`, `expires_at`, and a new `csrf_token`.
@@ -177,6 +178,6 @@ This list follows `workstation_manager/config.py`. Boolean values use `true/fals
 
 ## Data and concurrency
 
-The default database is `data/workstation-manager.db`. The current schema is 16 and migrates automatically at startup. Only one manager instance may use a database at a time, preventing duplicate script execution.
+The default database is `data/workstation-manager.db`. The current schema is 17 and migrates automatically at startup. Only one manager instance may use a database at a time, preventing duplicate script execution.
 
 Stored service state is the control plane's primary state. Scheduled resource sampling never runs service scripts; only an explicit service-status check invokes `status`. Resource sampling writes CPU, memory, and per-GPU load, VRAM, temperature, power, and graphics-clock metrics to SQLite and retains 24 hours by default; the in-memory queue remains limited to the latest 15 minutes.
