@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__
@@ -17,6 +18,7 @@ from .auth import CSRF_HEADER, SESSION_COOKIE, AuthenticatedSession, AuthError, 
 from .config import ConfigError, Settings, load_settings
 from .database import SCHEMA_VERSION as DATABASE_SCHEMA_VERSION, Database, DatabaseError
 from .history import Sampler, parse_window
+from .i18n import localize_error, localize_http_error
 from .manager_logging import configure_manager_logging
 from .registry import RegisteredServiceManager, RegistryError, ScriptRunner
 
@@ -79,7 +81,15 @@ class RequestBodyLimitMiddleware:
             if message["type"] == "http.request":
                 total += len(message.get("body", b""))
                 if total > self.max_bytes:
-                    response = JSONResponse(_error_body("request_body_too_large", "请求体超过限制"), 413)
+                    language_header = next((value.decode("latin-1") for name, value in scope.get("headers", [])
+                                            if name.lower() == b"accept-language"), None)
+                    message_text, language = localize_error(
+                        "request_body_too_large", "请求体超过限制", language_header
+                    )
+                    response = JSONResponse(
+                        _error_body("request_body_too_large", message_text), 413,
+                        headers={"Content-Language": language},
+                    )
                     await response(scope, receive, send)
                     return
                 if not message.get("more_body", False):
@@ -193,27 +203,46 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     app.state.manager_logger = manager_logger
 
     @app.exception_handler(AuthError)
-    async def auth_error_handler(_: Request, exc: AuthError) -> JSONResponse:
-        headers = {"WWW-Authenticate": "Cookie"} if exc.status_code == 401 else None
-        return JSONResponse(_error_body(exc.code, exc.message), exc.status_code, headers=headers)
+    async def auth_error_handler(request: Request, exc: AuthError) -> JSONResponse:
+        message, language = localize_error(exc.code, exc.message, request.headers.get("accept-language"))
+        headers = {"Content-Language": language}
+        if exc.status_code == 401:
+            headers["WWW-Authenticate"] = "Cookie"
+        return JSONResponse(_error_body(exc.code, message), exc.status_code, headers=headers)
 
     @app.exception_handler(RegistryError)
-    async def registry_error_handler(_: Request, exc: RegistryError) -> JSONResponse:
-        return JSONResponse(_error_body(exc.code, exc.message), exc.status_code)
+    async def registry_error_handler(request: Request, exc: RegistryError) -> JSONResponse:
+        message, language = localize_error(exc.code, exc.message, request.headers.get("accept-language"))
+        return JSONResponse(_error_body(exc.code, message), exc.status_code,
+                            headers={"Content-Language": language})
 
     @app.exception_handler(DatabaseError)
-    async def database_error_handler(_: Request, exc: DatabaseError) -> JSONResponse:
-        return JSONResponse(_error_body("database_error", "持久化操作失败", str(exc)), 500)
+    async def database_error_handler(request: Request, exc: DatabaseError) -> JSONResponse:
+        message, language = localize_error(
+            "database_error", "持久化操作失败", request.headers.get("accept-language")
+        )
+        return JSONResponse(_error_body("database_error", message, str(exc)), 500,
+                            headers={"Content-Language": language})
 
-    @app.exception_handler(HTTPException)
-    async def http_error_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        code = str(exc.detail.get("error_type", "http_error")) if isinstance(exc.detail, dict) \
+            else "http_error"
         if isinstance(exc.detail, dict):
-            return JSONResponse(_error_body(str(exc.detail.get("error_type", "http_error")),
-                                                  str(exc.detail.get("message", "请求失败")),
-                                                  exc.detail.get("cause")),
-                                exc.status_code, headers=exc.headers)
-        return JSONResponse(_error_body("http_error", str(exc.detail)), exc.status_code,
-                            headers=exc.headers)
+            fallback = str(exc.detail.get("message", "请求失败"))
+            message, language = localize_error(
+                code, fallback, request.headers.get("accept-language")
+            )
+        else:
+            message, language = localize_http_error(
+                exc.status_code, request.headers.get("accept-language")
+            )
+        headers = dict(exc.headers or {})
+        headers["Content-Language"] = language
+        if isinstance(exc.detail, dict):
+            return JSONResponse(_error_body(code, message, exc.detail.get("cause")),
+                                exc.status_code, headers=headers)
+        return JSONResponse(_error_body(code, message), exc.status_code, headers=headers)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -225,13 +254,21 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
                                            {"reason": "validation_error"})
         details = [{"location": list(error["loc"]), "message": error["msg"],
                     "type": error["type"]} for error in exc.errors()]
-        return JSONResponse(_error_body("validation_error", "请求参数无效", details), 422)
+        message, language = localize_error(
+            "validation_error", "请求参数无效", request.headers.get("accept-language")
+        )
+        return JSONResponse(_error_body("validation_error", message, details), 422,
+                            headers={"Content-Language": language})
 
     @app.exception_handler(Exception)
-    async def unexpected_error_handler(_: Request, exc: Exception) -> JSONResponse:
+    async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
         manager_logger.exception("unhandled application error")
-        return JSONResponse(_error_body("internal_error", "服务器内部错误",
-                                        {"error_type": type(exc).__name__}), 500)
+        message, language = localize_error(
+            "internal_error", "服务器内部错误", request.headers.get("accept-language")
+        )
+        return JSONResponse(_error_body("internal_error", message,
+                                        {"error_type": type(exc).__name__}), 500,
+                            headers={"Content-Language": language})
 
     async def protected_access(request: Request) -> AuthenticatedSession | None:
         if not resolved_auth.is_setup():
@@ -496,6 +533,10 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     @app.get("/app.js", include_in_schema=False)
     async def javascript() -> FileResponse:
         return FileResponse(PROJECT_ROOT / "app.js", media_type="text/javascript")
+
+    @app.get("/i18n.js", include_in_schema=False)
+    async def i18n_javascript() -> FileResponse:
+        return FileResponse(PROJECT_ROOT / "i18n.js", media_type="text/javascript")
 
     @app.get("/request-guard.js", include_in_schema=False)
     async def request_guard_javascript() -> FileResponse:

@@ -93,6 +93,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .button.secondary:hover { border-color: rgba(93,229,194,.45); background: rgba(93,229,194,.05); }
 .button.ghost { border-color: transparent; color: var(--muted); }
 .button:disabled { cursor: not-allowed; opacity: .45; }
+.language-select { height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 8px 0 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: rgba(255,255,255,.018); font-size: 10px; }
+.language-select select { border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; cursor: pointer; }
+.language-select option { color: var(--text); background: var(--surface); }
+.auth-language-select { position: absolute; top: 18px; right: 18px; }
 
 .system-line { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-bottom: 28px; }
 .system-line > div { min-height: 84px; padding: 17px 20px; border-right: 1px solid var(--line); display: grid; grid-template-columns: auto 1fr; align-items: baseline; column-gap: 10px; }
@@ -443,7 +447,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .auth-gate { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: radial-gradient(circle at 50% 22%, rgba(93,229,194,.055), transparent 36%), #090c0d; }
 body:not(.auth-pending) .auth-gate { display: none; }
 .auth-pending .app-shell { visibility: hidden; }
-.auth-panel { width: min(420px, 100%); padding: 32px; border: 1px solid var(--line-strong); background: #101516; box-shadow: 0 30px 90px rgba(0,0,0,.48); }
+.auth-panel { position: relative; width: min(420px, 100%); padding: 32px; border: 1px solid var(--line-strong); background: #101516; box-shadow: 0 30px 90px rgba(0,0,0,.48); }
 .auth-brand { padding: 0 0 32px; }
 .auth-panel h1 { margin: 7px 0 8px; font-size: 27px; font-weight: 480; letter-spacing: -.03em; }
 .auth-panel > p:not(.eyebrow) { color: var(--muted); font-size: 10px; line-height: 1.65; margin: 0 0 24px; }
@@ -478,6 +482,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
 }
 
 @media (max-width: 720px) {
+  .top-actions .language-select span { display: none; }
   :root { --sidebar: 250px; --topbar: 58px; }
   .sidebar { transform: translateX(-100%); transition: transform .22s; box-shadow: 20px 0 50px rgba(0,0,0,.45); }
   .sidebar.open { transform: translateX(0); }

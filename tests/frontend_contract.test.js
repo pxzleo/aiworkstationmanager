@@ -8,6 +8,7 @@ const test = require('node:test');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const js = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+const i18n = fs.readFileSync(path.join(root, 'i18n.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
 
 test('authentication UI accepts the configured four-character minimum', () => {
@@ -89,6 +90,27 @@ test('user management lists accounts and wires account actions', () => {
   assert.ok(js.includes('不能删除当前登录用户'));
   assert.ok(css.includes('.user-table .table-head'));
   assert.ok(css.includes('.user-avatar'));
+});
+
+test('Chinese and English UI supports automatic detection and a remembered manual switch', () => {
+  assert.equal((html.match(/data-language-select/g) || []).length, 2);
+  assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
+  assert.ok(i18n.includes("navigator.languages"));
+  assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
+  assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
+  assert.ok(i18n.includes("startsWith('zh') ? 'zh' : 'en'"));
+  assert.ok(i18n.includes("'已登记服务': 'Registered Services'"));
+  assert.ok(i18n.includes("'部分启动': 'Partially Started'"));
+  assert.ok(i18n.includes("'用户管理': 'User Management'"));
+  assert.ok(js.includes("headers.set('Accept-Language', window.axisI18n.language)"));
+  assert.ok(js.includes("document.addEventListener('languagechange'"));
+  assert.ok(js.includes("userElement('option'"));
+  assert.ok(js.includes("window.axisI18n.language, ...state.scenes"));
+  assert.ok(js.includes("ui(step.action === 'start' ? '启动' : '停止')"));
+  assert.ok(i18n.includes("'服务脚本执行失败': 'The service script failed.'"));
+  assert.ok(i18n.includes("'管理脚本不存在': 'The management script was not found.'"));
+  assert.ok(i18n.includes("'Unable to start the management script: $1'"));
+  assert.ok(css.includes('.language-select'));
 });
 
 test('legacy adapter, discovery and service-log UI are absent', () => {

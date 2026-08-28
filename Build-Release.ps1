@@ -16,7 +16,8 @@ if (Test-Path -LiteralPath $target) {
 }
 
 $files = @(
-    "app.js", "index.html", "styles.css", "request-guard.js", "README.md",
+    "app.js", "i18n.js", "index.html", "styles.css", "request-guard.js",
+    "README.md", "README.en.md", "脚本要求.md", "SCRIPT_REQUIREMENTS.en.md",
     "requirements.txt", "Start-Manager.ps1", "Start-Manager.cmd", "Install-ManagerTask.ps1",
     "Uninstall-ManagerTask.ps1", "Build-Release.ps1", ".gitignore",
     "config\settings.example.json"

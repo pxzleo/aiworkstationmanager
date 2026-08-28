@@ -1,0 +1,226 @@
+'use strict';
+
+(function initializeI18n() {
+  const STORAGE_KEY = 'axis_manager_language';
+  const translations = {
+    'AXIS · AI 工作站': 'AXIS · AI Workstation',
+    '主导航': 'Main navigation', '语言': 'Language', '界面语言': 'Interface language', '总览': 'Overview', '工作场景': 'Scenes',
+    '已登记服务': 'Registered Services', '资源监控': 'Resource Monitor',
+    '用户管理': 'User Management', '日志中心': 'Operation Log',
+    'AI 工作站': 'AI Workstation', '地址由当前部署提供': 'Address provided by this deployment',
+    '系统设置': 'System Settings', '打开导航': 'Open navigation', '工作站': 'Workstation',
+    '正在连接': 'Connecting', '刷新数据': 'Refresh data', '退出登录': 'Sign out',
+    '当前工作场景': 'Current Scene', '场景检测尚未配置': 'Scene detection is not configured',
+    '场景状态由已登记服务最后保存的状态计算。': 'Scene state is calculated from the last saved service states.',
+    '查看场景': 'View scenes', '选择后立即切换场景': 'Switch immediately after selecting a scene',
+    '切换场景': 'Switch Scene', '主机状态': 'Host status', '内存': 'Memory',
+    '磁盘可用': 'Disk available', '等待数据': 'Waiting for data', '等待检测': 'Waiting for detection',
+    '等待真实数据': 'Waiting for live data', '% 负载': '% load', '显存占用': 'VRAM usage',
+    'GPU 负载趋势': 'GPU load trend', '最近 15 分钟': 'Last 15 minutes', '现在': 'Now',
+    '服务映射尚未配置': 'Service mapping is not configured', '只展示真实硬件指标': 'Live hardware metrics only',
+    '查看只读状态': 'View saved status', '温度': 'Temperature', '功耗': 'Power', '状态': 'Status',
+    '等待': 'Waiting', '开发/agent场景': 'Development / Agent scene', '服务映射': 'Service mapping',
+    '未配置': 'Not configured', '等待状态': 'Waiting for status',
+    '页面读取已保存状态，不会自动执行状态脚本': 'This page reads saved states and never runs status scripts automatically',
+    '全部服务': 'All services', '登录后加载真实服务状态。': 'Sign in to load saved service states.',
+    '最近事件': 'Recent events', '最近 30 分钟': 'Last 30 minutes',
+    '登录后加载服务与场景操作。': 'Sign in to load service and scene operations.',
+    '服务组合': 'Service combinations',
+    '新场景添加在末尾；拖动卡片或使用上移、下移调整顺序。': 'New scenes are added last. Drag cards or use Move up and Move down to reorder them.',
+    '添加场景': 'Add Scene', '尚未添加场景。': 'No scenes have been added.', '切换规则': 'Switching rules',
+    '不执行自动回滚，最终状态和失败原因写入操作日志。': 'There is no automatic rollback. Final states and failures are written to the operation log.',
+    '停止未选服务': 'Stop unselected services', '逐个调用 stop': 'Run stop one by one',
+    '记录停止结果': 'Record stop results', '任一失败则不启动': 'Do not start if any stop fails',
+    '启动目标服务': 'Start target services', '按场景顺序调用 start': 'Run start in scene order',
+    '保存最终状态': 'Save final states', '标记激活或部分启动': 'Mark active or partially started',
+    '脚本服务': 'Script services',
+    '启停结果永久保存；status 仅在点击“检查状态”时调用一次。': 'Start and stop results are saved permanently. Status runs only when Check Status is clicked.',
+    '停止全部服务': 'Stop All Services', '添加服务': 'Add Service',
+    '搜索服务、说明、GPU 或端口': 'Search services, descriptions, GPUs, or ports',
+    '全部': 'All', '已启动': 'Running', '异常': 'Unhealthy', '已停止': 'Stopped',
+    '服务名称': 'Service name', '说明': 'Description', '端口': 'Port', '尚未添加服务。': 'No services have been added.',
+    '真实采样 · 最近 15 分钟': 'Live samples · Last 15 minutes',
+    'CPU、内存及每张 GPU 的负载与显存均来自同源历史采样。': 'CPU, memory, GPU load, and VRAM use the same historical samples.',
+    '15 分钟': '15 minutes', '1 小时': '1 hour', '24 小时': '24 hours',
+    '当前 API 尚未开放此范围': 'This range is not available in the current API',
+    '登录后加载真实历史曲线。': 'Sign in to load live history charts.',
+    '访问账户': 'Access accounts',
+    '所有用户具有相同管理权限；新增用户仅允许从本机地址执行。': 'All users have the same administrative access. New users can only be added from the local computer.',
+    '添加用户': 'Add User', '用户': 'User', '创建时间': 'Created', '活跃会话': 'Active sessions',
+    '正在加载用户。': 'Loading users.', '管理记录': 'Management records',
+    '只记录服务启停与场景切换的时间和结果。': 'Only service lifecycle and scene switch times and results are recorded.',
+    '刷新记录': 'Refresh Log', '服务与场景操作': 'Service and Scene Operations',
+    '包含每个脚本步骤、耗时和失败摘要': 'Includes every script step, duration, and failure summary',
+    '尚无服务或场景操作。': 'No service or scene operations.', '安全访问': 'Secure Access',
+    '正在检查管理器': 'Checking Manager', '正在确认首次设置与登录状态。': 'Checking setup and sign-in status.',
+    '管理员用户名': 'Administrator username', '密码': 'Password', '确认密码': 'Confirm password',
+    '继续': 'Continue', '数据已刷新': 'Data refreshed', '管理脚本绝对路径': 'Absolute management script path',
+    'GPU 展示标签': 'GPU display label', '服务端口': 'Service port', 'UI 地址': 'UI address',
+    '例如 RTX 4090': 'For example, RTX 4090', '取消': 'Cancel', '保存服务': 'Save Service',
+    '场景编辑器': 'Scene Editor', '场景名称': 'Scene name', '需要启动的服务': 'Services to start',
+    '使用箭头调整启动顺序': 'Use the arrows to change startup order', '保存场景': 'Save Scene',
+    '用户名': 'Username', '账户安全': 'Account Security', '修改密码': 'Change Password',
+    '修改后，该用户的现有登录会话将全部失效。': 'All existing sessions for this user will be invalidated after the change.',
+    '新密码': 'New password', '确认新密码': 'Confirm new password', '保存新密码': 'Save New Password',
+    '场景切换进度': 'Scene Switch Progress', '正在切换场景': 'Switching Scene',
+    '正在准备服务操作。': 'Preparing service operations.', '当前步骤': 'Current step',
+    '等待管理器响应': 'Waiting for the manager', '等待第一条服务操作记录。': 'Waiting for the first service operation.',
+    '终止请求会在当前脚本执行完成后生效，已经完成的服务动作不会自动回滚。': 'Cancellation takes effect after the current script finishes. Completed service actions are not rolled back.',
+    '终止切换并返回': 'Cancel Switch and Return', '返回工作场景': 'Return to Scenes',
+    '不支持': 'Unavailable', '未知': 'Unknown', '时间未知': 'Time unknown',
+    '服务器返回了无法识别的数据。': 'The server returned unrecognized data.',
+    '需要登录': 'Authentication is required.', '会话无效或已过期': 'The session is invalid or has expired.',
+    'CSRF 验证失败': 'CSRF validation failed.', '用户名或密码错误': 'The username or password is invalid.',
+    '用户名已存在': 'The username already exists.', '用户不存在': 'The user was not found.',
+    '不能删除当前登录用户': 'The currently signed-in user cannot be deleted.',
+    '不能删除最后一个用户': 'The last user cannot be deleted.',
+    '登录失败次数过多，请稍后重试': 'Too many failed sign-in attempts. Try again later.',
+    '新增用户仅允许从本机执行': 'This operation is only allowed from the local computer.',
+    '请求参数无效': 'The request parameters are invalid.', '持久化操作失败': 'The persistent storage operation failed.',
+    '服务器内部错误': 'An internal server error occurred.', '请求体超过限制': 'The request body exceeds the allowed size.',
+    '已登记服务不存在': 'The registered service was not found.', '场景不存在': 'The scene was not found.',
+    '操作记录不存在': 'The operation record was not found.', '已有服务或场景操作正在执行': 'A service or scene operation is already running.',
+    '登录状态已过期，请重新登录。': 'Your session has expired. Sign in again.',
+    '连接管理器超时。': 'The manager connection timed out.', '无法连接管理器。': 'Unable to connect to the manager.',
+    '首次设置': 'Initial Setup', '创建本机管理员': 'Create Local Administrator', '登录工作站': 'Sign In',
+    '首次设置仅允许在本机完成。密码至少 4 个字符。': 'Initial setup is only available locally. The password must contain at least 4 characters.',
+    '使用管理员账户继续。': 'Continue with an administrator account.', '创建管理员并进入': 'Create Administrator and Continue',
+    '登录': 'Sign In', '两次输入的密码不一致。': 'The passwords do not match.', '管理员': 'Admin',
+    '已退出登录。': 'Signed out.', '监控离线': 'Monitoring offline', '实时': 'Live',
+    '总量不可用': 'Total unavailable', '本机': 'Local host', '未检测到': 'Not detected', '已检测': 'Detected',
+    '部分数据降级': 'Some data is degraded', '采集失败': 'Collection failed',
+    'CPU 总负载': 'Total CPU load', '内存占用': 'Memory usage', 'GPU 负载': 'GPU load', '% 当前': '% current',
+    '状态未知': 'Unknown', '已激活': 'Active', '部分启动': 'Partially Started', '未激活': 'Inactive',
+    '尚未添加已登记服务。': 'No registered services have been added.', '无说明': 'No description',
+    '打开 UI': 'Open UI', '查看': 'View', '无端口': 'No port', '尚未登记 GPU 0 服务': 'No GPU 0 services registered',
+    'GPU 为用户登记标签': 'GPU is a user-provided label', '尚未登记服务': 'No service registered',
+    '等待登记': 'Waiting for registration', '没有符合筛选条件的服务。': 'No services match the filters.',
+    '操作中': 'In progress', '尚未记录状态': 'No state has been recorded', '检查状态': 'Check Status',
+    '启动': 'Start', '停止': 'Stop', '重启': 'Restart', '停止失败': 'Stop failed', '；': '; ', '编辑': 'Edit', '删除': 'Delete', '未标注': 'Not specified',
+    '已有操作正在执行': 'Another operation is already running', '场景顺序已保存': 'Scene order saved',
+    '（当前）': ' (current)', '场景不存在，请刷新后重试': 'The scene no longer exists. Refresh and try again.',
+    '拖动调整场景位置': 'Drag to reorder the scene', '此场景不启动任何服务': 'This scene starts no services',
+    '打开 UI ↗': 'Open UI ↗', '上移': 'Move Up', '下移': 'Move Down', '重新切换': 'Switch Again',
+    '切换到此场景': 'Switch to This Scene', '尚未添加场景': 'No scenes have been added',
+    '场景未完整激活': 'No scene is fully active', '当前服务状态不完整符合任何场景。': 'The current service states do not fully match any scene.',
+    '服务操作已开始': 'Service operation started', '状态检查完成': 'Status check completed',
+    '停止所有已登记服务？管理器将依次调用每个服务脚本的 stop 动作。': 'Stop all registered services? The manager will run the stop action for each service in order.',
+    '正在停止全部服务': 'Stopping all services', '操作成功': 'Operation succeeded', '操作已终止': 'Operation cancelled',
+    '操作失败': 'Operation failed', '操作仍在后台执行，请到日志中心查看。': 'The operation is still running. Check the operation log for progress.',
+    '管理器正在按顺序停止和启动服务。': 'The manager is stopping and starting services in order.',
+    '等待第一项服务操作': 'Waiting for the first service operation', '正在启动': 'Starting', '正在停止': 'Stopping',
+    '场景切换完成': 'Scene switch completed', '场景切换已终止': 'Scene switch cancelled', '场景切换失败': 'Scene switch failed',
+    '没有需要执行的服务步骤。': 'No service steps were required.', '进行中': 'In progress', '成功': 'Succeeded',
+    '已终止': 'Cancelled', '失败': 'Failed', '切换已终止': 'Switch cancelled',
+    '场景切换未完成': 'Scene switch did not complete', '所有服务均已达到目标状态。': 'All services reached their target states.',
+    '服务脚本执行失败': 'The service script failed.', '部分服务未能停止': 'Some services could not be stopped.',
+    '用户终止了场景切换；已完成的服务动作不会自动回滚': 'The user cancelled the scene switch. Completed service actions were not rolled back.',
+    '场景切换未达到全部目标状态': 'The scene switch did not reach every target state.',
+    '管理器重启，操作已中断': 'The manager restarted and interrupted the operation.',
+    '管理脚本必须使用绝对路径': 'The management script must use an absolute path.',
+    '管理脚本只支持 .cmd、.bat、.ps1': 'Management scripts must use .cmd, .bat, or .ps1.',
+    '管理脚本不存在': 'The management script was not found.',
+    '未找到 PowerShell': 'PowerShell was not found.',
+    '未找到 Windows 命令解释器': 'Windows Command Processor was not found.',
+    '脚本动作无效': 'The script action is invalid.',
+    '请在日志中心查看失败步骤。': 'Check the operation log for failed steps.', '正在提交终止请求…': 'Submitting cancellation…',
+    '终止请求已提交，当前步骤结束后停止': 'Cancellation requested. Processing will stop after the current step.',
+    '编辑服务': 'Edit Service', '服务已更新': 'Service updated', '服务已添加': 'Service added',
+    '服务登记已删除': 'Service registration deleted', '编辑场景': 'Edit Scene', '场景已更新': 'Scene updated',
+    '场景已添加': 'Scene added', '场景已删除': 'Scene deleted', '尚无用户。': 'No users found.',
+    '当前登录账户': 'Current signed-in account', '管理账户': 'Administrator account', '当前用户': 'Current user',
+    '可用': 'Available', '不能删除当前登录用户': 'The current user cannot be deleted',
+    '不能删除最后一个用户': 'The last user cannot be deleted', '用户已添加': 'User added',
+    '保存后当前会话将失效，需要使用新密码重新登录。': 'Saving will invalidate this session. Sign in again with the new password.',
+    '保存后，该用户的现有登录会话将全部失效。': 'Saving will invalidate all existing sessions for this user.',
+    '密码已修改，请使用新密码重新登录。': 'Password changed. Sign in with the new password.',
+    '密码已修改，旧会话已失效': 'Password changed. Previous sessions are no longer valid.', '用户已删除': 'User deleted',
+    '等待执行': 'Queued', '执行中': 'Running', '场景切换': 'Scene switch', '服务操作': 'Service operation',
+    '暂无服务或场景操作。': 'No service or scene operations.', '场景': 'Scene', '服务': 'Service',
+    '最近 30 分钟没有服务或场景操作。': 'No service or scene operations in the last 30 minutes.',
+  };
+
+  const templates = [
+    [/^请求失败（(.+)）$/, 'Request failed ($1)'], [/^服务状态读取失败：(.+)$/, 'Unable to read service states: $1'],
+    [/^用户加载失败：(.+)$/, 'Unable to load users: $1'], [/^温度 (.+)$/, 'Temperature $1'],
+    [/^(.+) 已使用 · 共 (.+)$/, '$1 used · $2 total'], [/^(.+) 已使用$/, '$1 used'],
+    [/^(.+) 可用$/, '$1 available'], [/^(.+) 运行 · (.+) 停止$/, '$1 running · $2 stopped'],
+    [/^剩余 (.+)$/, '$1 free'], [/^(.+) GPU 负载曲线$/, '$1 GPU load chart'],
+    [/^状态记录于 (.+)$/, 'State recorded at $1'], [/^场景 (.+)$/, 'Scene $1'],
+    [/^启动顺序 (.+)$/, 'Startup order $1'], [/^包含 (.+) 个服务$/, 'Contains $1 services'],
+    [/^正在切换到 (.+)$/, 'Switching to $1'], [/^正在启动 · (.+)$/, 'Starting · $1'],
+    [/^正在停止 · (.+)$/, 'Stopping · $1'], [/^修改 (.+) 的密码$/, 'Change password for $1'],
+    [/^拖动调整 (.+) 的位置$/, 'Drag to reorder $1'], [/^(.+) · 已激活$/, '$1 · Active'],
+    [/^(.+) 已就绪$/, '$1 is ready'],
+    [/^脚本退出码 (.+)$/, 'Script exit code $1'],
+    [/^脚本动作 (.+) 执行超时$/, 'Script action $1 timed out'],
+    [/^无法启动管理脚本: (.+)$/, 'Unable to start the management script: $1'],
+    [/^删除服务“(.+)”的登记记录？原始脚本和服务不会被删除。$/, 'Delete the registration for “$1”? The original script and service will not be deleted.'],
+    [/^删除场景“(.+)”？不会停止或删除任何服务。$/, 'Delete scene “$1”? No services will be stopped or deleted.'],
+    [/^删除用户“(.+)”？该用户的登录会话将立即失效。$/, 'Delete user “$1”? All sessions for this user will be invalidated immediately.'],
+  ];
+  const reverseTranslations = Object.fromEntries(Object.entries(translations).map(([zh, en]) => [en, zh]));
+  const originalText = new WeakMap();
+  const originalAttributes = new WeakMap();
+  const translatedAttributes = ['title', 'placeholder', 'aria-label', 'data-title'];
+
+  function detectedLanguage() {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved === 'zh' || saved === 'en') return saved;
+    const browserLanguage = (navigator.languages && navigator.languages[0]) || navigator.language || '';
+    return browserLanguage.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  }
+  let language = detectedLanguage();
+  function translate(value) {
+    if (typeof value !== 'string') return value;
+    if (language === 'zh') return reverseTranslations[value] ?? value;
+    if (translations[value] !== undefined) return translations[value];
+    for (const [pattern, replacement] of templates) if (pattern.test(value)) return value.replace(pattern, replacement);
+    return value;
+  }
+  function translateTextNode(node) {
+    if (node.parentElement?.closest('[data-i18n-skip]')) return;
+    let record = originalText.get(node);
+    if (!record || node.nodeValue !== record.output) record = { source: node.nodeValue, output: node.nodeValue };
+    const source = record.source; const match = source.match(/^(\s*)(.*?)(\s*)$/s);
+    const next = `${match[1]}${translate(match[2])}${match[3]}`;
+    record.output = next; originalText.set(node, record);
+    if (node.nodeValue !== next) node.nodeValue = next;
+  }
+  function translateElement(element) {
+    if (element.closest('[data-i18n-skip]')) return;
+    let values = originalAttributes.get(element);
+    if (!values) { values = new Map(); originalAttributes.set(element, values); }
+    translatedAttributes.forEach((name) => {
+      if (!element.hasAttribute(name)) return;
+      const current = element.getAttribute(name); let record = values.get(name);
+      if (!record || current !== record.output) record = { source: current, output: current };
+      const next = translate(record.source); record.output = next; values.set(name, record);
+      if (element.getAttribute(name) !== next) element.setAttribute(name, next);
+    });
+  }
+  function apply(root = document.documentElement) {
+    if (root.nodeType === Node.TEXT_NODE) { translateTextNode(root); return; }
+    if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_NODE) return;
+    if (root.nodeType === Node.ELEMENT_NODE) translateElement(root);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    let node; while ((node = walker.nextNode())) node.nodeType === Node.TEXT_NODE ? translateTextNode(node) : translateElement(node);
+  }
+  function syncSelectors() { document.querySelectorAll('[data-language-select]').forEach((select) => { select.value = language; }); }
+  function setLanguage(next) {
+    if (next !== 'zh' && next !== 'en') return;
+    language = next; localStorage.setItem(STORAGE_KEY, next); document.documentElement.lang = next === 'zh' ? 'zh-CN' : 'en';
+    apply(); syncSelectors(); document.dispatchEvent(new CustomEvent('languagechange', { detail: { language } }));
+  }
+  document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+  document.addEventListener('DOMContentLoaded', () => {
+    apply(); syncSelectors();
+    document.querySelectorAll('[data-language-select]').forEach((select) => select.addEventListener('change', () => setLanguage(select.value)));
+    new MutationObserver((records) => records.forEach((record) => {
+      if (record.type === 'characterData') translateTextNode(record.target);
+      else if (record.type === 'attributes') translateElement(record.target);
+      else record.addedNodes.forEach(apply);
+    })).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: translatedAttributes });
+  });
+  window.axisI18n = { apply, get language() { return language; }, setLanguage, translate };
+})();

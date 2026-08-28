@@ -495,6 +495,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn("AXIS", response.text)
         self.assertEqual(self.client.get("/styles.css").status_code, 200)
         self.assertEqual(self.client.get("/app.js").status_code, 200)
+        self.assertEqual(self.client.get("/i18n.js").status_code, 200)
         self.assertEqual(self.client.get("/request-guard.js").status_code, 200)
         self.assertEqual(self.client.get("/REQUIREMENTS.md").status_code, 404)
 
@@ -556,6 +557,59 @@ class ApiTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(guard_test.returncode, 0, guard_test.stderr)
+        i18n_test = subprocess.run(
+            [node, "--test", str(Path(__file__).resolve().parent / "frontend_i18n.test.js")],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(i18n_test.returncode, 0, i18n_test.stderr)
+
+    def test_api_errors_follow_requested_language_without_changing_error_code(self) -> None:
+        setup = self.client.post(
+            "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+        )
+        self.assertEqual(setup.status_code, 201, setup.text)
+        self.client.cookies.clear()
+
+        english = self.client.get("/api/v1/users", headers={"Accept-Language": "en-US,en;q=0.9"})
+        self.assertEqual(english.status_code, 401)
+        self.assertEqual(english.json()["error"]["code"], "authentication_required")
+        self.assertEqual(english.json()["error"]["message"], "Authentication is required.")
+        self.assertEqual(english.headers["content-language"], "en")
+
+        chinese = self.client.get("/api/v1/users", headers={"Accept-Language": "zh-CN"})
+        self.assertEqual(chinese.status_code, 401)
+        self.assertEqual(chinese.json()["error"]["code"], "authentication_required")
+        self.assertEqual(chinese.json()["error"]["message"], "需要登录")
+        self.assertEqual(chinese.headers["content-language"], "zh")
+
+        fallback = self.client.get("/api/v1/users", headers={"Accept-Language": "fr-FR"})
+        self.assertEqual(fallback.json()["error"]["message"], "Authentication is required.")
+
+    def test_standard_http_errors_use_the_declared_language(self) -> None:
+        missing = self.client.get("/api/v1/not-a-real-route")
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(missing.json()["error"]["code"], "http_error")
+        self.assertEqual(missing.json()["error"]["message"], "请求的资源不存在。")
+        self.assertEqual(missing.headers["content-language"], "zh")
+
+        missing_english = self.client.get(
+            "/api/v1/not-a-real-route", headers={"Accept-Language": "en"}
+        )
+        self.assertEqual(
+            missing_english.json()["error"]["message"],
+            "The requested resource was not found.",
+        )
+        self.assertEqual(missing_english.headers["content-language"], "en")
+
+        method = self.client.post("/api/v1/health", headers={"Accept-Language": "zh-CN"})
+        self.assertEqual(method.status_code, 405)
+        self.assertEqual(method.json()["error"]["message"], "请求方法不允许。")
+        self.assertEqual(method.headers["content-language"], "zh")
 
     @patch("workstation_manager.collectors.collect_ports", return_value=[])
     @patch("workstation_manager.collectors.collect_docker", return_value=[])
