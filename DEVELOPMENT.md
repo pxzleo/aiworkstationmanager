@@ -130,6 +130,7 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 ### 查询参数与主要响应
 
 - `/api/v1/history` 的 `window` 使用分钟格式，默认 `15m`，范围为 `1m..1440m`。`15m` 返回原始采样，`1h` 按 15 秒分桶，`24h` 按 60 秒分桶。响应除 `samples` 外返回 `bucket_seconds`、`retention_minutes`、`stored_sample_count`、`stored_since` 和 `stored_until`，便于前端显示实际已累计时长。
+- 资源历史的主机字段包含 CPU 负载/频率/温度、物理/提交/页面文件内存、主物理网卡收发、WSL 内存与 Swap；`gpus` 额外包含显存控制器及编码/解码负载，`disks` 按物理磁盘保存读写吞吐和平均延迟。GPU P-State、风扇、PCIe、时钟限制、进程归属和 Docker 容器资源仅属于实时快照，不写入历史。
 - `/api/v1/health` 在资源历史写入失败时返回 `status: "degraded"`、`readiness.resource_history: "degraded"` 和不含底层 cause 的 `history_persistence_error`。实时快照仍可用，下一采样周期自动重试，成功后清除降级状态。
 - `/api/v1/operations` 和 `/api/v1/audit` 的 `limit` 默认为 100，范围为 `1..500`，分别返回 `operations` 或 `events` 数组。
 - 登录和首次设置成功返回 `authenticated`、`csrf_token`、`expires_at`；`auth/me` 返回 `username`、`expires_at`、新的 `csrf_token`。
@@ -177,6 +178,6 @@ WM_TRUSTED_PROXY_IPS
 
 ## 数据与并发
 
-默认数据库是 `data/workstation-manager.db`，当前 schema 为 16，并在启动时自动迁移。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
+默认数据库是 `data/workstation-manager.db`，当前 schema 为 17，并在启动时自动迁移。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
 
 服务的保存状态是控制面的主要状态来源。资源监控定时采样不会调用服务脚本；只有显式状态检查才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留 24 小时；内存队列固定只保留最近 15 分钟。

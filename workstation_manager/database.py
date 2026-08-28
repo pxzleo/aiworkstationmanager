@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 class DatabaseError(RuntimeError):
@@ -99,6 +99,7 @@ class Database:
                         14: self._migrate_to_14,
                         15: self._migrate_to_15,
                         16: self._migrate_to_16,
+                        17: self._migrate_to_17,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -356,6 +357,41 @@ class Database:
         cls._ensure_column(connection, "resource_samples", "memory_used_bytes", "REAL")
         cls._ensure_column(connection, "resource_samples", "memory_total_bytes", "REAL")
 
+    @classmethod
+    def _migrate_to_17(cls, connection: sqlite3.Connection) -> None:
+        host_columns = {
+            "cpu_frequency_mhz": "REAL",
+            "memory_available_bytes": "REAL",
+            "commit_used_bytes": "REAL",
+            "commit_limit_bytes": "REAL",
+            "swap_used_bytes": "REAL",
+            "swap_total_bytes": "REAL",
+            "network_received_bytes_per_second": "REAL",
+            "network_sent_bytes_per_second": "REAL",
+            "wsl_memory_used_bytes": "REAL",
+            "wsl_swap_used_bytes": "REAL",
+        }
+        for column, declaration in host_columns.items():
+            cls._ensure_column(connection, "resource_samples", column, declaration)
+        for column in ("memory_utilization_percent", "encoder_percent", "decoder_percent"):
+            cls._ensure_column(connection, "resource_gpu_samples", column, "REAL")
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS resource_disk_samples (
+                sample_id INTEGER NOT NULL
+                    REFERENCES resource_samples(id) ON DELETE CASCADE,
+                disk_key TEXT NOT NULL,
+                name TEXT,
+                read_bytes_per_second REAL,
+                write_bytes_per_second REAL,
+                latency_ms REAL,
+                PRIMARY KEY(sample_id, disk_key)
+            )"""
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_resource_disk_sample "
+            "ON resource_disk_samples(sample_id)"
+        )
+
     @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
         """保留历史版本号，使旧数据库可以按顺序升级到当前结构。"""
@@ -379,17 +415,38 @@ class Database:
                     connection.execute(
                         """INSERT INTO resource_samples(
                                sampled_at,cpu_load_percent,cpu_temperature_c,memory_percent,
-                               memory_used_bytes,memory_total_bytes
-                           ) VALUES (?,?,?,?,?,?)
+                               memory_used_bytes,memory_total_bytes,cpu_frequency_mhz,
+                               memory_available_bytes,commit_used_bytes,commit_limit_bytes,
+                               swap_used_bytes,swap_total_bytes,
+                               network_received_bytes_per_second,network_sent_bytes_per_second,
+                               wsl_memory_used_bytes,wsl_swap_used_bytes
+                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                            ON CONFLICT(sampled_at) DO UPDATE SET
                                cpu_load_percent=excluded.cpu_load_percent,
                                cpu_temperature_c=excluded.cpu_temperature_c,
                                memory_percent=excluded.memory_percent,
                                memory_used_bytes=excluded.memory_used_bytes,
-                               memory_total_bytes=excluded.memory_total_bytes""",
+                               memory_total_bytes=excluded.memory_total_bytes,
+                               cpu_frequency_mhz=excluded.cpu_frequency_mhz,
+                               memory_available_bytes=excluded.memory_available_bytes,
+                               commit_used_bytes=excluded.commit_used_bytes,
+                               commit_limit_bytes=excluded.commit_limit_bytes,
+                               swap_used_bytes=excluded.swap_used_bytes,
+                               swap_total_bytes=excluded.swap_total_bytes,
+                               network_received_bytes_per_second=excluded.network_received_bytes_per_second,
+                               network_sent_bytes_per_second=excluded.network_sent_bytes_per_second,
+                               wsl_memory_used_bytes=excluded.wsl_memory_used_bytes,
+                               wsl_swap_used_bytes=excluded.wsl_swap_used_bytes""",
                         (sampled_at, sample.get("cpu_load_percent"),
                          sample.get("cpu_temperature_c"), sample.get("memory_percent"),
-                         sample.get("memory_used_bytes"), sample.get("memory_total_bytes")),
+                         sample.get("memory_used_bytes"), sample.get("memory_total_bytes"),
+                         sample.get("cpu_frequency_mhz"), sample.get("memory_available_bytes"),
+                         sample.get("commit_used_bytes"), sample.get("commit_limit_bytes"),
+                         sample.get("swap_used_bytes"), sample.get("swap_total_bytes"),
+                         sample.get("network_received_bytes_per_second"),
+                         sample.get("network_sent_bytes_per_second"),
+                         sample.get("wsl_memory_used_bytes"),
+                         sample.get("wsl_swap_used_bytes")),
                     )
                     row = connection.execute(
                         "SELECT id FROM resource_samples WHERE sampled_at=?", (sampled_at,)
@@ -414,13 +471,35 @@ class Database:
                             """INSERT INTO resource_gpu_samples(
                                    sample_id,gpu_key,uuid,gpu_index,name,load_percent,
                                    memory_used_mib,memory_total_mib,memory_percent,temperature_c,
-                                   power_w,graphics_clock_mhz
-                               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                   power_w,graphics_clock_mhz,memory_utilization_percent,
+                                   encoder_percent,decoder_percent
+                               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                             (sample_id, gpu_key, uuid or None, gpu_index, gpu.get("name"),
                              gpu.get("load_percent"), gpu.get("memory_used_mib"),
                              gpu.get("memory_total_mib"), gpu.get("memory_percent"),
                              gpu.get("temperature_c"), gpu.get("power_w"),
-                             gpu.get("graphics_clock_mhz")),
+                             gpu.get("graphics_clock_mhz"),
+                             gpu.get("memory_utilization_percent"),
+                             gpu.get("encoder_percent"), gpu.get("decoder_percent")),
+                        )
+                    connection.execute(
+                        "DELETE FROM resource_disk_samples WHERE sample_id=?", (sample_id,)
+                    )
+                    disk_occurrences: dict[str, int] = {}
+                    for position, disk in enumerate(sample.get("disks", [])):
+                        name = str(disk.get("name") or "").strip()
+                        base_key = name or f"position:{position}"
+                        occurrence = disk_occurrences.get(base_key, 0)
+                        disk_occurrences[base_key] = occurrence + 1
+                        disk_key = f"{base_key}#{occurrence}"
+                        connection.execute(
+                            """INSERT INTO resource_disk_samples(
+                                   sample_id,disk_key,name,read_bytes_per_second,
+                                   write_bytes_per_second,latency_ms
+                               ) VALUES (?,?,?,?,?,?)""",
+                            (sample_id, disk_key, name or None,
+                             disk.get("read_bytes_per_second"),
+                             disk.get("write_bytes_per_second"), disk.get("latency_ms")),
                         )
                     cutoff = (
                         datetime.now(timezone.utc)
@@ -458,7 +537,17 @@ class Database:
                                   AVG(cpu_temperature_c) AS cpu_temperature_c,
                                   AVG(memory_percent) AS memory_percent,
                                   AVG(memory_used_bytes) AS memory_used_bytes,
-                                  MAX(memory_total_bytes) AS memory_total_bytes
+                                  MAX(memory_total_bytes) AS memory_total_bytes,
+                                  AVG(cpu_frequency_mhz) AS cpu_frequency_mhz,
+                                  AVG(memory_available_bytes) AS memory_available_bytes,
+                                  AVG(commit_used_bytes) AS commit_used_bytes,
+                                  MAX(commit_limit_bytes) AS commit_limit_bytes,
+                                  AVG(swap_used_bytes) AS swap_used_bytes,
+                                  MAX(swap_total_bytes) AS swap_total_bytes,
+                                  AVG(network_received_bytes_per_second) AS network_received_bytes_per_second,
+                                  AVG(network_sent_bytes_per_second) AS network_sent_bytes_per_second,
+                                  AVG(wsl_memory_used_bytes) AS wsl_memory_used_bytes,
+                                  AVG(wsl_swap_used_bytes) AS wsl_swap_used_bytes
                            FROM resource_samples WHERE sampled_at>=?
                            GROUP BY bucket ORDER BY bucket""",
                         (bucket_seconds, cutoff),
@@ -472,18 +561,40 @@ class Database:
                                   AVG(g.memory_percent) AS memory_percent,
                                   AVG(g.temperature_c) AS temperature_c,
                                   AVG(g.power_w) AS power_w,
-                                  AVG(g.graphics_clock_mhz) AS graphics_clock_mhz
+                                  AVG(g.graphics_clock_mhz) AS graphics_clock_mhz,
+                                  AVG(g.memory_utilization_percent) AS memory_utilization_percent,
+                                  AVG(g.encoder_percent) AS encoder_percent,
+                                  AVG(g.decoder_percent) AS decoder_percent
                            FROM resource_gpu_samples g
                            JOIN resource_samples s ON s.id=g.sample_id
                            WHERE s.sampled_at>=? GROUP BY bucket,g.gpu_key
                            ORDER BY bucket,g.gpu_index,g.gpu_key""",
                         (bucket_seconds, cutoff),
                     ).fetchall()
-                    samples = self._assemble_resource_history(host_rows, gpu_rows, "bucket")
+                    disk_rows = connection.execute(
+                        """SELECT CAST(strftime('%s',s.sampled_at) AS INTEGER)/? AS bucket,
+                                  d.disk_key,MAX(d.name) AS name,
+                                  AVG(d.read_bytes_per_second) AS read_bytes_per_second,
+                                  AVG(d.write_bytes_per_second) AS write_bytes_per_second,
+                                  AVG(d.latency_ms) AS latency_ms
+                           FROM resource_disk_samples d
+                           JOIN resource_samples s ON s.id=d.sample_id
+                           WHERE s.sampled_at>=? GROUP BY bucket,d.disk_key
+                           ORDER BY bucket,d.disk_key""",
+                        (bucket_seconds, cutoff),
+                    ).fetchall()
+                    samples = self._assemble_resource_history(
+                        host_rows, gpu_rows, disk_rows, "bucket"
+                    )
                 else:
                     host_rows = connection.execute(
                         """SELECT id,sampled_at,cpu_load_percent,cpu_temperature_c,memory_percent,
                                   memory_used_bytes,memory_total_bytes
+                                  ,cpu_frequency_mhz,memory_available_bytes,
+                                  commit_used_bytes,commit_limit_bytes,swap_used_bytes,
+                                  swap_total_bytes,network_received_bytes_per_second,
+                                  network_sent_bytes_per_second,wsl_memory_used_bytes,
+                                  wsl_swap_used_bytes
                            FROM resource_samples WHERE sampled_at>=? ORDER BY sampled_at""",
                         (cutoff,),
                     ).fetchall()
@@ -493,7 +604,15 @@ class Database:
                            WHERE s.sampled_at>=? ORDER BY s.sampled_at,g.gpu_index,g.gpu_key""",
                         (cutoff,),
                     ).fetchall()
-                    samples = self._assemble_resource_history(host_rows, gpu_rows, "sample_id")
+                    disk_rows = connection.execute(
+                        """SELECT d.*,s.sampled_at FROM resource_disk_samples d
+                           JOIN resource_samples s ON s.id=d.sample_id
+                           WHERE s.sampled_at>=? ORDER BY s.sampled_at,d.disk_key""",
+                        (cutoff,),
+                    ).fetchall()
+                    samples = self._assemble_resource_history(
+                        host_rows, gpu_rows, disk_rows, "sample_id"
+                    )
             return {
                 "samples": samples,
                 "bucket_seconds": bucket_seconds,
@@ -507,7 +626,8 @@ class Database:
 
     @staticmethod
     def _assemble_resource_history(
-        host_rows: list[sqlite3.Row], gpu_rows: list[sqlite3.Row], key_name: str,
+        host_rows: list[sqlite3.Row], gpu_rows: list[sqlite3.Row],
+        disk_rows: list[sqlite3.Row], key_name: str,
     ) -> list[dict[str, Any]]:
         samples: dict[int, dict[str, Any]] = {}
         for row in host_rows:
@@ -519,7 +639,22 @@ class Database:
                 "memory_percent": row["memory_percent"],
                 "memory_used_bytes": row["memory_used_bytes"],
                 "memory_total_bytes": row["memory_total_bytes"],
+                "cpu_frequency_mhz": row["cpu_frequency_mhz"],
+                "memory_available_bytes": row["memory_available_bytes"],
+                "commit_used_bytes": row["commit_used_bytes"],
+                "commit_limit_bytes": row["commit_limit_bytes"],
+                "swap_used_bytes": row["swap_used_bytes"],
+                "swap_total_bytes": row["swap_total_bytes"],
+                "network_received_bytes_per_second": row[
+                    "network_received_bytes_per_second"
+                ],
+                "network_sent_bytes_per_second": row[
+                    "network_sent_bytes_per_second"
+                ],
+                "wsl_memory_used_bytes": row["wsl_memory_used_bytes"],
+                "wsl_swap_used_bytes": row["wsl_swap_used_bytes"],
                 "gpus": [],
+                "disks": [],
             }
         for row in gpu_rows:
             key = int(row[key_name])
@@ -534,6 +669,19 @@ class Database:
                 "temperature_c": row["temperature_c"],
                 "power_w": row["power_w"],
                 "graphics_clock_mhz": row["graphics_clock_mhz"],
+                "memory_utilization_percent": row["memory_utilization_percent"],
+                "encoder_percent": row["encoder_percent"],
+                "decoder_percent": row["decoder_percent"],
+            })
+        for row in disk_rows:
+            key = int(row[key_name])
+            if key not in samples:
+                continue
+            samples[key]["disks"].append({
+                "name": row["name"],
+                "read_bytes_per_second": row["read_bytes_per_second"],
+                "write_bytes_per_second": row["write_bytes_per_second"],
+                "latency_ms": row["latency_ms"],
             })
         return list(samples.values())
 

@@ -354,6 +354,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .security-note button { background: none; border: 0; color: var(--warning); font-size: 9px; cursor: pointer; }
 
 .monitor-grid { display: grid; gap: 18px; }
+.monitor-tabbar { position: sticky; top: 0; z-index: 4; display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); margin: -8px 0 18px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(14px); }
+.monitor-tabbar button { min-height: 42px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 10px; font-weight: 650; cursor: pointer; transition: color .18s ease, background .18s ease, transform .18s ease; }
+.monitor-tabbar button:hover { color: var(--text); }
+.monitor-tabbar button.active { color: var(--text); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .monitor-overview { min-height: 58px; display: flex; align-items: center; justify-content: flex-end; gap: 0; padding: 0 4px; border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line); }
 .monitor-overview .monitor-detail { min-width: 116px; padding: 0 16px; border-left: 1px solid var(--line); }
 .monitor-group { --monitor-color: var(--accent); overflow: hidden; position: relative; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(115deg, color-mix(in srgb, var(--monitor-color) 6%, transparent), transparent 34%), var(--surface); animation: monitorBandIn .35s cubic-bezier(.2,.75,.3,1) both; transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; }
@@ -427,6 +431,42 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .chart-compact.chart-no-x-axis .chart-frame { grid-template-rows: 96px 0; }
 .chart-compact .line-chart { height: 96px; }
 .monitor-gpu-empty { margin: 0; padding: 24px; border: 1px dashed var(--line); border-radius: 10px; text-align: center; }
+.monitor-status-band { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 24px 4px; border-bottom: 1px solid var(--line-strong); animation: monitorBandIn .3s ease both; }
+.monitor-status-band h2 { margin: 4px 0; font-size: 24px; font-weight: 560; }
+.monitor-status-band p { margin: 0; color: var(--muted); font-size: 10px; }
+.monitor-health-label { color: var(--accent); font-size: 19px; font-weight: 650; }
+.monitor-health-label.warning { color: var(--warning); }
+.monitor-health-label.danger { color: var(--danger); }
+.monitor-summary-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); border-top: 1px solid var(--line); animation: monitorBandIn .35s ease both; }
+.monitor-summary-item { min-height: 90px; display: grid; grid-template-columns: 10px minmax(0,1fr); align-items: center; gap: 15px; padding: 16px 18px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--text); text-align: left; cursor: pointer; animation: monitorBandIn .35s calc(var(--summary-order) * 35ms) ease both; transition: background .18s ease; }
+.monitor-summary-item:nth-child(odd) { border-right: 1px solid var(--line); }
+.monitor-summary-item:last-child:nth-child(odd) { grid-column: 1 / -1; border-right: 0; }
+.monitor-summary-item:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.monitor-summary-item span { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: baseline; gap: 5px 18px; }
+.monitor-summary-item small { color: var(--muted); font-size: 9px; }
+.monitor-summary-item strong { justify-self: end; font-size: 17px; font-weight: 580; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.monitor-summary-item em { grid-column: 1/-1; color: var(--muted-2); font-size: 9px; font-style: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.monitor-health-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 55%, transparent); }
+.monitor-health-dot.warning { background: var(--warning); box-shadow: 0 0 10px color-mix(in srgb, var(--warning) 55%, transparent); }
+.monitor-health-dot.danger { background: var(--danger); box-shadow: 0 0 10px color-mix(in srgb, var(--danger) 55%, transparent); }
+.monitor-device-selector { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 2px; }
+.monitor-device-selector button { min-height: 38px; flex: 0 0 auto; padding: 0 15px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 9px; cursor: pointer; }
+.monitor-device-selector button.active { color: var(--text); border-color: var(--line-strong); background: var(--surface-2); }
+.monitor-runtime-section { border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line); animation: monitorBandIn .35s ease both; }
+.monitor-runtime-heading { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.monitor-runtime-heading div { font-size: 13px; font-weight: 620; }
+.monitor-runtime-heading small { color: var(--muted); font-size: 9px; }
+.gpu-state-row { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); border-top: 1px solid var(--line); }
+.gpu-state-row span { min-height: 66px; display: grid; align-content: center; gap: 5px; padding: 10px 14px; border-right: 1px solid var(--line); }
+.gpu-state-row span:last-child { border-right: 0; }
+.gpu-state-row small { color: var(--muted); font-size: 8px; }
+.gpu-state-row strong { font-size: 11px; font-weight: 580; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.runtime-table { border-top: 1px solid var(--line); }
+.runtime-row { min-height: 48px; display: grid; grid-template-columns: minmax(180px,1.6fr) repeat(4, minmax(90px,auto)); align-items: center; gap: 15px; border-bottom: 1px solid var(--line); font-size: 9px; }
+.runtime-row:last-child { border-bottom: 0; }
+.runtime-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 580; }
+.runtime-more { margin: 0; padding: 12px 0; color: var(--muted); font-size: 9px; }
+.monitor-system-group .monitor-chart-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); }
 .empty-state { color: var(--muted); font-size: 10px; line-height: 1.6; padding: 18px 0; margin: 0; }
 .api-status { margin: 0 0 10px; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .api-status.warning { color: var(--warning); }
@@ -639,6 +679,8 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .security-note { grid-template-columns: auto 1fr; }
   .security-note button { grid-column: 2; justify-self: start; padding: 0; }
   .monitor-grid { gap: 28px; }
+  .monitor-heading { gap: 18px; }
+  .monitor-tabbar { top: 58px; margin-inline: -2px; }
   .monitor-overview { justify-content: flex-start; overflow-x: auto; }
   .monitor-overview .monitor-detail { min-width: 104px; }
   .monitor-group-header { align-items: flex-start; flex-direction: column; padding: 18px 17px 16px 20px; }
@@ -646,6 +688,15 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .monitor-detail { min-width: 105px; padding-inline: 12px; }
   .monitor-detail:first-child { border-left: 0; padding-left: 0; }
   .monitor-chart-grid { grid-template-columns: 1fr; }
+  .monitor-status-band { align-items: flex-start; flex-direction: column; gap: 12px; padding-block: 20px; }
+  .monitor-summary-list { grid-template-columns: 1fr; }
+  .monitor-summary-item:nth-child(odd) { border-right: 0; }
+  .monitor-summary-item { min-height: 78px; padding-inline: 8px; }
+  .gpu-state-row { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .gpu-state-row span:nth-child(2) { border-right: 0; }
+  .gpu-state-row span:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  .runtime-row { grid-template-columns: minmax(120px,1fr) auto; padding: 11px 0; }
+  .runtime-row > :nth-child(n+3) { grid-column: 1/-1; }
   .correlation-heading { align-items: flex-start; flex-direction: column; gap: 8px; padding-block: 12px; }
   .correlation-time { justify-items: start; }
   .chart-section { padding: 18px 15px 17px 18px; }

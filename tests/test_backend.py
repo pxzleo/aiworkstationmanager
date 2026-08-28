@@ -14,7 +14,10 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from workstation_manager.app import create_app
-from workstation_manager.collectors import collect_docker, collect_gpus, collect_snapshot
+from workstation_manager.collectors import (
+    _cached, _slow_cache, collect_docker, collect_docker_resources,
+    collect_gpu_processes, collect_gpus, collect_snapshot, collect_wsl_resources,
+)
 from workstation_manager.config import ConfigError, Settings, load_settings
 from workstation_manager.history import HistoryStore, Sampler, parse_window
 
@@ -148,25 +151,64 @@ class ConfigTests(unittest.TestCase):
 class CollectorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.settings = Settings()
+        _slow_cache.clear()
 
     def test_gpu_csv_is_parsed_per_card(self) -> None:
         output = (
-            "0, GPU-a, NVIDIA GeForce RTX 4090, 98, 46359, 49140, 65, 430.5, 2715\n"
-            "1, GPU-b, NVIDIA GeForce RTX 3090, 2, 100, 24576, 37, 25.0, 210\n"
+            "0, GPU-a, NVIDIA GeForce RTX 4090, 98, 46359, 49140, 65, 430.5, 2715, 45, P0, 72, 8, 4, 4, 16, 0x4\n"
+            "1, GPU-b, NVIDIA GeForce RTX 3090, 2, 100, 24576, 37, 25.0, 210, 0, P8, 1, 0, 0, 1, 4, 0x1\n"
         )
         gpus = collect_gpus(self.settings, runner=lambda command, timeout: output)
         self.assertEqual([gpu["uuid"] for gpu in gpus], ["GPU-a", "GPU-b"])
         self.assertEqual(gpus[0]["memory_used_mib"], 46359)
         self.assertEqual(gpus[0]["graphics_clock_mhz"], 2715)
+        self.assertEqual(gpus[0]["performance_state"], "P0")
+        self.assertEqual(gpus[0]["pcie_width"], 16)
         self.assertAlmostEqual(gpus[1]["memory_percent"], 0.41, places=2)
 
     def test_unsupported_gpu_metric_is_none(self) -> None:
-        output = "0, GPU-a, RTX, N/A, 0, 24576, [N/A], N/A, N/A\n"
+        output = "0, GPU-a, RTX, N/A, 0, 24576, [N/A], N/A, N/A, N/A, P8, N/A, N/A, N/A, N/A, N/A, N/A\n"
         gpu = collect_gpus(self.settings, runner=lambda command, timeout: output)[0]
         self.assertIsNone(gpu["load_percent"])
         self.assertIsNone(gpu["temperature_c"])
         self.assertIsNone(gpu["power_w"])
         self.assertIsNone(gpu["graphics_clock_mhz"])
+
+    def test_gpu_processes_preserve_wddm_unavailable_memory(self) -> None:
+        output = "GPU-a, 1234, C:\\AI\\server.exe, N/A\n"
+        processes = collect_gpu_processes(
+            self.settings, runner=lambda command, timeout: output
+        )
+        self.assertEqual(processes[0]["pid"], 1234)
+        self.assertEqual(processes[0]["name"], "C:\\AI\\server.exe")
+        self.assertIsNone(processes[0]["memory_used_mib"])
+
+    def test_gpu_process_csv_preserves_quoted_commas_in_path(self) -> None:
+        output = 'GPU-a, 1234, "C:\\AI,Tools\\server.exe", 2048\n'
+        process = collect_gpu_processes(
+            self.settings, runner=lambda command, timeout: output
+        )[0]
+        self.assertEqual(process["name"], "C:\\AI,Tools\\server.exe")
+        self.assertEqual(process["memory_used_mib"], 2048)
+
+    def test_slow_cache_reuses_success_and_failure_until_backoff_expires(self) -> None:
+        calls = {"success": 0, "failure": 0}
+
+        def success() -> str:
+            calls["success"] += 1
+            return "ready"
+
+        def failure() -> str:
+            calls["failure"] += 1
+            raise RuntimeError("runtime unavailable")
+
+        self.assertEqual(_cached("success", 30, success), "ready")
+        self.assertEqual(_cached("success", 30, success), "ready")
+        with self.assertRaisesRegex(RuntimeError, "runtime unavailable"):
+            _cached("failure", 30, failure)
+        with self.assertRaisesRegex(RuntimeError, "runtime unavailable"):
+            _cached("failure", 30, failure)
+        self.assertEqual(calls, {"success": 1, "failure": 1})
 
     def test_docker_json_lines_are_parsed(self) -> None:
         output = '{"ID":"abc","Names":"ninfer","Image":"image","State":"running","Status":"Up","Ports":"0.0.0.0:8080->8080/tcp","Labels":""}\n'
@@ -178,6 +220,26 @@ class CollectorTests(unittest.TestCase):
     def test_docker_non_object_json_is_rejected_explicitly(self) -> None:
         with self.assertRaisesRegex(ValueError, "根节点必须是对象"):
             collect_docker(self.settings, runner=lambda command, timeout: "[]\n")
+
+    def test_docker_resource_json_is_parsed(self) -> None:
+        output = '{"Name":"ninfer","CPUPerc":"2.5%","MemUsage":"4GiB / 8GiB","NetIO":"1MB / 2MB","BlockIO":"3MB / 4MB","PIDs":"12"}\n'
+        resources = collect_docker_resources(
+            self.settings, runner=lambda command, timeout: output
+        )
+        self.assertEqual(resources["ninfer"]["memory_usage"], "4GiB / 8GiB")
+        self.assertEqual(resources["ninfer"]["pids"], "12")
+
+    def test_wsl_memory_and_swap_are_parsed_without_starting_another_distro(self) -> None:
+        outputs = iter([
+            "Ubuntu-22.04\n",
+            "MemTotal:       49152000 kB\nMemAvailable:   30000000 kB\n"
+            "SwapTotal:      33554432 kB\nSwapFree:       32505856 kB\n",
+        ])
+        resources = collect_wsl_resources(
+            self.settings, runner=lambda command, timeout: next(outputs)
+        )
+        self.assertEqual(resources["distributions"], ["Ubuntu-22.04"])
+        self.assertEqual(resources["swap_used_bytes"], 1024 * 1024 * 1024)
 
     @patch("workstation_manager.collectors.collect_ports", return_value=[])
     @patch("workstation_manager.collectors.collect_host", return_value={"cpu": {}, "memory": {}, "disks": []})
@@ -308,7 +370,7 @@ class SamplerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(records[0]["gpus"][0]["graphics_clock_mhz"], 2715)
         self.assertEqual(records[0]["gpus"][0]["power_w"], 430)
         self.assertNotIn("docker", records[0])
-        self.assertNotIn("disks", records[0])
+        self.assertEqual(records[0]["disks"], [])
 
     async def test_stop_does_not_overwrite_scheduler_started_during_cleanup(self) -> None:
         settings = Settings(sample_interval_seconds=60)
