@@ -29,6 +29,8 @@ class HistoryStore:
                 "cpu_load_percent": cpu.get("load_percent"),
                 "cpu_temperature_c": cpu.get("temperature_c"),
                 "memory_percent": memory.get("percent"),
+                "memory_used_bytes": memory.get("used_bytes"),
+                "memory_total_bytes": memory.get("total_bytes"),
                 "gpus": [
                     {
                         "uuid": gpu.get("uuid"),

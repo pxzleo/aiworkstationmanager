@@ -84,6 +84,10 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(js.includes('statisticsIncludeUnit: true'));
   assert.ok(js.includes('spec.statisticsIncludeUnit === true'));
   assert.ok(js.includes("metricGib('memory_total_mib')"));
+  assert.ok(js.includes("getter: (sample) => gib(sample.memory_used_bytes), unit: 'GB', decimals: 1"));
+  assert.ok(js.includes("gib(sample.memory_total_bytes)"));
+  assert.ok(js.includes("statisticsIncludeUnit: true, compact: true"));
+  assert.ok(!js.includes("getter: (sample) => sample.memory_percent }"));
   assert.ok(!js.includes("getter: metric('memory_percent'), unit: '%', maximum: 100"));
   assert.ok(i18n.includes("'处理器负载': 'Processor load'"));
   assert.ok(js.includes("'未检测到 NVIDIA GPU。'"));

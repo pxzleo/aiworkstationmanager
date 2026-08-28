@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 class DatabaseError(RuntimeError):
@@ -98,6 +98,7 @@ class Database:
                         13: self._migrate_to_13,
                         14: self._migrate_to_14,
                         15: self._migrate_to_15,
+                        16: self._migrate_to_16,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -349,6 +350,12 @@ class Database:
         cls._ensure_column(connection, "resource_gpu_samples", "power_w", "REAL")
         cls._ensure_column(connection, "resource_gpu_samples", "graphics_clock_mhz", "REAL")
 
+    @classmethod
+    def _migrate_to_16(cls, connection: sqlite3.Connection) -> None:
+        cls._migrate_to_14(connection)
+        cls._ensure_column(connection, "resource_samples", "memory_used_bytes", "REAL")
+        cls._ensure_column(connection, "resource_samples", "memory_total_bytes", "REAL")
+
     @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
         """保留历史版本号，使旧数据库可以按顺序升级到当前结构。"""
@@ -371,14 +378,18 @@ class Database:
                 with connection:
                     connection.execute(
                         """INSERT INTO resource_samples(
-                               sampled_at,cpu_load_percent,cpu_temperature_c,memory_percent
-                           ) VALUES (?,?,?,?)
+                               sampled_at,cpu_load_percent,cpu_temperature_c,memory_percent,
+                               memory_used_bytes,memory_total_bytes
+                           ) VALUES (?,?,?,?,?,?)
                            ON CONFLICT(sampled_at) DO UPDATE SET
                                cpu_load_percent=excluded.cpu_load_percent,
                                cpu_temperature_c=excluded.cpu_temperature_c,
-                               memory_percent=excluded.memory_percent""",
+                               memory_percent=excluded.memory_percent,
+                               memory_used_bytes=excluded.memory_used_bytes,
+                               memory_total_bytes=excluded.memory_total_bytes""",
                         (sampled_at, sample.get("cpu_load_percent"),
-                         sample.get("cpu_temperature_c"), sample.get("memory_percent")),
+                         sample.get("cpu_temperature_c"), sample.get("memory_percent"),
+                         sample.get("memory_used_bytes"), sample.get("memory_total_bytes")),
                     )
                     row = connection.execute(
                         "SELECT id FROM resource_samples WHERE sampled_at=?", (sampled_at,)
@@ -445,7 +456,9 @@ class Database:
                                   MAX(sampled_at) AS sampled_at,
                                   AVG(cpu_load_percent) AS cpu_load_percent,
                                   AVG(cpu_temperature_c) AS cpu_temperature_c,
-                                  AVG(memory_percent) AS memory_percent
+                                  AVG(memory_percent) AS memory_percent,
+                                  AVG(memory_used_bytes) AS memory_used_bytes,
+                                  MAX(memory_total_bytes) AS memory_total_bytes
                            FROM resource_samples WHERE sampled_at>=?
                            GROUP BY bucket ORDER BY bucket""",
                         (bucket_seconds, cutoff),
@@ -469,7 +482,8 @@ class Database:
                     samples = self._assemble_resource_history(host_rows, gpu_rows, "bucket")
                 else:
                     host_rows = connection.execute(
-                        """SELECT id,sampled_at,cpu_load_percent,cpu_temperature_c,memory_percent
+                        """SELECT id,sampled_at,cpu_load_percent,cpu_temperature_c,memory_percent,
+                                  memory_used_bytes,memory_total_bytes
                            FROM resource_samples WHERE sampled_at>=? ORDER BY sampled_at""",
                         (cutoff,),
                     ).fetchall()
@@ -503,6 +517,8 @@ class Database:
                 "cpu_load_percent": row["cpu_load_percent"],
                 "cpu_temperature_c": row["cpu_temperature_c"],
                 "memory_percent": row["memory_percent"],
+                "memory_used_bytes": row["memory_used_bytes"],
+                "memory_total_bytes": row["memory_total_bytes"],
                 "gpus": [],
             }
         for row in gpu_rows:
