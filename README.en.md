@@ -9,9 +9,10 @@ AXIS is a local web manager for Windows AI workstations. It starts, stops, and r
 - Register `.ps1`, `.cmd`, or `.bat` service-management scripts
 - Start, stop, restart, and manually check one service, or stop all services
 - Create and reorder scenes that switch an ordered group of services
-- Monitor CPU, memory, disk, Docker, and NVIDIA GPU metrics and history
+- Monitor CPU, memory, disk, Docker, and dynamically generated metrics and history for every detected NVIDIA GPU
 - Record service actions and scene-switch steps, times, and results
 - Use Chinese, English, or automatic browser-language detection
+- Choose Matrix Green, Aurora Blue, or Obsidian Gold display styles
 - Manage multiple users
 
 ## Install and start

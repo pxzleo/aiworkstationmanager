@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#0b0f10">
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
+  <script src="theme.js?v=20260828-1"></script>
   <link rel="stylesheet" href="styles.css?v=20260828-2">
 </head>
 <body class="auth-pending">
@@ -54,7 +55,7 @@
           <div><strong>AI 工作站</strong><small>地址由当前部署提供</small></div>
           <span class="host-load">12%</span>
         </div>
-        <button class="nav-item settings-button"><svg><use href="#i-settings"/></svg><span>系统设置</span></button>
+        <button class="nav-item settings-button" data-page="settings"><svg><use href="#i-settings"/></svg><span>系统设置</span></button>
       </div>
     </aside>
 
@@ -97,48 +98,8 @@
             <div><span>Docker</span><strong id="dockerMetric">--</strong><small id="dockerDetail">等待数据</small></div>
           </div>
 
-          <div class="gpu-stage">
-            <article class="gpu-lane gpu-primary">
-              <div class="gpu-head">
-                <div><span class="gpu-index">GPU 0</span><h2 id="gpu0Name">等待检测</h2><p id="gpu0Role">等待真实数据</p></div>
-                <div class="gpu-util"><strong id="gpu0Util">--</strong><span>% 负载</span></div>
-              </div>
-              <div class="gpu-telemetry">
-                <div class="memory-visual" style="--used:0%">
-                  <div class="memory-ring"><span><strong id="gpu0MemoryValue">--</strong><small>/ -- GB</small></span></div>
-                  <div class="memory-copy"><span>显存占用</span><strong id="gpu0MemoryPercent">--</strong><small id="gpu0MemoryFree">等待数据</small></div>
-                </div>
-                <div class="gpu-load-trend"><div class="trend-head"><span>GPU 负载趋势</span><small>最近 15 分钟</small></div><div class="trend-plot"><span class="trend-scale"><i>100%</i><i>50%</i><i>0</i></span><svg viewBox="0 0 300 120" preserveAspectRatio="none" role="img" aria-label="GPU 0 负载曲线：暂无数据"><path class="spark-grid" d="M0 10H300M0 60H300M0 110H300"/><polyline id="gpu0Sparkline" points=""/></svg></div><div class="trend-axis"><span>-15m</span><span>-10m</span><span>-5m</span><span>现在</span></div></div>
-              </div>
-              <div class="active-workload">
-                <div class="workload-icon" id="gpu0WorkloadIcon">N</div>
-                <div><strong id="gpu0WorkloadName">服务映射尚未配置</strong><span id="gpu0WorkloadMeta">只展示真实硬件指标</span></div>
-                <button class="quiet-link" data-nav="environments">查看只读状态 <svg><use href="#i-chevron"/></svg></button>
-              </div>
-              <div class="metric-row"><span><b id="gpu0Temp">--</b>温度</span><span><b id="gpu0Power">--</b>功耗</span><span><b id="gpu0Uuid">--</b>UUID</span><span><b id="gpu0State">等待</b>状态</span></div>
-            </article>
-
-            <div class="scene-flow" aria-hidden="true"><span></span><i></i><small id="sceneFlowLabel">开发/agent场景</small><i></i><span></span></div>
-
-            <article class="gpu-lane">
-              <div class="gpu-head">
-                <div><span class="gpu-index">GPU 1</span><h2 id="gpu1Name">等待检测</h2><p id="gpu1Role">等待真实数据</p></div>
-                <div class="gpu-util idle"><strong id="gpu1Util">--</strong><span>% 负载</span></div>
-              </div>
-              <div class="gpu-telemetry">
-                <div class="memory-visual" style="--used:0%">
-                  <div class="memory-ring"><span><strong id="gpu1MemoryValue">--</strong><small>/ -- GB</small></span></div>
-                  <div class="memory-copy"><span>显存占用</span><strong id="gpu1MemoryPercent">--</strong><small id="gpu1MemoryFree">等待数据</small></div>
-                </div>
-                <div class="gpu-load-trend idle"><div class="trend-head"><span>GPU 负载趋势</span><small>最近 15 分钟</small></div><div class="trend-plot"><span class="trend-scale"><i>100%</i><i>50%</i><i>0</i></span><svg viewBox="0 0 300 120" preserveAspectRatio="none" role="img" aria-label="GPU 1 负载曲线：暂无数据"><path class="spark-grid" d="M0 10H300M0 60H300M0 110H300"/><polyline id="gpu1Sparkline" points=""/></svg></div><div class="trend-axis"><span>-15m</span><span>-10m</span><span>-5m</span><span>现在</span></div></div>
-              </div>
-              <div class="queued-workloads">
-                <span><i class="service-glyph image" id="gpu1ServiceIcon">?</i><b id="gpu1ServiceName">服务映射</b><small id="gpu1ServiceState">未配置</small></span>
-                <span><i class="service-glyph audio">A</i>SenseVoiceSmall<small id="gpu1AsrState">等待状态</small></span>
-                <span><i class="service-glyph tts">T</i>IndexTTS 1.5<small id="gpu1TtsState">等待状态</small></span>
-              </div>
-              <div class="metric-row"><span><b id="gpu1Temp">--</b>温度</span><span><b id="gpu1Power">--</b>功耗</span><span><b id="gpu1Uuid">--</b>UUID</span><span><b id="gpu1OperationalState">等待</b>状态</span></div>
-            </article>
+          <div class="gpu-stage" id="gpuStage">
+            <p class="gpu-empty">登录后检测 NVIDIA GPU。</p>
           </div>
 
           <div class="overview-lower">
@@ -195,6 +156,30 @@
           <div class="page-heading"><div><p class="eyebrow">管理记录</p><h1>日志中心</h1><p>只记录服务启停与场景切换的时间和结果。</p></div><button class="button secondary" id="refreshLogsButton">刷新记录</button></div>
           <div class="section-heading"><div><h2>服务与场景操作</h2><p>包含每个脚本步骤、耗时和失败摘要</p></div></div>
           <section class="operation-list" id="operationList" aria-live="polite"><p class="empty-state">尚无服务或场景操作。</p></section>
+        </section>
+
+        <section class="page" id="page-settings" data-title="系统设置">
+          <div class="page-heading"><div><p class="eyebrow">界面偏好</p><h1>系统设置</h1><p>选择适合当前工作环境的显示风格，设置只保存在这个浏览器中。</p></div></div>
+          <section class="settings-section" aria-labelledby="appearanceTitle">
+            <div class="section-heading"><div><h2 id="appearanceTitle">显示风格</h2><p>切换后立即应用，不影响服务、场景和资源数据。</p></div></div>
+            <div class="theme-picker" role="group" aria-label="显示风格">
+              <button class="theme-option theme-matrix" type="button" data-theme-option="matrix" aria-pressed="false">
+                <span class="theme-preview" aria-hidden="true"><i></i><i></i><i></i><b></b></span>
+                <span class="theme-copy"><strong>矩阵绿</strong><small>深色工程监控风格，使用清晰的荧光绿强调。</small></span>
+                <span class="theme-check" aria-hidden="true">✓</span>
+              </button>
+              <button class="theme-option theme-aurora" type="button" data-theme-option="aurora" aria-pressed="false">
+                <span class="theme-preview" aria-hidden="true"><i></i><i></i><i></i><b></b></span>
+                <span class="theme-copy"><strong>极光蓝</strong><small>冷静的深海蓝界面，配合冰蓝与淡紫光感。</small></span>
+                <span class="theme-check" aria-hidden="true">✓</span>
+              </button>
+              <button class="theme-option theme-obsidian" type="button" data-theme-option="obsidian" aria-pressed="false">
+                <span class="theme-preview" aria-hidden="true"><i></i><i></i><i></i><b></b></span>
+                <span class="theme-copy"><strong>曜石金</strong><small>温暖克制的专业设备风格，以香槟金突出操作。</small></span>
+                <span class="theme-check" aria-hidden="true">✓</span>
+              </button>
+            </div>
+          </section>
         </section>
       </div>
     </main>
@@ -280,6 +265,7 @@
   </dialog>
   <script src="i18n.js?v=20260828-1"></script>
   <script src="request-guard.js?v=20260827-5"></script>
+  <script src="gpu-layout.js?v=20260828-1"></script>
   <script src="app.js?v=20260828-1"></script>
 </body>
 </html>

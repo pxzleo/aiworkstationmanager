@@ -39,6 +39,7 @@ test('browser language is detected and a saved choice takes precedence', () => {
 test('translation works in both directions and preserves dynamic causes', () => {
   const { i18n, saved, document } = loadI18n();
   assert.equal(i18n.translate('已登记服务'), 'Registered Services');
+  assert.equal(i18n.translate('极光蓝'), 'Aurora Blue');
   assert.equal(i18n.translate('脚本动作 start 执行超时'), 'Script action start timed out');
   assert.equal(
     i18n.translate('无法启动管理脚本: access denied'),

@@ -7,6 +7,8 @@ const SERVICE_INTERVAL_MS = 5000;
 const REQUEST_TIMEOUT_MS = 8000;
 const ACTION_TIMEOUT_MS = 30000;
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const gpuLayout = window.AxisGpuLayout;
+if (!gpuLayout) throw new Error('GPU layout helper is unavailable.');
 const requestGuard = new RequestGuard();
 const actionGuard = new ExclusiveActionGuard();
 let sceneProgressOperationId = null;
@@ -14,7 +16,7 @@ let draggedSceneId = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], users: [], operations: [], timers: new Map(),
-  chartSpecs: [], gpuBinding: { slots: [null, null], extras: [] }, serviceFilter: 'all',
+  chartSpecs: [], gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
 
 class ApiError extends Error {
@@ -35,7 +37,7 @@ function normalizedPercent(value) { return finite(value) ? Math.min(100, Math.ma
 function percent(value) { const normalized = normalizedPercent(value); return normalized === null ? '不支持' : `${Math.round(normalized)}%`; }
 function gib(value) { return finite(value) ? value / (1024 ** 3) : null; }
 function mibToGib(value) { return finite(value) ? value / 1024 : null; }
-function compactUuid(value) { return value ? `${value.slice(0, 8)}…${value.slice(-6)}` : '未知'; }
+function compactUuid(value) { return value ? `${value.slice(0, 8)}…${value.slice(-6)}` : ui('未知'); }
 function formatDate(value, includeDate = false) {
   const date = new Date(value); if (Number.isNaN(date.getTime())) return '时间未知';
   return date.toLocaleString(window.axisI18n.language === 'zh' ? 'zh-CN' : 'en-US', includeDate ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false } : { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -140,35 +142,43 @@ function renderSnapshot() {
   if (disk) { text('diskLabel', `${disk.device || disk.mountpoint} 可用`); text('diskMetric', `${gib(disk.total_bytes - disk.used_bytes).toFixed(1)} GB`); text('diskDetail', `${percent(disk.percent)} 已使用`); } else { text('diskMetric', '不支持'); }
   const containers = snapshot.docker?.containers || []; const running = containers.filter((item) => String(item.state).toLowerCase() === 'running').length; text('dockerMetric', `${running}/${containers.length}`); text('dockerDetail', `${running} 运行 · ${containers.length - running} 停止`);
   document.querySelector('.host-mini strong').textContent = location.hostname || '本机'; document.querySelector('.host-load').textContent = percent(cpu.load_percent);
-  state.gpuBinding = bindGpuSlots(snapshot.gpus || []); renderGpuSlot(0, state.gpuBinding.slots[0]); renderGpuSlot(1, state.gpuBinding.slots[1]); renderCollectorErrors(snapshot.collector_errors || []); renderCharts();
+  syncGpuCards(snapshot.gpus || []); renderCollectorErrors(snapshot.collector_errors || []); renderCharts();
   text('freshnessLabel', '实时'); text('clock', formatDate(snapshot.sampled_at));
 }
-function bindGpuSlots(gpus) { const slots = [null, null]; const selected = new Set(); [0, 1].forEach((slot) => { const index = gpus.findIndex((gpu) => Number(gpu.index) === slot); if (index >= 0) { slots[slot] = gpus[index]; selected.add(index); } }); return { slots, extras: gpus.filter((_, index) => !selected.has(index)) }; }
-function renderGpuSlot(slot, gpu) {
-  const prefix = `gpu${slot}`; const lane = document.querySelectorAll('.gpu-lane')[slot]; if (!gpu) { lane.classList.add('gpu-missing'); text(`${prefix}Name`, '未检测到'); text(`${prefix}Util`, '--'); text(`${prefix}MemoryValue`, '--'); return; }
-  lane.classList.remove('gpu-missing'); const used = mibToGib(gpu.memory_used_mib); const total = mibToGib(gpu.memory_total_mib); const free = used !== null && total !== null ? Math.max(0, total - used) : null;
-  text(`${prefix}Name`, gpu.name || `GPU ${gpu.index}`); text(`${prefix}Role`, compactUuid(gpu.uuid)); text(`${prefix}Util`, finite(gpu.load_percent) ? String(Math.round(gpu.load_percent)) : '--'); text(`${prefix}MemoryValue`, used === null ? '--' : used.toFixed(1)); const totalNode = byId(`${prefix}MemoryValue`)?.parentElement?.querySelector('small'); if (totalNode) totalNode.textContent = total === null ? '/ 不支持' : `/ ${total.toFixed(1)} GB`;
-  text(`${prefix}MemoryPercent`, percent(gpu.memory_percent)); text(`${prefix}MemoryFree`, free === null ? '不支持' : `剩余 ${free.toFixed(1)} GB`); text(`${prefix}Temp`, finite(gpu.temperature_c) ? `${Math.round(gpu.temperature_c)}°C` : '不支持'); text(`${prefix}Power`, finite(gpu.power_w) ? `${Math.round(gpu.power_w)} W` : '不支持'); text(`${prefix}Uuid`, compactUuid(gpu.uuid)); text(slot === 0 ? 'gpu0State' : 'gpu1OperationalState', '已检测'); lane.querySelector('.memory-visual').style.setProperty('--used', `${gpu.memory_percent || 0}%`);
-  const values = currentSeries().map((sample) => (sample.gpus || []).find((entry) => entry.uuid === gpu.uuid || Number(entry.index) === Number(gpu.index))?.load_percent).filter(finite); renderPolyline(byId(`${prefix}Sparkline`), values, gpu.name || `GPU ${slot}`);
+function createGpuCard(gpu, position) {
+  const lane = element('article', `gpu-lane${position === 0 ? ' gpu-primary' : ''}`); lane.dataset.gpuKey = gpu._uiKey; lane.style.setProperty('--gpu-order', String(position));
+  const head = element('div', 'gpu-head'); const identity = element('div'); const index = element('span', 'gpu-index', `GPU ${gpu.index}`); const name = userElement('h2', 'gpu-name', ''); const role = userElement('p', 'gpu-role', ''); identity.append(index, name, role); const util = element('div', 'gpu-util'); util.append(userElement('strong', 'gpu-util-value', '--'), element('span', '', '% 负载')); head.append(identity, util);
+  const telemetry = element('div', 'gpu-telemetry'); const memory = element('div', 'memory-visual'); memory.style.setProperty('--used', '0%'); const ring = element('div', 'memory-ring'); const ringCopy = element('span'); ringCopy.append(userElement('strong', 'gpu-memory-value', '--'), element('small', 'gpu-memory-total', '/ -- GB')); ring.append(ringCopy); const memoryCopy = element('div', 'memory-copy'); memoryCopy.append(element('span', '', '显存占用'), element('strong', 'gpu-memory-percent', '--'), element('small', 'gpu-memory-free', '等待数据')); memory.append(ring, memoryCopy);
+  const trend = element('div', 'gpu-load-trend'); const trendHead = element('div', 'trend-head'); trendHead.append(element('span', '', 'GPU 负载趋势'), element('small', '', '最近 15 分钟')); const plot = element('div', 'trend-plot'); const scale = element('span', 'trend-scale'); scale.append(element('i', '', '100%'), element('i', '', '50%'), element('i', '', '0')); const svg = svgElement('svg', { viewBox: '0 0 300 120', preserveAspectRatio: 'none', role: 'img', 'aria-label': ui(`${gpu.name || `GPU ${gpu.index}`} GPU 负载曲线`) }); svg.append(svgElement('path', { class: 'spark-grid', d: 'M0 10H300M0 60H300M0 110H300' }), svgElement('polyline', { class: 'gpu-sparkline', points: '' })); plot.append(scale, svg); const axis = element('div', 'trend-axis'); ['-15m', '-10m', '-5m', '现在'].forEach((label) => axis.append(element('span', '', label))); trend.append(trendHead, plot, axis); telemetry.append(memory, trend);
+  const services = element('div', 'gpu-services'); const mark = element('div', 'workload-icon', String(gpu.index ?? '?')); const serviceCopy = element('div', 'gpu-service-copy'); serviceCopy.append(element('strong', 'gpu-service-names', '尚未登记服务'), element('span', 'gpu-service-meta', 'GPU 为用户登记标签')); const serviceLink = element('button', 'quiet-link', '查看服务'); serviceLink.type = 'button'; serviceLink.addEventListener('click', () => navigate('environments')); services.append(mark, serviceCopy, serviceLink);
+  const metrics = element('div', 'metric-row'); [['gpu-temp', '温度'], ['gpu-power', '功耗'], ['gpu-uuid', 'UUID'], ['gpu-state', '状态']].forEach(([className, label]) => { const item = element('span'); item.append(element('b', className, '--'), document.createTextNode(label)); metrics.append(item); });
+  lane.append(head, telemetry, services, metrics); return lane;
 }
-function renderPolyline(polyline, values, device) { if (!polyline) return; const normalized = values.map(normalizedPercent).filter((value) => value !== null); if (!normalized.length) { polyline.setAttribute('points', ''); return; } polyline.setAttribute('points', normalized.map((value, index) => `${normalized.length === 1 ? 150 : index * (300 / (normalized.length - 1))},${110 - value}`).join(' ')); polyline.closest('svg').setAttribute('aria-label', `${device} GPU 负载曲线`); }
+function updateGpuCard(lane, gpu) {
+  const used = mibToGib(gpu.memory_used_mib); const total = mibToGib(gpu.memory_total_mib); const free = used !== null && total !== null ? Math.max(0, total - used) : null;
+  lane.querySelector('.gpu-index').textContent = `GPU ${gpu.index}`; lane.querySelector('.gpu-name').textContent = gpu.name || `GPU ${gpu.index}`; lane.querySelector('.gpu-role').textContent = compactUuid(gpu.uuid); lane.querySelector('.gpu-util-value').textContent = finite(gpu.load_percent) ? String(Math.round(gpu.load_percent)) : '--'; lane.querySelector('.gpu-memory-value').textContent = used === null ? '--' : used.toFixed(1); lane.querySelector('.gpu-memory-total').textContent = total === null ? `/ ${ui('不支持')}` : `/ ${total.toFixed(1)} GB`;
+  lane.querySelector('.gpu-memory-percent').textContent = percent(gpu.memory_percent); lane.querySelector('.gpu-memory-free').textContent = free === null ? '不支持' : `剩余 ${free.toFixed(1)} GB`; lane.querySelector('.gpu-temp').textContent = finite(gpu.temperature_c) ? `${Math.round(gpu.temperature_c)}°C` : '不支持'; lane.querySelector('.gpu-power').textContent = finite(gpu.power_w) ? `${Math.round(gpu.power_w)} W` : '不支持'; lane.querySelector('.gpu-uuid').textContent = compactUuid(gpu.uuid); lane.querySelector('.gpu-state').textContent = '已检测'; lane.querySelector('.memory-visual').style.setProperty('--used', `${gpu.memory_percent || 0}%`);
+  const values = currentSeries().map((sample) => gpuLayout.metricForGpu(sample, gpu, 'load_percent')).filter(finite); renderPolyline(lane.querySelector('.gpu-sparkline'), values, gpu.name || `GPU ${gpu.index}`);
+}
+function syncGpuCards(gpus) {
+  const ordered = gpuLayout.prepareGpus(gpus); const signature = gpuLayout.gpuSetSignature(ordered); const stage = byId('gpuStage'); state.gpus = ordered;
+  if (signature !== state.gpuCardSignature) { stage.replaceChildren(); if (!ordered.length) stage.append(element('p', 'gpu-empty', '未检测到 NVIDIA GPU。')); else ordered.forEach((gpu, position) => stage.append(createGpuCard(gpu, position))); state.gpuCardSignature = signature; }
+  ordered.forEach((gpu) => { const lane = [...stage.querySelectorAll('.gpu-lane')].find((item) => item.dataset.gpuKey === gpu._uiKey); if (lane) updateGpuCard(lane, gpu); }); renderGpuServiceLabels(); syncMonitorCharts();
+}
+function renderPolyline(polyline, values, device) { if (!polyline) return; polyline.closest('svg').setAttribute('aria-label', ui(`${device} GPU 负载曲线`)); const normalized = values.map(normalizedPercent).filter((value) => value !== null); if (!normalized.length) { polyline.setAttribute('points', ''); return; } polyline.setAttribute('points', normalized.map((value, index) => `${normalized.length === 1 ? 150 : index * (300 / (normalized.length - 1))},${110 - value}`).join(' ')); }
 function renderCollectorErrors(errors) { const banner = byId('collectorStatus'); banner.hidden = !errors.length; banner.replaceChildren(); if (errors.length) banner.append(element('strong', '', '部分数据降级'), element('span', '', errors.map((error) => error.message || '采集失败').join('；'))); }
 function summarize(values) { if (!values.length) return { current: '--', peak: '--' }; return { current: Math.round(values.at(-1)), peak: Math.round(Math.max(...values)) }; }
 function buildMonitorCharts() {
-  const grid = document.querySelector('.monitor-grid'); grid.replaceChildren(); const specs = [
-    ['HOST', 'CPU 总负载', (sample) => sample.cpu_load_percent], ['HOST', '内存占用', (sample) => sample.memory_percent],
-    ['GPU 0', 'GPU 负载', (sample) => metricForGpu(sample, 0, 'load_percent')], ['GPU 0', '显存占用', (sample) => metricForGpu(sample, 0, 'memory_percent')],
-    ['GPU 1', 'GPU 负载', (sample) => metricForGpu(sample, 1, 'load_percent')], ['GPU 1', '显存占用', (sample) => metricForGpu(sample, 1, 'memory_percent')],
-  ];
+  const grid = document.querySelector('.monitor-grid'); grid.replaceChildren(); const specs = [['HOST', 'CPU 总负载', (sample) => sample.cpu_load_percent], ['HOST', '内存占用', (sample) => sample.memory_percent], ...state.gpus.flatMap((gpu) => [[`GPU ${gpu.index}`, 'GPU 负载', (sample) => gpuLayout.metricForGpu(sample, gpu, 'load_percent')], [`GPU ${gpu.index}`, '显存占用', (sample) => gpuLayout.metricForGpu(sample, gpu, 'memory_percent')]])];
   state.chartSpecs = specs.map(([kicker, title, getter]) => { const section = element('section', 'chart-section'); const heading = element('div', 'chart-title'); const copy = element('div'); copy.append(element('span', 'chart-kicker', kicker), element('h2', '', title)); const current = element('strong', '', '--'); current.append(element('small', '', '% 当前')); heading.append(copy, current); const frame = element('div', 'chart-frame'); const svg = svgElement('svg', { class: 'line-chart', viewBox: '0 0 900 230', preserveAspectRatio: 'none' }); const line = svgElement('polyline', { class: 'line primary-line', fill: 'none', points: '' }); svg.append(line); frame.append(svg); section.append(heading, frame); grid.append(section); return { title, getter, current, line }; });
+  if (!state.gpus.length) grid.append(element('p', 'empty-state monitor-gpu-empty', '未检测到 NVIDIA GPU，当前仅显示主机资源。'));
 }
-function metricForGpu(sample, slot, field) { const current = state.gpuBinding.slots[slot]; if (!current) return null; return (sample.gpus || []).find((gpu) => gpu.uuid === current.uuid || Number(gpu.index) === Number(current.index))?.[field]; }
+function syncMonitorCharts() { const signature = gpuLayout.gpuSetSignature(state.gpus); if (signature !== state.monitorGpuSignature) { state.monitorGpuSignature = signature; buildMonitorCharts(); } }
 function renderCharts() { const samples = currentSeries(); state.chartSpecs.forEach((spec) => { const values = samples.map(spec.getter).filter(finite); spec.current.firstChild.nodeValue = values.length ? String(summarize(values).current) : '--'; spec.line.setAttribute('points', values.map((value, index) => `${values.length === 1 ? 450 : index * (900 / (values.length - 1))},${215 - Math.min(100, Math.max(0, value)) * 2}`).join(' ')); }); }
 
 const statusLabels = { running: '已启动', stopped: '已停止', unhealthy: '异常', unknown: '状态未知' };
 const sceneStatusLabels = { active: '已激活', partial: '部分启动', inactive: '未激活' };
 function statusClass(value) { return value === 'running' ? 'ready' : value === 'stopped' ? 'stopped' : value === 'unhealthy' ? 'danger' : 'partial'; }
-function serviceMatchesGpu(service, slot) { const label = (service.gpu_label || '').toLowerCase(); const gpu = state.gpuBinding.slots[slot]; return label.includes(`gpu ${slot}`) || label.includes(slot === 0 ? '4090' : '3090') || (gpu?.name && label.includes(gpu.name.toLowerCase())); }
 function renderServices() {
   renderOverviewServices(); renderRegisteredServiceTable(); renderGpuServiceLabels(); renderOperationTimeline();
   const stopAll = byId('stopAllServicesButton');
@@ -179,9 +189,7 @@ function renderOverviewServices() {
   state.services.slice(0, 8).forEach((service) => { const row = element('div', 'service-row'); row.append(element('span', `service-state ${statusClass(service.status.state)}`)); const copy = element('div'); copy.append(userElement('strong', '', service.name), userOrUiElement('small', '', service.description || service.gpu_label, '无说明')); const action = element('button', 'row-action', service.ui_url ? '打开 UI' : '查看'); action.addEventListener('click', () => service.ui_url ? window.open(service.ui_url, '_blank', 'noopener,noreferrer') : navigate('environments')); row.append(copy, element('span', 'port', service.port ? `:${service.port}` : '无端口'), element('span', 'uptime', statusLabels[service.status.state] || '未知'), action); list.append(row); });
 }
 function renderGpuServiceLabels() {
-  const gpu0 = state.services.filter((item) => serviceMatchesGpu(item, 0)); const gpu1 = state.services.filter((item) => serviceMatchesGpu(item, 1));
-  dataText('gpu0WorkloadName', gpu0.length ? gpu0.map((item) => item.name).join(' · ') : '', '尚未登记 GPU 0 服务'); dataText('gpu0WorkloadMeta', gpu0.length ? gpu0.map((item) => `${item.name} ${ui(statusLabels[item.status.state])}`).join(ui('；')) : '', 'GPU 为用户登记标签');
-  dataText('gpu1ServiceName', gpu1[0]?.name || '', '尚未登记服务'); text('gpu1ServiceState', gpu1[0] ? ui(statusLabels[gpu1[0].status.state]) : '未配置'); dataText('gpu1AsrState', gpu1[1] ? `${gpu1[1].name} · ${ui(statusLabels[gpu1[1].status.state])}` : '', '等待登记'); dataText('gpu1TtsState', gpu1[2] ? `${gpu1[2].name} · ${ui(statusLabels[gpu1[2].status.state])}` : '', '等待登记');
+  document.querySelectorAll('.gpu-lane[data-gpu-key]').forEach((lane) => { const gpu = state.gpus.find((item) => item._uiKey === lane.dataset.gpuKey); if (!gpu) return; const matches = state.services.filter((item) => gpuLayout.serviceGpuKeys(item, state.gpus).includes(gpu._uiKey)); const names = lane.querySelector('.gpu-service-names'); const meta = lane.querySelector('.gpu-service-meta'); names.toggleAttribute('data-i18n-skip', Boolean(matches.length)); meta.toggleAttribute('data-i18n-skip', Boolean(matches.length)); names.textContent = matches.length ? matches.map((item) => item.name).join(' · ') : '尚未登记服务'; meta.textContent = matches.length ? matches.map((item) => `${item.name} · ${ui(statusLabels[item.status.state] || '状态未知')}`).join(ui('；')) : 'GPU 为用户登记标签'; });
 }
 function renderRegisteredServiceTable() {
   const rows = byId('registeredServiceRows'); rows.replaceChildren(); const query = byId('serviceSearch').value.trim().toLowerCase(); const filtered = state.services.filter((item) => (state.serviceFilter === 'all' || item.status.state === state.serviceFilter) && [item.name, item.description, item.gpu_label, item.port].join(' ').toLowerCase().includes(query));

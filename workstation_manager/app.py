@@ -542,6 +542,14 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     async def request_guard_javascript() -> FileResponse:
         return FileResponse(PROJECT_ROOT / "request-guard.js", media_type="text/javascript")
 
+    @app.get("/gpu-layout.js", include_in_schema=False)
+    async def gpu_layout_javascript() -> FileResponse:
+        return FileResponse(PROJECT_ROOT / "gpu-layout.js", media_type="text/javascript")
+
+    @app.get("/theme.js", include_in_schema=False)
+    async def theme_javascript() -> FileResponse:
+        return FileResponse(PROJECT_ROOT / "theme.js", media_type="text/javascript")
+
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon() -> Response:
         return Response(status_code=204)

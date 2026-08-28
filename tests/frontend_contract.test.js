@@ -8,6 +8,8 @@ const test = require('node:test');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const js = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+const gpuLayout = fs.readFileSync(path.join(root, 'gpu-layout.js'), 'utf8');
+const theme = fs.readFileSync(path.join(root, 'theme.js'), 'utf8');
 const i18n = fs.readFileSync(path.join(root, 'i18n.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
 
@@ -32,6 +34,28 @@ test('registered service editor exposes the agreed fields and actions', () => {
   assert.ok(js.includes("/status"));
   assert.ok(html.includes('id="stopAllServicesButton"'));
   assert.ok(js.includes('/registered-services/actions/stop-all'));
+});
+
+test('overview cards and monitor charts follow the detected GPU count', () => {
+  assert.ok(html.includes('id="gpuStage"'));
+  assert.ok(!html.includes('id="gpu0Name"'));
+  assert.ok(!html.includes('id="gpu1Name"'));
+  assert.ok(js.includes('gpuLayout.prepareGpus'));
+  assert.ok(js.includes('gpuLayout.gpuSetSignature'));
+  assert.ok(gpuLayout.includes('function metricForGpu'));
+  assert.ok(gpuLayout.includes('function serviceGpuKey'));
+  assert.ok(gpuLayout.includes('function serviceGpuKeys'));
+  assert.ok(js.includes('function createGpuCard'));
+  assert.ok(js.includes('function syncGpuCards'));
+  assert.ok(js.includes('ordered.forEach((gpu, position)'));
+  assert.ok(js.includes('...state.gpus.flatMap((gpu)'));
+  assert.ok(js.includes("'未检测到 NVIDIA GPU。'"));
+  assert.ok(!js.includes('bindGpuSlots'));
+  assert.ok(!js.includes('slots: [null, null]'));
+  assert.ok(css.includes('repeat(auto-fit, minmax(min(100%, 440px), 1fr))'));
+  assert.ok(css.includes('@keyframes gpuCardIn'));
+  assert.ok(css.includes('@media (prefers-reduced-motion: reduce)'));
+  assert.ok(i18n.includes("'未检测到 NVIDIA GPU。': 'No NVIDIA GPU detected.'"));
 });
 
 test('scene editor and management log remain wired', () => {
@@ -94,6 +118,7 @@ test('user management lists accounts and wires account actions', () => {
 
 test('Chinese and English UI supports automatic detection and a remembered manual switch', () => {
   assert.equal((html.match(/data-language-select/g) || []).length, 2);
+  assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
@@ -111,6 +136,23 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(i18n.includes("'管理脚本不存在': 'The management script was not found.'"));
   assert.ok(i18n.includes("'Unable to start the management script: $1'"));
   assert.ok(css.includes('.language-select'));
+});
+
+test('system settings provides three persistent display styles', () => {
+  assert.ok(html.includes('data-page="settings"'));
+  assert.ok(html.includes('id="page-settings"'));
+  for (const value of ['matrix', 'aurora', 'obsidian']) assert.ok(html.includes(`data-theme-option="${value}"`));
+  assert.equal((html.match(/data-theme-option=/g) || []).length, 3);
+  assert.ok(html.indexOf('theme.js') < html.indexOf('styles.css'));
+  assert.ok(theme.includes("const STORAGE_KEY = 'axis_manager_theme'"));
+  assert.ok(theme.includes("document.documentElement.dataset.theme = theme"));
+  assert.ok(css.includes(':root[data-theme="aurora"]'));
+  assert.ok(css.includes(':root[data-theme="obsidian"]'));
+  assert.ok(css.includes('.theme-option.selected'));
+  for (const staleColor of ['background: #101516', 'background: #090d0e', 'background: #111617', 'background: #080a0b', 'color: #bac3c1']) {
+    assert.ok(!css.includes(staleColor), `fixed Matrix Green surface remains: ${staleColor}`);
+  }
+  for (const label of ['矩阵绿', '极光蓝', '曜石金']) assert.ok(i18n.includes(`'${label}':`));
 });
 
 test('legacy adapter, discovery and service-log UI are absent', () => {
