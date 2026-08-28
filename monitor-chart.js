@@ -24,6 +24,25 @@
   function axisLabels(minutes) { return [...RANGE_AXIS_LABELS[supportedWindowMinutes(minutes)]]; }
   function windowMilliseconds(minutes) { return supportedWindowMinutes(minutes) * 60 * 1000; }
 
+  function beginPointerGesture(pointerId, clientX, clientY) {
+    if (!finite(pointerId) || !finite(clientX) || !finite(clientY)) throw new TypeError('pointer gesture coordinates must be finite numbers');
+    return { id: pointerId, startX: clientX, startY: clientY, dragging: false };
+  }
+
+  function movePointerGesture(gesture, pointerId, clientX, clientY, threshold = 6) {
+    if (!gesture || gesture.id !== pointerId) return { gesture, select: false };
+    if (!finite(clientX) || !finite(clientY)) throw new TypeError('pointer gesture coordinates must be finite numbers');
+    if (!finite(threshold) || threshold < 0) throw new RangeError('pointer gesture threshold must be non-negative');
+    const horizontalDistance = Math.abs(clientX - gesture.startX); const verticalDistance = Math.abs(clientY - gesture.startY);
+    const dragging = gesture.dragging || (horizontalDistance >= threshold && horizontalDistance >= verticalDistance);
+    return { gesture: { ...gesture, dragging }, select: dragging };
+  }
+
+  function finishPointerGesture(gesture, pointerId, cancelled = false) {
+    if (!gesture || gesture.id !== pointerId) return { gesture, select: false, finished: false };
+    return { gesture: null, select: !cancelled, finished: true };
+  }
+
   function buildChartModel(samples, getter, endTimeMs = Date.now(), windowMs = DEFAULT_WINDOW_MS, options = {}) {
     if (typeof getter !== 'function') throw new TypeError('getter must be a function');
     if (!finite(endTimeMs) || !finite(windowMs) || windowMs <= 0) throw new RangeError('chart time window is invalid');
@@ -81,5 +100,5 @@
       .reduce((nearest, entry) => nearest === null || Math.abs(entry.timestamp - targetTimestamp) < Math.abs(nearest.timestamp - targetTimestamp) ? entry : nearest, null)?.sample || null;
   }
 
-  return { axisLabels, windowMilliseconds, buildChartModel, buildChartGeometry, nearestPoint, nearestSample };
+  return { axisLabels, windowMilliseconds, beginPointerGesture, movePointerGesture, finishPointerGesture, buildChartModel, buildChartGeometry, nearestPoint, nearestSample };
 }));
