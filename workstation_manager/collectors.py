@@ -68,7 +68,7 @@ def _number(value: str, kind: type[int] | type[float]) -> int | float | None:
 def collect_gpus(settings: Settings, runner: CommandRunner = run_readonly_command) -> list[dict[str, Any]]:
     fields = (
         "index,uuid,name,utilization.gpu,memory.used,memory.total,"
-        "temperature.gpu,power.draw"
+        "temperature.gpu,power.draw,clocks.current.graphics"
     )
     output = runner(
         ["nvidia-smi", f"--query-gpu={fields}", "--format=csv,noheader,nounits"],
@@ -79,8 +79,8 @@ def collect_gpus(settings: Settings, runner: CommandRunner = run_readonly_comman
         if not line.strip():
             continue
         columns = [column.strip() for column in line.split(",")]
-        if len(columns) != 8:
-            raise ValueError(f"nvidia-smi 第 {line_number} 行应有 8 列，实际为 {len(columns)}")
+        if len(columns) != 9:
+            raise ValueError(f"nvidia-smi 第 {line_number} 行应有 9 列，实际为 {len(columns)}")
         memory_used = _number(columns[4], int)
         memory_total = _number(columns[5], int)
         memory_percent = None
@@ -97,6 +97,7 @@ def collect_gpus(settings: Settings, runner: CommandRunner = run_readonly_comman
                 "memory_percent": memory_percent,
                 "temperature_c": _number(columns[6], float),
                 "power_w": _number(columns[7], float),
+                "graphics_clock_mhz": _number(columns[8], float),
             }
         )
     return gpus

@@ -50,3 +50,27 @@ test('time ranges expose matching axis labels and durations', () => {
   assert.equal(monitorChart.windowMilliseconds(60), 60 * 60 * 1000);
   assert.throws(() => monitorChart.axisLabels(30), /unsupported/i);
 });
+
+test('chart model scales non-percent GPU telemetry without losing raw values', () => {
+  const model = monitorChart.buildChartModel(
+    [sample(2, 1000), sample(1, 2500)], (item) => item.value, end, 15 * minute,
+    { minimum: 0, maximum: 3000 },
+  );
+
+  assert.equal(model.current, 2500);
+  assert.equal(model.peak, 2500);
+  assert.equal(Math.round(model.lastPoint.y), 33);
+  assert.equal(monitorChart.nearestPoint(model, 830).value, 2500);
+});
+
+test('correlation selection keeps one sample timestamp when a metric is missing', () => {
+  const samples = [
+    { ...sample(2, 80), clock: null },
+    { ...sample(1, 90), clock: 2500 },
+  ];
+  const selected = monitorChart.nearestSample(samples, Date.parse(samples[0].sampled_at));
+
+  assert.equal(selected.sampled_at, samples[0].sampled_at);
+  assert.equal(selected.value, 80);
+  assert.equal(selected.clock, null);
+});

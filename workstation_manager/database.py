@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 class DatabaseError(RuntimeError):
@@ -97,6 +97,7 @@ class Database:
                         12: self._migrate_to_12,
                         13: self._migrate_to_13,
                         14: self._migrate_to_14,
+                        15: self._migrate_to_15,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -343,6 +344,11 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_resource_gpu_sample ON resource_gpu_samples(sample_id)"
         )
 
+    @classmethod
+    def _migrate_to_15(cls, connection: sqlite3.Connection) -> None:
+        cls._ensure_column(connection, "resource_gpu_samples", "power_w", "REAL")
+        cls._ensure_column(connection, "resource_gpu_samples", "graphics_clock_mhz", "REAL")
+
     @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
         """保留历史版本号，使旧数据库可以按顺序升级到当前结构。"""
@@ -396,12 +402,14 @@ class Database:
                         connection.execute(
                             """INSERT INTO resource_gpu_samples(
                                    sample_id,gpu_key,uuid,gpu_index,name,load_percent,
-                                   memory_used_mib,memory_total_mib,memory_percent,temperature_c
-                               ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                                   memory_used_mib,memory_total_mib,memory_percent,temperature_c,
+                                   power_w,graphics_clock_mhz
+                               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                             (sample_id, gpu_key, uuid or None, gpu_index, gpu.get("name"),
                              gpu.get("load_percent"), gpu.get("memory_used_mib"),
                              gpu.get("memory_total_mib"), gpu.get("memory_percent"),
-                             gpu.get("temperature_c")),
+                             gpu.get("temperature_c"), gpu.get("power_w"),
+                             gpu.get("graphics_clock_mhz")),
                         )
                     cutoff = (
                         datetime.now(timezone.utc)
@@ -449,7 +457,9 @@ class Database:
                                   AVG(g.memory_used_mib) AS memory_used_mib,
                                   AVG(g.memory_total_mib) AS memory_total_mib,
                                   AVG(g.memory_percent) AS memory_percent,
-                                  AVG(g.temperature_c) AS temperature_c
+                                  AVG(g.temperature_c) AS temperature_c,
+                                  AVG(g.power_w) AS power_w,
+                                  AVG(g.graphics_clock_mhz) AS graphics_clock_mhz
                            FROM resource_gpu_samples g
                            JOIN resource_samples s ON s.id=g.sample_id
                            WHERE s.sampled_at>=? GROUP BY bucket,g.gpu_key
@@ -506,6 +516,8 @@ class Database:
                 "memory_total_mib": row["memory_total_mib"],
                 "memory_percent": row["memory_percent"],
                 "temperature_c": row["temperature_c"],
+                "power_w": row["power_w"],
+                "graphics_clock_mhz": row["graphics_clock_mhz"],
             })
         return list(samples.values())
 

@@ -24,9 +24,11 @@
   function axisLabels(minutes) { return [...RANGE_AXIS_LABELS[supportedWindowMinutes(minutes)]]; }
   function windowMilliseconds(minutes) { return supportedWindowMinutes(minutes) * 60 * 1000; }
 
-  function buildChartModel(samples, getter, endTimeMs = Date.now(), windowMs = DEFAULT_WINDOW_MS) {
+  function buildChartModel(samples, getter, endTimeMs = Date.now(), windowMs = DEFAULT_WINDOW_MS, options = {}) {
     if (typeof getter !== 'function') throw new TypeError('getter must be a function');
     if (!finite(endTimeMs) || !finite(windowMs) || windowMs <= 0) throw new RangeError('chart time window is invalid');
+    const minimum = options.minimum ?? 0; const maximum = options.maximum ?? 100;
+    if (!finite(minimum) || !finite(maximum) || maximum <= minimum) throw new RangeError('chart value range is invalid');
     const startTimeMs = endTimeMs - windowMs;
     const entries = (Array.isArray(samples) ? samples : []).map((sample) => ({
       timestamp: Date.parse(sample?.sampled_at),
@@ -36,8 +38,8 @@
     const segments = []; let segment = [];
     entries.forEach((entry) => {
       if (!finite(entry.value)) { if (segment.length) segments.push(segment); segment = []; return; }
-      const value = Math.min(100, Math.max(0, entry.value));
-      segment.push({ x: ((entry.timestamp - startTimeMs) / windowMs) * WIDTH, y: HEIGHT - value * 2, value });
+      const plotted = Math.min(maximum, Math.max(minimum, entry.value));
+      segment.push({ x: ((entry.timestamp - startTimeMs) / windowMs) * WIDTH, y: HEIGHT - ((plotted - minimum) / (maximum - minimum)) * HEIGHT, value: entry.value, timestamp: entry.timestamp });
     });
     if (segment.length) segments.push(segment);
 
@@ -50,6 +52,10 @@
       segments,
       pointCount: points.length,
       lastPoint: points.at(-1) || null,
+      minimumScale: minimum,
+      maximumScale: maximum,
+      startTimeMs,
+      endTimeMs,
     };
   }
 
@@ -62,5 +68,18 @@
     };
   }
 
-  return { axisLabels, windowMilliseconds, buildChartModel, buildChartGeometry };
+  function nearestPoint(model, x) {
+    if (!finite(x)) return null;
+    const points = (Array.isArray(model?.segments) ? model.segments : []).flat();
+    return points.reduce((nearest, point) => nearest === null || Math.abs(point.x - x) < Math.abs(nearest.x - x) ? point : nearest, null);
+  }
+
+  function nearestSample(samples, targetTimestamp, startTimeMs = -Infinity, endTimeMs = Infinity) {
+    if (!finite(targetTimestamp)) return null;
+    return (Array.isArray(samples) ? samples : []).map((sample) => ({ sample, timestamp: Date.parse(sample?.sampled_at) }))
+      .filter((entry) => Number.isFinite(entry.timestamp) && entry.timestamp >= startTimeMs && entry.timestamp <= endTimeMs)
+      .reduce((nearest, entry) => nearest === null || Math.abs(entry.timestamp - targetTimestamp) < Math.abs(nearest.timestamp - targetTimestamp) ? entry : nearest, null)?.sample || null;
+  }
+
+  return { axisLabels, windowMilliseconds, buildChartModel, buildChartGeometry, nearestPoint, nearestSample };
 }));
