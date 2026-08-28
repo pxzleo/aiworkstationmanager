@@ -48,7 +48,17 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(js.includes('function createGpuCard'));
   assert.ok(js.includes('function syncGpuCards'));
   assert.ok(js.includes('ordered.forEach((gpu, position)'));
-  assert.ok(js.includes('...state.gpus.flatMap((gpu)'));
+  assert.ok(js.includes('state.gpus.forEach((gpu, position)'));
+  assert.ok(js.includes('function createMonitorChart'));
+  assert.ok(js.includes('function createMonitorGroup'));
+  assert.ok(js.includes('function renderMonitorDetails'));
+  for (const label of ['采样点', '最近更新', '监控设备', '处理器负载', '系统内存', '核心负载', '显存占用', '平均', '峰值', '最低']) assert.ok(js.includes(label), `missing monitor label ${label}`);
+  for (const selector of ['.monitor-group', '.monitor-chart-grid', '.chart-y-axis', '.chart-x-axis', '.chart-statistics']) assert.ok(css.includes(selector), `missing ${selector}`);
+  assert.ok(js.includes("['100%', '75%', '50%', '25%', '0']"));
+  assert.ok(js.includes("['-15m', '-10m', '-5m', '现在']"));
+  assert.ok(js.includes("geometry.isolatedPoints.map((point) => svgElement('circle'"));
+  assert.ok(css.includes('.chart-isolated-point'));
+  assert.ok(i18n.includes("'处理器负载': 'Processor load'"));
   assert.ok(js.includes("'未检测到 NVIDIA GPU。'"));
   assert.ok(!js.includes('bindGpuSlots'));
   assert.ok(!js.includes('slots: [null, null]'));
@@ -119,6 +129,7 @@ test('user management lists accounts and wires account actions', () => {
 test('Chinese and English UI supports automatic detection and a remembered manual switch', () => {
   assert.equal((html.match(/data-language-select/g) || []).length, 2);
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
+  assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));

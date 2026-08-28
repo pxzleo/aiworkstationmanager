@@ -12,7 +12,7 @@ The following install and test commands apply only to a source checkout containi
 python -m pip install -r requirements.txt
 python -m pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
-node --test tests/frontend_request_guard.test.js tests/frontend_gpu_layout.test.js tests/frontend_theme.test.js tests/frontend_contract.test.js tests/frontend_i18n.test.js tests/documentation_consistency.test.js
+node --test tests/frontend_request_guard.test.js tests/frontend_gpu_layout.test.js tests/frontend_monitor_chart.test.js tests/frontend_theme.test.js tests/frontend_contract.test.js tests/frontend_i18n.test.js tests/documentation_consistency.test.js
 ```
 
 Release packages contain neither `requirements-dev.txt` nor `tests/`; their development guides are included only as API and deployment references. Create a clean release directory with:
