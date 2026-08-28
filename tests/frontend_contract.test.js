@@ -52,10 +52,14 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(js.includes('function createMonitorChart'));
   assert.ok(js.includes('function createMonitorGroup'));
   assert.ok(js.includes('function renderMonitorDetails'));
-  for (const label of ['采样点', '最近更新', '监控设备', '处理器负载', '系统内存', '核心负载', '显存占用', '平均', '峰值', '最低']) assert.ok(js.includes(label), `missing monitor label ${label}`);
+  for (const label of ['已累计', '图表点', '最近更新', '监控设备', '处理器负载', '系统内存', '核心负载', '显存占用', '平均', '峰值', '最低']) assert.ok(js.includes(label), `missing monitor label ${label}`);
   for (const selector of ['.monitor-group', '.monitor-chart-grid', '.chart-y-axis', '.chart-x-axis', '.chart-statistics']) assert.ok(css.includes(selector), `missing ${selector}`);
   assert.ok(js.includes("['100%', '75%', '50%', '25%', '0']"));
-  assert.ok(js.includes("['-15m', '-10m', '-5m', '现在']"));
+  assert.ok(html.includes('id="historyRangeSelect"'));
+  for (const minutes of ['15', '60', '1440']) assert.ok(html.includes(`data-history-minutes="${minutes}"`));
+  assert.ok(js.includes('monitorChart.axisLabels(state.historyWindowMinutes)'));
+  assert.ok(js.includes('monitorChart.windowMilliseconds(state.historyWindowMinutes)'));
+  assert.ok(js.includes("`/history?window=${state.historyWindowMinutes}m`"));
   assert.ok(js.includes("geometry.isolatedPoints.map((point) => svgElement('circle'"));
   assert.ok(css.includes('.chart-isolated-point'));
   assert.ok(i18n.includes("'处理器负载': 'Processor load'"));

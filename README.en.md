@@ -72,9 +72,11 @@ Most installations need only these fields:
 | `port` | `19100` | Manager port |
 | `database_path` | `data/workstation-manager.db` | Users, services, scenes, and operation records |
 | `sample_interval_seconds` | `5` | Resource sampling interval; it never calls service scripts |
-| `history_minutes` | `15` | Resource-history retention |
+| `history_minutes` | `1440` | SQLite resource-history retention in minutes |
 | `script_status_timeout_seconds` | `3` | Timeout for a manual single-service status check |
 | `script_action_timeout_seconds` | `600` | Service-action timeout |
+
+Resource monitoring writes one SQLite sample every 5 seconds by default and retains the latest 24 hours. The UI supports `15m`, `1h`, and `24h`; longer windows are aggregated by the server before they are returned. Only the latest 15 minutes remain in memory, so 24-hour history does not create a large in-memory buffer.
 
 LAN mode does not provide HTTPS. Credentials travel over unencrypted HTTP, so use it only on a trusted LAN and never expose it directly to the internet.
 

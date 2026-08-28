@@ -268,7 +268,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .filter-group, .range-select { display: flex; gap: 4px; }
 .filter, .range-select button { border: 0; background: transparent; color: var(--muted); padding: 7px 10px; border-radius: 5px; font-size: 10px; cursor: pointer; }
 .filter.active, .range-select button.active { background: var(--surface-3); color: var(--text); }
-.range-select button:disabled { opacity: .35; cursor: not-allowed; }
+.range-select.loading { opacity: .58; pointer-events: none; }
+.range-select.loading::after { content: ""; width: 12px; height: 12px; align-self: center; margin-left: 4px; border: 1px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .75s linear infinite; }
 .data-table { border-top: 1px solid var(--line-strong); }
 .table-head, .table-row { display: grid; grid-template-columns: minmax(210px,1.35fr) minmax(150px,1fr) 120px 80px 90px minmax(260px,auto); align-items: center; column-gap: 15px; }
 .table-head { min-height: 39px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--line); }

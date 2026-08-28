@@ -42,3 +42,11 @@ test('isolated valid samples remain visible across missing intervals', () => {
   assert.equal(geometry.areas.length, 0);
   assert.deepEqual(geometry.isolatedPoints.map((point) => point.value), [10, 20, 30]);
 });
+
+test('time ranges expose matching axis labels and durations', () => {
+  assert.deepEqual(monitorChart.axisLabels(15), ['-15m', '-10m', '-5m', '现在']);
+  assert.deepEqual(monitorChart.axisLabels(60), ['-1h', '-40m', '-20m', '现在']);
+  assert.deepEqual(monitorChart.axisLabels(1440), ['-24h', '-16h', '-8h', '现在']);
+  assert.equal(monitorChart.windowMilliseconds(60), 60 * 60 * 1000);
+  assert.throws(() => monitorChart.axisLabels(30), /unsupported/i);
+});
