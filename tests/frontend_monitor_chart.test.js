@@ -4,6 +4,31 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const monitorChart = require('../monitor-chart.js');
 
+test('touch gesture selects only horizontal movement and keeps the final selection', () => {
+  const started = monitorChart.beginPointerGesture(7, 100, 200);
+  const vertical = monitorChart.movePointerGesture(started, 7, 102, 220);
+  assert.equal(vertical.select, false);
+  assert.equal(vertical.gesture.dragging, false);
+
+  const horizontal = monitorChart.movePointerGesture(vertical.gesture, 7, 120, 202);
+  assert.equal(horizontal.select, true);
+  assert.equal(horizontal.gesture.dragging, true);
+
+  const released = monitorChart.finishPointerGesture(horizontal.gesture, 7, false);
+  assert.deepEqual(released, { gesture: null, select: true, finished: true });
+});
+
+test('cancelled and unrelated touch pointers do not replace the last selection', () => {
+  const started = monitorChart.beginPointerGesture(3, 10, 10);
+  const unrelated = monitorChart.movePointerGesture(started, 4, 40, 10);
+  assert.equal(unrelated.select, false);
+  assert.equal(unrelated.gesture, started);
+
+  const moved = monitorChart.movePointerGesture(started, 3, 30, 10);
+  const cancelled = monitorChart.finishPointerGesture(moved.gesture, 3, true);
+  assert.deepEqual(cancelled, { gesture: null, select: false, finished: true });
+});
+
 const minute = 60 * 1000;
 const end = Date.parse('2026-08-28T12:15:00Z');
 const sample = (minuteOffset, value) => ({ sampled_at: new Date(end - minuteOffset * minute).toISOString(), value });

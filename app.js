@@ -216,6 +216,7 @@ function createMonitorChart(spec, chartIndex) {
 }
 function bindCorrelationCursor(charts, range, announcement) {
   let selectedTimestamp = null;
+  let touchPointer = null;
   const availableSamples = () => { const model = charts[0]?.lastModel; if (!model) return []; return currentSeries().filter((sample) => { const timestamp = Date.parse(sample?.sampled_at); return Number.isFinite(timestamp) && timestamp >= model.startTimeMs && timestamp <= model.endTimeMs; }).sort((left, right) => Date.parse(left.sampled_at) - Date.parse(right.sampled_at)); };
   const selectionText = (sample) => `${formatDate(sample.sampled_at, true)} · ${charts.map((chart) => `${ui(chart.title)} ${chartValue(chart.getter(sample), chart)}`).join(' · ')}`;
   const selectSample = (sample, persist = false) => {
@@ -227,11 +228,36 @@ function bindCorrelationCursor(charts, range, announcement) {
   const currentValueText = (samples) => samples.length ? `${ui('当前实时值')} · ${selectionText(samples.at(-1))}` : ui('暂无采样数据');
   const sync = () => { const samples = availableSamples(); range.max = String(Math.max(0, samples.length - 1)); range.disabled = !samples.length; const selectedIndex = selectedTimestamp === null ? -1 : samples.findIndex((sample) => Date.parse(sample.sampled_at) === selectedTimestamp); if (selectedIndex >= 0) { range.value = String(selectedIndex); selectSample(samples[selectedIndex], true); } else { selectedTimestamp = null; range.value = String(Math.max(0, samples.length - 1)); range.setAttribute('aria-valuetext', currentValueText(samples)); } };
   const restoreSelection = () => { const samples = availableSamples(); const selectedIndex = selectedTimestamp === null ? -1 : samples.findIndex((sample) => Date.parse(sample.sampled_at) === selectedTimestamp); if (selectedIndex >= 0) { range.value = String(selectedIndex); selectSample(samples[selectedIndex], true); return; } range.value = String(Math.max(0, samples.length - 1)); range.setAttribute('aria-valuetext', currentValueText(samples)); charts.forEach((chart) => { chart.cursor.setAttribute('hidden', ''); updateChartCurrent(chart, chart.lastModel?.current ?? '--'); }); announcement.textContent = ui('当前实时值'); };
-  const hover = (event) => {
-    const model = charts[0]?.lastModel; const plot = charts[0]?.section.querySelector('.chart-plot'); if (!model || !plot) return;
-    const bounds = plot.getBoundingClientRect(); const ratio = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)); const targetTimestamp = model.startTimeMs + ratio * (model.endTimeMs - model.startTimeMs); const samples = availableSamples(); const sample = monitorChart.nearestSample(samples, targetTimestamp, model.startTimeMs, model.endTimeMs); if (!sample) return; range.value = String(samples.indexOf(sample)); selectSample(sample);
+  const selectPointerSample = (event, persist = false) => {
+    const model = charts[0]?.lastModel; const plot = event.currentTarget; if (!model || !plot) return;
+    const bounds = plot.getBoundingClientRect(); const ratio = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)); const targetTimestamp = model.startTimeMs + ratio * (model.endTimeMs - model.startTimeMs); const samples = availableSamples(); const sample = monitorChart.nearestSample(samples, targetTimestamp, model.startTimeMs, model.endTimeMs); if (!sample) return; range.value = String(samples.indexOf(sample)); selectSample(sample, persist);
   };
-  charts.forEach((chart) => { const plot = chart.section.querySelector('.chart-plot'); plot.addEventListener('pointermove', hover); plot.addEventListener('pointerleave', restoreSelection); });
+  const beginTouchSelection = (event) => {
+    if (event.pointerType === 'mouse') return;
+    touchPointer = monitorChart.beginPointerGesture(event.pointerId, event.clientX, event.clientY);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const movePointer = (event) => {
+    if (event.pointerType === 'mouse') { selectPointerSample(event); return; }
+    const movement = monitorChart.movePointerGesture(touchPointer, event.pointerId, event.clientX, event.clientY);
+    touchPointer = movement.gesture;
+    if (movement.select) selectPointerSample(event, true);
+  };
+  const finishTouchSelection = (event) => {
+    const finish = monitorChart.finishPointerGesture(touchPointer, event.pointerId, event.type === 'pointercancel');
+    if (!finish.finished) return;
+    if (finish.select) selectPointerSample(event, true);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    touchPointer = finish.gesture;
+  };
+  charts.forEach((chart) => {
+    const plot = chart.section.querySelector('.chart-plot');
+    plot.addEventListener('pointerdown', beginTouchSelection);
+    plot.addEventListener('pointermove', movePointer);
+    plot.addEventListener('pointerup', finishTouchSelection);
+    plot.addEventListener('pointercancel', finishTouchSelection);
+    plot.addEventListener('pointerleave', (event) => { if (event.pointerType === 'mouse') restoreSelection(); });
+  });
   range.addEventListener('input', () => selectSample(availableSamples()[Number(range.value)], true));
   return { sync };
 }
@@ -240,7 +266,7 @@ function createMonitorGroup({ className, kicker, title, description, description
   const header = element('div', 'monitor-group-header'); const identity = element('div'); const descriptionNode = element('p', '', description); if (descriptionDetail) descriptionNode.append(document.createTextNode(' · '), userElement('span', '', descriptionDetail)); identity.append(element('span', 'monitor-group-kicker', kicker), titleIsUserData ? userElement('h2', '', title) : element('h2', '', title), descriptionNode); const detailRow = element('div', 'monitor-detail-row'); details.forEach((detail) => detailRow.append(detail.node)); header.append(identity, detailRow);
   const body = element('div', `monitor-chart-grid${correlationCharts.length ? ' monitor-gpu-layout' : ''}`);
   if (correlationCharts.length) {
-    const correlation = element('section', 'gpu-correlation-stack'); const correlationHead = element('div', 'correlation-heading'); const copy = element('div'); copy.append(element('div', '', '核心遥测相关性'), element('small', '', '移动指针或使用方向键对比同一时刻')); const control = element('label', 'correlation-control'); control.append(element('span', 'sr-only', '选择采样时刻')); const range = document.createElement('input'); range.type = 'range'; range.min = '0'; range.max = '0'; range.value = '0'; range.step = '1'; range.setAttribute('aria-label', '选择采样时刻'); const announcement = element('output', 'correlation-selection', '当前实时值'); announcement.setAttribute('aria-live', 'polite'); control.append(range, announcement); correlationHead.append(copy, control);
+    const correlation = element('section', 'gpu-correlation-stack'); const correlationHead = element('div', 'correlation-heading'); const copy = element('div'); copy.append(element('div', '', '核心遥测相关性'), element('small', '', '拖动曲线或使用方向键对比同一时刻')); const control = element('label', 'correlation-control'); control.append(element('span', 'sr-only', '选择采样时刻')); const range = document.createElement('input'); range.type = 'range'; range.min = '0'; range.max = '0'; range.value = '0'; range.step = '1'; range.setAttribute('aria-label', '选择采样时刻'); const announcement = element('output', 'correlation-selection', '当前实时值'); announcement.setAttribute('aria-live', 'polite'); control.append(range, announcement); correlationHead.append(copy, control);
     correlation.append(correlationHead, ...correlationCharts.map((chart) => chart.section)); const context = element('section', 'gpu-context-column'); context.append(element('div', 'context-heading', '容量与分配'), ...contextCharts.map((chart) => chart.section)); body.append(context, correlation);
     state.correlationControllers.push(bindCorrelationCursor(correlationCharts, range, announcement));
   } else charts.forEach((chart) => body.append(chart.section));

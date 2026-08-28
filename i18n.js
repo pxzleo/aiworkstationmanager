@@ -112,6 +112,7 @@
     '当前 GPU 板卡功耗': 'Current GPU board power', '核心温度变化': 'GPU core temperature',
     '核心遥测相关性': 'Core telemetry correlation', '移动指针可联动对比同一时刻': 'Move the pointer to compare the same moment',
     '移动指针或使用方向键对比同一时刻': 'Move the pointer or use arrow keys to compare the same moment',
+    '拖动曲线或使用方向键对比同一时刻': 'Drag across a chart or use arrow keys to compare the same moment',
     '选择采样时刻': 'Select sample time', '当前实时值': 'Current live values',
     '容量与分配': 'Capacity and allocation', '选中': 'Selected',
     '每张 GPU 的核心负载、频率、功率和温度沿同一时间线对齐，移动指针即可对比关联变化。': 'Each GPU aligns core load, clock, power, and temperature on one timeline; move the pointer to compare related changes.',

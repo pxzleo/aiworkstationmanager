@@ -67,6 +67,10 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(css.includes('.monitor-gpu-layout { grid-template-columns: 1fr; }'));
   assert.ok(js.includes('body.append(context, correlation)'));
   assert.ok(js.includes('bindCorrelationCursor'));
+  assert.ok(js.includes('setPointerCapture'));
+  assert.ok(js.includes("plot.addEventListener('pointerup'"));
+  assert.ok(js.includes("plot.addEventListener('pointercancel'"));
+  assert.ok(css.includes('touch-action: pan-y'));
   assert.ok(js.includes("range.type = 'range'"));
   assert.ok(js.includes("announcement.setAttribute('aria-live', 'polite')"));
   assert.ok(js.includes('monitorChart.nearestSample'));
