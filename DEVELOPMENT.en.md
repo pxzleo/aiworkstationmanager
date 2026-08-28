@@ -2,7 +2,7 @@
 
 English | [简体中文](DEVELOPMENT.md)
 
-This guide is for developers, integrations, and troubleshooting. Start with [README.en.md](README.en.md) for normal use and [Script Requirements](SCRIPT_REQUIREMENTS.en.md) for the service-script contract.
+This guide is for developers, integrations, and troubleshooting. Start with [README.md](README.md) for normal use and [Script Requirements](SCRIPT_REQUIREMENTS.en.md) for the service-script contract.
 
 ## Development environment
 

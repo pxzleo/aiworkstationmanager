@@ -1,64 +1,64 @@
-# AXIS AI 工作站管理器
+# AXIS AI Workstation Manager
 
-[English](README.en.md) | 简体中文
+English | [简体中文](README.zh-CN.md)
 
-AXIS 将 AI 工作站的各种服务统一管理并整合进不同场景，可一键在各个场景间切换各种所需服务，并实时监控服务器状态。UI 设计适应 PC 到手机屏幕的监控和配置，可适应任意服务，让 AI 按 [scriptspec.md](scriptspec.md) 要求编写或改写现有脚本即可。它是一个界面简洁的 AI 工作站服务管理系统。
+AXIS unifies the services of an AI workstation and organizes them into different scenes. It can switch all required services for a scene with one action while monitoring server status in real time. Its responsive UI supports monitoring and configuration from PC to mobile, and it can accommodate any service: ask AI to write or adapt an existing management script to the [scriptspec.md](scriptspec.md) contract. AXIS is a clean and straightforward service-management system for AI workstations.
 
-## 界面预览
+## Interface preview
 
-**工作站总览**
+**Workstation overview**
 
-![AXIS 工作站总览，展示当前场景、主机状态和双 GPU 运行情况](docs/1.png)
+![AXIS workstation overview showing the active scene, host status, and dual-GPU activity](docs/1.png)
 
-**工作场景**
+**Work scenes**
 
-![工作场景管理，展示场景中的服务顺序、状态和切换操作](docs/2.png)
+![Work scene management showing service order, status, and scene-switch actions](docs/2.png)
 
-**已登记服务**
+**Registered services**
 
-![已登记服务列表，展示服务说明、GPU、端口、状态和管理操作](docs/3.png)
+![Registered services showing descriptions, GPUs, ports, states, and management actions](docs/3.png)
 
-**主机资源监控**
+**Host resource monitoring**
 
-![资源监控页面，展示 CPU 和内存历史曲线](docs/4.png)
+![Resource monitor showing CPU and memory history charts](docs/4.png)
 
-**GPU 核心遥测相关性**
+**GPU core telemetry correlation**
 
-![GPU 核心负载、频率、功率和温度的全宽关联曲线](docs/5.png)
+![Full-width correlated charts for GPU core load, clock, power, and temperature](docs/5.png)
 
-## 主要功能
+## Features
 
-- 登记 `.ps1`、`.cmd` 或 `.bat` 服务管理脚本
-- 启动、停止、重启、检查单个服务状态，以及一键停止全部服务
-- 创建并拖动排序工作场景，一键切换一组服务
-- 按独立分区展示 CPU、内存及每张 NVIDIA GPU，提供统一刻度、当前/平均/峰值/最低值和关键硬件指标
-- 记录服务启停和场景切换的时间、步骤及结果
-- 支持中文、英文和浏览器语言自动检测
-- 提供矩阵绿、极光蓝和曜石金三种显示风格
-- 支持多用户管理
+- Register `.ps1`, `.cmd`, or `.bat` service-management scripts
+- Start, stop, restart, and manually check one service, or stop all services
+- Create and reorder scenes that switch an ordered group of services
+- Monitor CPU, memory, and every detected NVIDIA GPU in distinct sections with consistent scales, current/average/peak/minimum values, and key hardware metrics
+- Record service actions and scene-switch steps, times, and results
+- Use Chinese, English, or automatic browser-language detection
+- Choose Matrix Green, Aurora Blue, or Obsidian Gold display styles
+- Manage multiple users
 
-## 安装与启动
+## Install and start
 
-需要 Windows 和 Python 3.11 或更高版本。
+Windows and Python 3.11 or later are required.
 
 ```powershell
 python -m pip install -r requirements.txt
 python -m workstation_manager
 ```
 
-浏览器打开：
+Open:
 
 ```text
 http://127.0.0.1:19100
 ```
 
-首次访问时创建管理员，密码至少 4 个字符。也可以双击 `Start-Manager.cmd`，或者运行 `Start-Manager.ps1`。
+Create the initial administrator on the first visit. Passwords must contain at least four characters. You can also double-click `Start-Manager.cmd` or run `Start-Manager.ps1`.
 
-## 登记服务
+## Register a service
 
-打开“已登记服务”，填写服务名称、说明和管理脚本绝对路径。GPU 标签、端口和 UI 地址都是可选项，仅用于界面展示和打开服务页面。
+Open Registered Services and enter a name, description, and absolute management-script path. The GPU label, port, and UI URL are optional display fields.
 
-脚本必须支持以下四个动作：
+Every script must support four actions:
 
 ```powershell
 D:\AIWork\example\manage.ps1 start
@@ -67,59 +67,59 @@ D:\AIWork\example\manage.ps1 restart
 D:\AIWork\example\manage.ps1 status
 ```
 
-管理器不会持续轮询脚本。启动、停止和重启成功后会保存服务状态；只有用户点击“检查状态”时才调用一次 `status`。
+AXIS does not continuously poll scripts. A successful start, stop, or restart saves the new state. The `status` action runs only when a user clicks Check Status for one service.
 
-完整脚本规范与示例见 [scriptspec.md](scriptspec.md)。
+See [Script Requirements](SCRIPT_REQUIREMENTS.en.md) for the full contract and examples.
 
-## 使用场景
+## Use scenes
 
-在“工作场景”中创建场景并选择需要启动的已登记服务。切换场景时，管理器会先停止当前保存状态为“运行中”且不属于目标场景的服务；只有全部必要停止都成功后，才会按场景顺序启动目标服务。
+Create a scene in Work Scenes and select its registered services. When switching scenes, AXIS first stops services whose saved state is Running and that are not in the target scene. It starts target services in scene order only after every required stop succeeds.
 
-切换窗口会显示每一步的进度，可以终止尚未执行的后续步骤。已经完成的启停操作不会自动回滚。
+The progress window shows every step and can cancel steps that have not started. Completed service actions are not rolled back automatically.
 
-## 常用配置
+## Common configuration
 
-需要修改配置时，先复制示例文件：
+Copy the example before changing settings:
 
 ```powershell
 Copy-Item .\config\settings.example.json .\config\settings.json
 .\Start-Manager.ps1 -ConfigFile .\config\settings.json
 ```
 
-普通使用通常只需要以下字段：
+Most installations need only these fields:
 
-| 字段 | 默认值 | 用途 |
+| Field | Default | Purpose |
 | --- | --- | --- |
-| `host` | `127.0.0.1` | 监听地址；局域网访问可在完成首次设置后改为 `0.0.0.0` |
-| `port` | `19100` | 管理器端口 |
-| `database_path` | `data/workstation-manager.db` | 用户、服务、场景和操作记录数据库 |
-| `sample_interval_seconds` | `5` | 资源监控采样间隔，不会调用服务脚本 |
-| `history_minutes` | `1440` | 资源历史的 SQLite 保留时长（分钟） |
-| `script_status_timeout_seconds` | `3` | 手动检查单个服务状态的超时 |
-| `script_action_timeout_seconds` | `600` | 启停服务的超时 |
+| `host` | `127.0.0.1` | Listen address; after initial setup, use `0.0.0.0` for LAN access |
+| `port` | `19100` | Manager port |
+| `database_path` | `data/workstation-manager.db` | Users, services, scenes, and operation records |
+| `sample_interval_seconds` | `5` | Resource sampling interval; it never calls service scripts |
+| `history_minutes` | `1440` | SQLite resource-history retention in minutes |
+| `script_status_timeout_seconds` | `3` | Timeout for a manual single-service status check |
+| `script_action_timeout_seconds` | `600` | Service-action timeout |
 
-资源监控默认每 5 秒写入一次 SQLite，保留最近 24 小时；页面可切换 `15m`/`1h`/`24h`，其中长时间范围由服务端聚合后返回。每张 GPU 的核心负载、频率、功率和温度使用对齐曲线与联动指针显示，显存容量单独展示。内存中只保留最近 15 分钟，不会因 24 小时历史持续占用大量内存。
+Resource monitoring writes one SQLite sample every 5 seconds by default and retains the latest 24 hours. The UI supports `15m`, `1h`, and `24h`; longer windows are aggregated by the server before they are returned. For each GPU, aligned charts and a linked pointer compare core load, clock, power, and temperature, while VRAM capacity remains separate. Only the latest 15 minutes remain in memory, so 24-hour history does not create a large in-memory buffer.
 
-局域网模式没有 HTTPS，账号密码会以未加密 HTTP 传输，只适合可信局域网，不要直接暴露到公网。
+LAN mode does not provide HTTPS. Credentials travel over unencrypted HTTP, so use it only on a trusted LAN and never expose it directly to the internet.
 
-## 随系统启动
+## Start with Windows
 
-安装登录后启动任务：
+Install a task that runs at sign-in:
 
 ```powershell
 .\Install-ManagerTask.ps1
 ```
 
-安装系统启动任务并指定配置：
+Install a system-start task with an explicit configuration file:
 
 ```powershell
 .\Install-ManagerTask.ps1 -Trigger Startup -ConfigFile .\config\settings.json
 ```
 
-卸载任务使用 `.\Uninstall-ManagerTask.ps1`。计划任务只启动管理器，不会自动启动任何已登记服务。
+Remove it with `.\Uninstall-ManagerTask.ps1`. The scheduled task starts AXIS only; it never starts registered services automatically.
 
-## 更多文档
+## More documentation
 
-- [脚本接口要求](scriptspec.md)
-- [开发文档、完整 API 与高级配置](DEVELOPMENT.md)
-- [English README](README.en.md)
+- [Script Requirements](SCRIPT_REQUIREMENTS.en.md)
+- [Development, complete API, and advanced configuration](DEVELOPMENT.en.md)
+- [中文说明](README.zh-CN.md)
