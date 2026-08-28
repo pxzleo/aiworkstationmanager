@@ -546,6 +546,10 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     async def gpu_layout_javascript() -> FileResponse:
         return FileResponse(PROJECT_ROOT / "gpu-layout.js", media_type="text/javascript")
 
+    @app.get("/monitor-chart.js", include_in_schema=False)
+    async def monitor_chart_javascript() -> FileResponse:
+        return FileResponse(PROJECT_ROOT / "monitor-chart.js", media_type="text/javascript")
+
     @app.get("/theme.js", include_in_schema=False)
     async def theme_javascript() -> FileResponse:
         return FileResponse(PROJECT_ROOT / "theme.js", media_type="text/javascript")

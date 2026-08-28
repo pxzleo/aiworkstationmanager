@@ -7,8 +7,11 @@ const SERVICE_INTERVAL_MS = 5000;
 const REQUEST_TIMEOUT_MS = 8000;
 const ACTION_TIMEOUT_MS = 30000;
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const MONITOR_GPU_COLORS = ['#a78bfa', '#fb923c', '#22c55e', '#f472b6', '#38bdf8', '#eab308'];
 const gpuLayout = window.AxisGpuLayout;
 if (!gpuLayout) throw new Error('GPU layout helper is unavailable.');
+const monitorChart = window.AxisMonitorChart;
+if (!monitorChart) throw new Error('Monitor chart helper is unavailable.');
 const requestGuard = new RequestGuard();
 const actionGuard = new ExclusiveActionGuard();
 let sceneProgressOperationId = null;
@@ -16,7 +19,7 @@ let draggedSceneId = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], users: [], operations: [], timers: new Map(),
-  chartSpecs: [], gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
+  chartSpecs: [], monitorDetails: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
 
 class ApiError extends Error {
@@ -131,7 +134,7 @@ async function refreshUsers() { if (document.hidden) return; try { const result 
 function normalizeGpu(gpu) { return { ...gpu, load_percent: normalizedPercent(gpu.load_percent), memory_percent: normalizedPercent(gpu.memory_percent) }; }
 function normalizeHistorySample(sample) { return { ...sample, cpu_load_percent: normalizedPercent(sample.cpu_load_percent), memory_percent: normalizedPercent(sample.memory_percent), gpus: Array.isArray(sample.gpus) ? sample.gpus.map(normalizeGpu) : [] }; }
 function normalizeSnapshot(snapshot) { const host = snapshot.host || {}; return { ...snapshot, host: { ...host, cpu: { ...(host.cpu || {}), load_percent: normalizedPercent(host.cpu?.load_percent) }, memory: { ...(host.memory || {}), percent: normalizedPercent(host.memory?.percent) }, disks: Array.isArray(host.disks) ? host.disks.map((disk) => ({ ...disk, percent: normalizedPercent(disk.percent) })) : [] }, gpus: Array.isArray(snapshot.gpus) ? snapshot.gpus.map(normalizeGpu) : [] }; }
-function snapshotAsHistory(snapshot) { return snapshot ? { sampled_at: snapshot.sampled_at, cpu_load_percent: snapshot.host?.cpu?.load_percent, memory_percent: snapshot.host?.memory?.percent, gpus: snapshot.gpus || [] } : null; }
+function snapshotAsHistory(snapshot) { return snapshot ? { sampled_at: snapshot.sampled_at, cpu_load_percent: snapshot.host?.cpu?.load_percent, cpu_temperature_c: snapshot.host?.cpu?.temperature_c, memory_percent: snapshot.host?.memory?.percent, gpus: snapshot.gpus || [] } : null; }
 function currentSeries() { const samples = state.history.slice(); const current = snapshotAsHistory(state.snapshot); if (current && !samples.some((sample) => sample.sampled_at === current.sampled_at)) samples.push(current); return samples.sort((a, b) => new Date(a.sampled_at) - new Date(b.sampled_at)); }
 
 function renderSnapshot() {
@@ -167,14 +170,58 @@ function syncGpuCards(gpus) {
 }
 function renderPolyline(polyline, values, device) { if (!polyline) return; polyline.closest('svg').setAttribute('aria-label', ui(`${device} GPU 负载曲线`)); const normalized = values.map(normalizedPercent).filter((value) => value !== null); if (!normalized.length) { polyline.setAttribute('points', ''); return; } polyline.setAttribute('points', normalized.map((value, index) => `${normalized.length === 1 ? 150 : index * (300 / (normalized.length - 1))},${110 - value}`).join(' ')); }
 function renderCollectorErrors(errors) { const banner = byId('collectorStatus'); banner.hidden = !errors.length; banner.replaceChildren(); if (errors.length) banner.append(element('strong', '', '部分数据降级'), element('span', '', errors.map((error) => error.message || '采集失败').join('；'))); }
-function summarize(values) { if (!values.length) return { current: '--', peak: '--' }; return { current: Math.round(values.at(-1)), peak: Math.round(Math.max(...values)) }; }
+function monitorDetail(label) { const node = element('span', 'monitor-detail'); node.append(element('small', '', label), userElement('strong', '', '--')); return { node, value: node.querySelector('strong') }; }
+function createMonitorChart(spec, chartIndex) {
+  const section = element('section', 'chart-section'); section.style.setProperty('--chart-color', spec.color);
+  const heading = element('div', 'chart-title'); const copy = element('div'); copy.append(element('span', 'chart-kicker', spec.kicker), element('h3', '', spec.title), element('p', '', spec.description));
+  const current = element('strong', 'chart-current', '--'); current.append(element('small', '', '% 当前')); heading.append(copy, current);
+  const statistics = element('div', 'chart-statistics'); const statisticRefs = {};
+  [['average', '平均'], ['peak', '峰值'], ['minimum', '最低']].forEach(([key, label]) => { const item = element('span'); const value = userElement('b', '', '--'); item.append(element('small', '', label), value); statistics.append(item); statisticRefs[key] = value; });
+  const frame = element('div', 'chart-frame'); const yAxis = element('span', 'chart-y-axis'); ['100%', '75%', '50%', '25%', '0'].forEach((label) => yAxis.append(element('i', '', label)));
+  const plot = element('div', 'chart-plot'); const svg = svgElement('svg', { class: 'line-chart', viewBox: '0 0 900 200', preserveAspectRatio: 'none', role: 'img', 'aria-label': `${ui(spec.title)} · ${ui('最近 15 分钟')}` });
+  const gradientId = `monitorGradient${chartIndex}`; const defs = svgElement('defs'); const gradient = svgElement('linearGradient', { id: gradientId, x1: '0', y1: '0', x2: '0', y2: '1' }); gradient.append(svgElement('stop', { class: 'chart-gradient-start', offset: '0%' }), svgElement('stop', { class: 'chart-gradient-end', offset: '100%' })); defs.append(gradient);
+  const grid = svgElement('path', { class: 'chart-grid-lines', d: 'M0 1H900M0 50H900M0 100H900M0 150H900M0 199H900M1 0V200M300 0V200M600 0V200M899 0V200' }); const areaLayer = svgElement('g', { class: 'chart-areas' }); const lineLayer = svgElement('g', { class: 'chart-lines' }); const isolatedLayer = svgElement('g', { class: 'chart-isolated-points' }); const marker = svgElement('circle', { class: 'chart-marker', cx: '0', cy: '0', r: '4', hidden: '' }); svg.append(defs, grid, areaLayer, lineLayer, isolatedLayer, marker);
+  const noData = element('span', 'chart-no-data', '暂无采样数据'); plot.append(svg, noData); const xAxis = element('div', 'chart-x-axis'); ['-15m', '-10m', '-5m', '现在'].forEach((label) => xAxis.append(element('span', '', label))); frame.append(yAxis, plot, xAxis);
+  section.append(heading, statistics, frame); return { ...spec, section, current, statisticRefs, svg, gradientId, areaLayer, lineLayer, isolatedLayer, marker, noData };
+}
+function createMonitorGroup({ className, kicker, title, description, descriptionDetail = '', titleIsUserData = false, color, details, charts }) {
+  const group = element('section', `monitor-group ${className}`); group.style.setProperty('--monitor-color', color);
+  const header = element('div', 'monitor-group-header'); const identity = element('div'); const descriptionNode = element('p', '', description); if (descriptionDetail) descriptionNode.append(document.createTextNode(' · '), userElement('span', '', descriptionDetail)); identity.append(element('span', 'monitor-group-kicker', kicker), titleIsUserData ? userElement('h2', '', title) : element('h2', '', title), descriptionNode); const detailRow = element('div', 'monitor-detail-row'); details.forEach((detail) => detailRow.append(detail.node)); header.append(identity, detailRow);
+  const body = element('div', 'monitor-chart-grid'); charts.forEach((chart) => body.append(chart.section)); group.append(header, body); return group;
+}
 function buildMonitorCharts() {
-  const grid = document.querySelector('.monitor-grid'); grid.replaceChildren(); const specs = [['HOST', 'CPU 总负载', (sample) => sample.cpu_load_percent], ['HOST', '内存占用', (sample) => sample.memory_percent], ...state.gpus.flatMap((gpu) => [[`GPU ${gpu.index}`, 'GPU 负载', (sample) => gpuLayout.metricForGpu(sample, gpu, 'load_percent')], [`GPU ${gpu.index}`, '显存占用', (sample) => gpuLayout.metricForGpu(sample, gpu, 'memory_percent')]])];
-  state.chartSpecs = specs.map(([kicker, title, getter]) => { const section = element('section', 'chart-section'); const heading = element('div', 'chart-title'); const copy = element('div'); copy.append(element('span', 'chart-kicker', kicker), element('h2', '', title)); const current = element('strong', '', '--'); current.append(element('small', '', '% 当前')); heading.append(copy, current); const frame = element('div', 'chart-frame'); const svg = svgElement('svg', { class: 'line-chart', viewBox: '0 0 900 230', preserveAspectRatio: 'none' }); const line = svgElement('polyline', { class: 'line primary-line', fill: 'none', points: '' }); svg.append(line); frame.append(svg); section.append(heading, frame); grid.append(section); return { title, getter, current, line }; });
-  if (!state.gpus.length) grid.append(element('p', 'empty-state monitor-gpu-empty', '未检测到 NVIDIA GPU，当前仅显示主机资源。'));
+  const container = document.querySelector('.monitor-grid'); container.replaceChildren(); state.chartSpecs = []; const details = { gpus: new Map() }; state.monitorDetails = details;
+  const overview = element('div', 'monitor-overview'); const sampleCount = monitorDetail('采样点'); const lastSample = monitorDetail('最近更新'); const deviceCount = monitorDetail('监控设备'); overview.append(sampleCount.node, lastSample.node, deviceCount.node); details.sampleCount = sampleCount.value; details.lastSample = lastSample.value; details.deviceCount = deviceCount.value; container.append(overview);
+  let chartIndex = 0; const cpuTemp = monitorDetail('CPU 温度'); const memoryUsage = monitorDetail('内存用量'); details.cpuTemp = cpuTemp.value; details.memoryUsage = memoryUsage.value;
+  const hostSpecs = [{ kicker: 'CPU', title: '处理器负载', description: '全部逻辑处理器综合使用率', color: 'var(--accent)', getter: (sample) => sample.cpu_load_percent }, { kicker: 'RAM', title: '系统内存', description: '物理内存实时占用比例', color: '#60a5fa', getter: (sample) => sample.memory_percent }];
+  const hostCharts = hostSpecs.map((spec) => { const chart = createMonitorChart(spec, chartIndex++); state.chartSpecs.push(chart); return chart; });
+  container.append(createMonitorGroup({ className: 'monitor-host-group', kicker: 'HOST', title: '主机资源', description: '处理器与系统内存使用同一条采样时间线', color: 'var(--accent)', details: [cpuTemp, memoryUsage], charts: hostCharts }));
+  state.gpus.forEach((gpu, position) => {
+    const color = MONITOR_GPU_COLORS[position % MONITOR_GPU_COLORS.length]; const temperature = monitorDetail('温度'); const power = monitorDetail('功耗'); const memory = monitorDetail('显存用量'); const uuid = monitorDetail('UUID'); details.gpus.set(gpu._uiKey, { temperature: temperature.value, power: power.value, memory: memory.value, uuid: uuid.value });
+    const specs = [{ kicker: `GPU ${gpu.index}`, title: '核心负载', description: '图形与计算核心综合使用率', color, getter: (sample) => gpuLayout.metricForGpu(sample, gpu, 'load_percent') }, { kicker: `GPU ${gpu.index}`, title: '显存占用', description: '已分配显存占总显存比例', color, getter: (sample) => gpuLayout.metricForGpu(sample, gpu, 'memory_percent') }];
+    const charts = specs.map((spec) => { const chart = createMonitorChart(spec, chartIndex++); state.chartSpecs.push(chart); return chart; });
+    container.append(createMonitorGroup({ className: 'monitor-gpu-group', kicker: `GPU ${gpu.index}`, title: gpu.name || `GPU ${gpu.index}`, titleIsUserData: true, description: '独立设备遥测', descriptionDetail: compactUuid(gpu.uuid), color, details: [temperature, power, memory, uuid], charts }));
+  });
+  if (!state.gpus.length) container.append(element('p', 'empty-state monitor-gpu-empty', '未检测到 NVIDIA GPU，当前仅显示主机资源。'));
+  renderCharts();
 }
 function syncMonitorCharts() { const signature = gpuLayout.gpuSetSignature(state.gpus); if (signature !== state.monitorGpuSignature) { state.monitorGpuSignature = signature; buildMonitorCharts(); } }
-function renderCharts() { const samples = currentSeries(); state.chartSpecs.forEach((spec) => { const values = samples.map(spec.getter).filter(finite); spec.current.firstChild.nodeValue = values.length ? String(summarize(values).current) : '--'; spec.line.setAttribute('points', values.map((value, index) => `${values.length === 1 ? 450 : index * (900 / (values.length - 1))},${215 - Math.min(100, Math.max(0, value)) * 2}`).join(' ')); }); }
+function renderMonitorDetails(samples) {
+  const details = state.monitorDetails; if (!details) return; const snapshot = state.snapshot || {}; const host = snapshot.host || {}; const memory = host.memory || {};
+  details.sampleCount.textContent = String(samples.length); details.lastSample.textContent = samples.length ? formatDate(samples.at(-1).sampled_at) : '--'; details.deviceCount.textContent = `${state.gpus.length + 1}`;
+  details.cpuTemp.textContent = finite(host.cpu?.temperature_c) ? `${Math.round(host.cpu.temperature_c)}°C` : ui('不支持'); const used = gib(memory.used_bytes); const total = gib(memory.total_bytes); details.memoryUsage.textContent = used !== null && total !== null ? `${used.toFixed(1)} / ${total.toFixed(1)} GB` : ui('不支持');
+  state.gpus.forEach((gpu) => { const refs = details.gpus.get(gpu._uiKey); if (!refs) return; const gpuUsed = mibToGib(gpu.memory_used_mib); const gpuTotal = mibToGib(gpu.memory_total_mib); refs.temperature.textContent = finite(gpu.temperature_c) ? `${Math.round(gpu.temperature_c)}°C` : ui('不支持'); refs.power.textContent = finite(gpu.power_w) ? `${Math.round(gpu.power_w)} W` : ui('不支持'); refs.memory.textContent = gpuUsed !== null && gpuTotal !== null ? `${gpuUsed.toFixed(1)} / ${gpuTotal.toFixed(1)} GB` : ui('不支持'); refs.uuid.textContent = compactUuid(gpu.uuid); });
+}
+function renderCharts() {
+  const samples = currentSeries(); const endTimeMs = Date.now(); renderMonitorDetails(samples); state.chartSpecs.forEach((spec) => {
+    const model = monitorChart.buildChartModel(samples, spec.getter, endTimeMs); const geometry = monitorChart.buildChartGeometry(model); spec.current.firstChild.nodeValue = String(model.current); Object.entries(spec.statisticRefs).forEach(([key, node]) => { node.textContent = String(model[key]); }); const unit = (value) => value === '--' ? '--' : `${value}%`; spec.svg.setAttribute('aria-label', model.pointCount ? `${ui(spec.title)}: ${ui('当前')} ${unit(model.current)}, ${ui('峰值')} ${unit(model.peak)}, ${ui('平均')} ${unit(model.average)}` : `${ui(spec.title)}: ${ui('暂无采样数据')}`);
+    spec.lineLayer.replaceChildren(...geometry.lines.map((segment) => svgElement('polyline', { class: 'chart-line', points: segment.map(({ x, y }) => `${x},${y}`).join(' ') })));
+    spec.areaLayer.replaceChildren(...geometry.areas.map((segment) => { const points = segment.map(({ x, y }) => `${x},${y}`).join(' '); return svgElement('polygon', { class: 'chart-area', fill: `url(#${spec.gradientId})`, points: `${segment[0].x},200 ${points} ${segment.at(-1).x},200` }); }));
+    spec.isolatedLayer.replaceChildren(...geometry.isolatedPoints.map((point) => svgElement('circle', { class: 'chart-isolated-point', cx: String(point.x), cy: String(point.y), r: '3' })));
+    spec.noData.hidden = Boolean(model.pointCount);
+    if (model.lastPoint) { spec.marker.setAttribute('cx', String(model.lastPoint.x)); spec.marker.setAttribute('cy', String(model.lastPoint.y)); spec.marker.removeAttribute('hidden'); } else spec.marker.setAttribute('hidden', '');
+  });
+}
 
 const statusLabels = { running: '已启动', stopped: '已停止', unhealthy: '异常', unknown: '状态未知' };
 const sceneStatusLabels = { active: '已激活', partial: '部分启动', inactive: '未激活' };

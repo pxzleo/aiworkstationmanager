@@ -498,6 +498,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/i18n.js").status_code, 200)
         self.assertEqual(self.client.get("/request-guard.js").status_code, 200)
         self.assertEqual(self.client.get("/gpu-layout.js").status_code, 200)
+        self.assertEqual(self.client.get("/monitor-chart.js").status_code, 200)
         self.assertEqual(self.client.get("/theme.js").status_code, 200)
         self.assertEqual(self.client.get("/REQUIREMENTS.md").status_code, 404)
 
