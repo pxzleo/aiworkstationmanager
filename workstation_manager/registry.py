@@ -406,10 +406,12 @@ class RegisteredServiceManager:
         target = set(scene["service_ids"])
         services = self.database.list_registered_services()
         matches = True
+        target_running = False
         for service in services:
             state = self.statuses.get(service["id"], {}).get("state", "unknown")
             if service["id"] in target:
                 matches = matches and state == "running"
+                target_running = target_running or state == "running"
             else:
                 matches = matches and state != "running"
         item = dict(scene)
@@ -427,7 +429,12 @@ class RegisteredServiceManager:
             for service_id in scene["service_ids"]
             if service_id in service_map
         ]
-        item["state"] = "active" if matches else "partial"
+        if matches:
+            item["state"] = "active"
+        elif target and not target_running:
+            item["state"] = "inactive"
+        else:
+            item["state"] = "partial"
         item["busy"] = self._operation_pending
         return item
 

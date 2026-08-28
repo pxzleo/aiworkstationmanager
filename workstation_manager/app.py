@@ -30,6 +30,11 @@ class Credentials(BaseModel):
     password: str = Field(max_length=1024)
 
 
+class PasswordPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    password: str = Field(max_length=1024)
+
+
 class ServicePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=100)
@@ -317,6 +322,41 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     async def auth_me(session: AuthenticatedSession = Depends(require_session)) -> dict[str, Any]:
         return {"username": session.username, "expires_at": session.expires_at,
                 "csrf_token": resolved_auth.rotate_csrf(session)}
+
+    @app.get("/api/v1/users")
+    async def users(session: AuthenticatedSession = Depends(require_session)) -> dict[str, Any]:
+        items = resolved_auth.list_users()
+        for item in items:
+            item["is_current"] = item["username"] == session.username
+        return {"users": items}
+
+    @app.post("/api/v1/users", status_code=201)
+    async def create_user(credentials: Credentials, request: Request,
+                          _: AuthenticatedSession = Depends(require_csrf)) -> dict[str, Any]:
+        async with auth_concurrency:
+            return await asyncio.to_thread(
+                resolved_auth.create_user, credentials.username, credentials.password,
+                _client_ip(request),
+            )
+
+    @app.put("/api/v1/users/{user_id}/password")
+    async def update_user_password(user_id: int, payload: PasswordPayload, request: Request,
+                                   session: AuthenticatedSession = Depends(require_csrf)) \
+            -> dict[str, Any]:
+        async with auth_concurrency:
+            return await asyncio.to_thread(
+                resolved_auth.update_user_password, user_id, payload.password,
+                session.username, _client_ip(request),
+            )
+
+    @app.delete("/api/v1/users/{user_id}", status_code=204)
+    async def delete_user(user_id: int, request: Request,
+                          session: AuthenticatedSession = Depends(require_csrf)) -> Response:
+        async with auth_concurrency:
+            await asyncio.to_thread(
+                resolved_auth.delete_user, user_id, session.username, _client_ip(request)
+            )
+        return Response(status_code=204)
 
     @app.get("/api/v1/snapshot", dependencies=[Depends(protected_access)])
     async def snapshot() -> dict[str, Any]:

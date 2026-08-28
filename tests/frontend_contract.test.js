@@ -11,7 +11,9 @@ const js = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
 
 test('authentication UI accepts the configured four-character minimum', () => {
-  assert.equal((html.match(/minlength="4"/g) || []).length, 2);
+  for (const id of ['passwordInput', 'confirmPasswordInput']) {
+    assert.match(html, new RegExp(`id="${id}"[^>]*minlength="4"`));
+  }
   assert.ok(js.includes('密码至少 4 个字符'));
   assert.ok(!html.includes('minlength="12"'));
 });
@@ -51,6 +53,10 @@ test('scene editor and management log remain wired', () => {
   assert.ok(js.includes('scene.services'));
   assert.ok(js.includes('service.ui_url'));
   assert.ok(js.includes("'scene-ui-link', '打开 UI ↗'"));
+  assert.ok(js.includes("partial: '部分启动'"));
+  assert.ok(js.includes("inactive: '未激活'"));
+  assert.ok(js.includes("'scene-inactive'"));
+  assert.ok(css.includes('.scene-panel-top .scene-inactive'));
   assert.ok(css.includes('grid-column: 3; grid-row: 1 / span 2'));
   assert.ok(css.includes('.scene-ui-link:hover'));
   assert.ok(css.includes('.scene-selector { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }'));
@@ -66,6 +72,23 @@ test('scene editor and management log remain wired', () => {
   assert.ok(html.includes('只记录服务启停与场景切换'));
   assert.ok(!html.includes('管理审计'));
   assert.ok(!js.includes('/audit?limit=100'));
+});
+
+test('user management lists accounts and wires account actions', () => {
+  assert.ok(html.includes('data-page="users"'));
+  assert.ok(html.includes('id="userRows"'));
+  assert.ok(html.includes('id="addUserButton"'));
+  assert.ok(html.includes('id="userDialog"'));
+  assert.ok(html.includes('id="passwordDialog"'));
+  for (const id of ['newUserPassword', 'newUserPasswordConfirm', 'changedPassword', 'changedPasswordConfirm']) {
+    assert.match(html, new RegExp(`id="${id}"[^>]*minlength="4"`));
+  }
+  assert.ok(js.includes("api('/users'"));
+  assert.ok(js.includes("method: 'PUT'"));
+  assert.ok(js.includes("current_session_invalidated"));
+  assert.ok(js.includes('不能删除当前登录用户'));
+  assert.ok(css.includes('.user-table .table-head'));
+  assert.ok(css.includes('.user-avatar'));
 });
 
 test('legacy adapter, discovery and service-log UI are absent', () => {

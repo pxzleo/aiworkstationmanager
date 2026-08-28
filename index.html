@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#0b0f10">
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
-  <link rel="stylesheet" href="styles.css?v=20260827-5">
+  <link rel="stylesheet" href="styles.css?v=20260828-1">
 </head>
 <body class="auth-pending">
   <svg class="svg-sprite" aria-hidden="true">
@@ -17,6 +17,7 @@
     <symbol id="i-window" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/></symbol>
     <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
     <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m5 7 4 4-4 4M11 17h7"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 20v-2.5A4.5 4.5 0 0 1 8 13h2a4.5 4.5 0 0 1 4.5 4.5V20M15 5.5a3 3 0 0 1 0 5.8M16.5 14a4.5 4.5 0 0 1 4 4.5V20"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h4"/></symbol>
     <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2.1-.7-.6-1.5 1-2-2.1-2.1-2 1-1.5-.6L10.5 3h-3l-.7 2.1-1.5.6-2-1L1.2 6.8l1 2-.6 1.5-2.1.7v3l2.1.7.6 1.5-1 2 2.1 2.1 2-1 1.5.6.7 2.1h3l.7-2.1 1.5-.6 2 1 2.1-2.1-1-2 .6-1.5z" transform="translate(2.5 -1) scale(.8)"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
@@ -43,6 +44,7 @@
         <button class="nav-item" data-page="scenes"><svg><use href="#i-layers"/></svg><span>工作场景</span><b id="sceneNavCount">0</b></button>
         <button class="nav-item" data-page="environments"><svg><use href="#i-box"/></svg><span>已登记服务</span></button>
         <button class="nav-item" data-page="monitor"><svg><use href="#i-pulse"/></svg><span>资源监控</span></button>
+        <button class="nav-item" data-page="users"><svg><use href="#i-users"/></svg><span>用户管理</span><b id="userNavCount">0</b></button>
         <button class="nav-item" data-page="logs"><svg><use href="#i-terminal"/></svg><span>日志中心</span></button>
       </nav>
 
@@ -160,7 +162,7 @@
           <div class="scene-selector" id="sceneList"><p class="empty-state">尚未添加场景。</p></div>
           <section class="switch-rules">
             <div class="section-heading"><div><h2>切换规则</h2><p>不执行自动回滚，最终状态和失败原因写入操作日志。</p></div></div>
-            <div class="rule-flow"><span><b>01</b>停止未选服务<small>逐个调用 stop</small></span><i></i><span><b>02</b>记录停止结果<small>任一失败则不启动</small></span><i></i><span><b>03</b>启动目标服务<small>按场景顺序调用 start</small></span><i></i><span><b>04</b>保存最终状态<small>标记激活或部分完成</small></span></div>
+            <div class="rule-flow"><span><b>01</b>停止未选服务<small>逐个调用 stop</small></span><i></i><span><b>02</b>记录停止结果<small>任一失败则不启动</small></span><i></i><span><b>03</b>启动目标服务<small>按场景顺序调用 start</small></span><i></i><span><b>04</b>保存最终状态<small>标记激活或部分启动</small></span></div>
           </section>
         </section>
 
@@ -177,6 +179,14 @@
           <div class="page-heading"><div><p class="eyebrow">真实采样 · 最近 15 分钟</p><h1>资源监控</h1><p>CPU、内存及每张 GPU 的负载与显存均来自同源历史采样。</p></div><div class="range-select"><button class="active">15 分钟</button><button disabled title="当前 API 尚未开放此范围">1 小时</button><button disabled title="当前 API 尚未开放此范围">24 小时</button></div></div>
           <div class="monitor-grid">
             <p class="empty-state">登录后加载真实历史曲线。</p>
+          </div>
+        </section>
+
+        <section class="page" id="page-users" data-title="用户管理">
+          <div class="page-heading"><div><p class="eyebrow">访问账户</p><h1>用户管理</h1><p>所有用户具有相同管理权限；新增用户仅允许从本机地址执行。</p></div><button class="button primary" id="addUserButton"><span>＋</span>添加用户</button></div>
+          <div class="data-table user-table">
+            <div class="table-head"><span>用户</span><span>创建时间</span><span>活跃会话</span><span>状态</span><span></span></div>
+            <div id="userRows"><p class="empty-state">正在加载用户。</p></div>
           </div>
         </section>
 
@@ -232,6 +242,27 @@
       <div class="scene-service-editor"><strong>需要启动的服务</strong><small>使用箭头调整启动顺序</small><div id="sceneServiceChoices"></div></div>
       <p class="auth-error" id="sceneFormError" role="alert"></p>
       <div class="dialog-actions"><button class="button secondary" type="button" data-close="sceneDialog">取消</button><button class="button primary" type="submit">保存场景</button></div>
+    </form>
+  </dialog>
+  <dialog class="control-dialog editor-dialog" id="userDialog">
+    <form id="userForm">
+      <p class="eyebrow">访问账户</p><h2>添加用户</h2>
+      <label>用户名<input id="newUsername" autocomplete="username" minlength="3" maxlength="64" required></label>
+      <label>密码<input id="newUserPassword" type="password" autocomplete="new-password" minlength="4" maxlength="1024" required></label>
+      <label>确认密码<input id="newUserPasswordConfirm" type="password" autocomplete="new-password" minlength="4" maxlength="1024" required></label>
+      <p class="auth-error" id="userFormError" role="alert"></p>
+      <div class="dialog-actions"><button class="button secondary" type="button" data-close="userDialog">取消</button><button class="button primary" type="submit">添加用户</button></div>
+    </form>
+  </dialog>
+  <dialog class="control-dialog editor-dialog" id="passwordDialog">
+    <form id="passwordForm">
+      <p class="eyebrow">账户安全</p><h2 id="passwordDialogTitle">修改密码</h2>
+      <input id="passwordUserId" type="hidden">
+      <p class="dialog-note" id="passwordDialogNote">修改后，该用户的现有登录会话将全部失效。</p>
+      <label>新密码<input id="changedPassword" type="password" autocomplete="new-password" minlength="4" maxlength="1024" required></label>
+      <label>确认新密码<input id="changedPasswordConfirm" type="password" autocomplete="new-password" minlength="4" maxlength="1024" required></label>
+      <p class="auth-error" id="passwordFormError" role="alert"></p>
+      <div class="dialog-actions"><button class="button secondary" type="button" data-close="passwordDialog">取消</button><button class="button primary" type="submit">保存新密码</button></div>
     </form>
   </dialog>
   <dialog class="control-dialog scene-progress-dialog" id="sceneProgressDialog">

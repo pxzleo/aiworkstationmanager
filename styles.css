@@ -215,6 +215,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .scene-panel-top > span { min-height: 27px; display: inline-flex; align-items: center; padding: 0 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-3); color: var(--text); font-weight: 650; }
 .scene-panel-top i { min-height: 27px; display: inline-flex; align-items: center; padding: 0 9px; border: 1px solid rgba(231,184,106,.28); border-radius: 999px; background: rgba(231,184,106,.08); font-style: normal; color: var(--warning); }
 .scene-panel-top .scene-status { border-color: rgba(93,229,194,.32); background: rgba(93,229,194,.1); color: var(--accent); }
+.scene-panel-top .scene-inactive { border-color: var(--line); background: var(--surface-3); color: var(--muted); }
 .scene-panel-meta { display: flex; align-items: center; gap: 10px; }
 .scene-drag-handle { width: 29px; height: 27px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--muted); cursor: grab; line-height: 1; }
 .scene-drag-handle:hover { color: var(--accent); border-color: rgba(93,229,194,.45); }
@@ -273,6 +274,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .row-buttons .icon-only { width: 28px; }
 .row-buttons button { padding: 0 7px; color: var(--text); }
 .row-buttons button:disabled { opacity: .4; cursor: not-allowed; }
+.user-table .table-head, .user-table .table-row { grid-template-columns: minmax(220px,1.4fr) minmax(170px,1fr) 110px 100px minmax(180px,auto); }
+.user-avatar { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 8px; color: var(--accent); background: rgba(93,229,194,.09); font-style: normal; font-size: 11px; font-weight: 700; }
+.dialog-note { color: var(--muted); font-size: 11px; line-height: 1.6; }
 .scene-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
 .scene-card-actions .button { width: auto; }
 .scene-reorder-controls { display: flex; gap: 5px; margin-right: auto; }
@@ -517,7 +521,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .rule-flow i { display: none; }
   .toolbar, .log-toolbar { flex-wrap: wrap; }
   .search, .search.compact { width: 100%; min-width: 0; }
-  .env-table { overflow-x: auto; }
+  .env-table, .user-table { overflow-x: auto; }
   .table-head, .table-row { min-width: 700px; }
   .webui-row { grid-template-columns: auto 1fr; }
   .webui-actions { grid-column: 1/-1; justify-content: flex-end; }

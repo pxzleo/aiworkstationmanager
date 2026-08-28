@@ -8,12 +8,14 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from workstation_manager.app import create_app
-from workstation_manager.auth import AuthService
+from workstation_manager.auth import SESSION_COOKIE, AuthError, AuthService
 from workstation_manager.config import Settings
 from workstation_manager.database import Database, DatabaseError, SCHEMA_VERSION
 from workstation_manager.history import Sampler
@@ -219,6 +221,63 @@ class DatabaseRegistryTests(unittest.TestCase):
                 foreign_key_errors = connection.execute("PRAGMA foreign_key_check").fetchall()
             self.assertEqual([row["username"] for row in users], ["admin", "zzq"])
             self.assertEqual(foreign_key_errors, [])
+
+    def test_user_management_lists_resets_and_deletes_users(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Database(Path(temporary) / "manager.db")
+            auth = AuthService(database, 3600)
+            admin_token, _, _ = auth.setup("admin", "1234", "127.0.0.1")
+            created = auth.create_user("zzq", "5678", "127.0.0.1")
+            zzq_token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
+
+            users = auth.list_users()
+            self.assertEqual([user["username"] for user in users], ["admin", "zzq"])
+            self.assertEqual([user["active_sessions"] for user in users], [1, 1])
+
+            with self.assertRaisesRegex(AuthError, "至少需要 4"):
+                auth.update_user_password(created["id"], "123", "admin", "127.0.0.1")
+
+            updated = auth.update_user_password(
+                created["id"], "8765", "admin", "127.0.0.1"
+            )
+            self.assertFalse(updated["current_session_invalidated"])
+            with self.assertRaisesRegex(AuthError, "会话无效"):
+                auth.authenticate(zzq_token)
+            auth.login("zzq", "8765", "127.0.0.1")
+
+            with self.assertRaisesRegex(AuthError, "当前登录用户"):
+                auth.delete_user(1, "admin", "127.0.0.1")
+            deleted = auth.delete_user(created["id"], "admin", "127.0.0.1")
+            self.assertEqual(deleted["username"], "zzq")
+            self.assertEqual([user["username"] for user in auth.list_users()], ["admin"])
+            self.assertEqual(auth.authenticate(admin_token).username, "admin")
+            with self.assertRaisesRegex(AuthError, "最后一个用户"):
+                auth.delete_user(1, "other", "127.0.0.1")
+
+            failures = {
+                (item["event"], item["summary"].get("reason"))
+                for item in database.list_audit(50) if item["result"] == "failure"
+            }
+            self.assertIn(("auth.user.password_update", "weak_password"), failures)
+            self.assertIn(("auth.user.delete", "cannot_delete_current_user"), failures)
+            self.assertIn(("auth.user.delete", "cannot_delete_last_user"), failures)
+
+            self_update = auth.update_user_password(
+                1, "4321", "admin", "127.0.0.1"
+            )
+            self.assertTrue(self_update["current_session_invalidated"])
+            with self.assertRaisesRegex(AuthError, "会话无效"):
+                auth.authenticate(admin_token)
+            auth.login("admin", "4321", "127.0.0.1")
+
+    def test_create_user_remains_loopback_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Database(Path(temporary) / "manager.db")
+            auth = AuthService(database, 3600)
+            auth.setup("admin", "1234", "127.0.0.1")
+
+            with self.assertRaisesRegex(AuthError, "仅允许从本机"):
+                auth.create_user("zzq", "5678", "192.168.100.20")
 
     def test_schema_twelve_upgrade_preserves_admin_and_invalidates_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -437,6 +496,58 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scene_service["name"], "带界面服务")
         self.assertEqual(scene_service["status"]["state"], "unknown")
         self.assertEqual(scene_service["ui_url"], "http://127.0.0.1:8080")
+        self.assertEqual(scene["state"], "inactive")
+
+    async def test_scene_is_inactive_when_no_target_service_is_running(self) -> None:
+        target = await self.add_service("目标")
+        unrelated = await self.add_service("其他")
+        self.runner.states[unrelated["script_path"]] = "running"
+        await self.manager.refresh_status(unrelated)
+        scene = self.manager.create_scene(
+            {"name": "未启动场景", "description": "", "service_ids": [target["id"]]},
+            "admin", "local",
+        )
+
+        self.assertEqual(scene["state"], "inactive")
+
+    async def test_scene_is_partial_when_some_target_services_are_running(self) -> None:
+        running = await self.add_service("已启动")
+        stopped = await self.add_service("未启动")
+        self.runner.states[running["script_path"]] = "running"
+        await self.manager.refresh_status(running)
+        scene = self.manager.create_scene(
+            {"name": "部分场景", "description": "", "service_ids": [running["id"], stopped["id"]]},
+            "admin", "local",
+        )
+
+        self.assertEqual(scene["state"], "partial")
+
+    async def test_scene_is_partial_when_unrelated_service_is_running(self) -> None:
+        target = await self.add_service("目标")
+        unrelated = await self.add_service("其他")
+        self.runner.states[target["script_path"]] = "running"
+        self.runner.states[unrelated["script_path"]] = "running"
+        await self.manager.refresh_status(target)
+        await self.manager.refresh_status(unrelated)
+        scene = self.manager.create_scene(
+            {"name": "存在额外服务", "description": "", "service_ids": [target["id"]]},
+            "admin", "local",
+        )
+
+        self.assertEqual(scene["state"], "partial")
+
+    async def test_empty_scene_keeps_existing_state_rules(self) -> None:
+        running = await self.add_service("运行中")
+        scene = self.manager.create_scene(
+            {"name": "空场景", "description": "", "service_ids": []},
+            "admin", "local",
+        )
+        self.assertEqual(scene["state"], "active")
+
+        self.runner.states[running["script_path"]] = "running"
+        await self.manager.refresh_status(running)
+
+        self.assertEqual(self.manager.list_scenes()[0]["state"], "partial")
 
     async def test_stop_all_services_records_each_step(self) -> None:
         first = await self.add_service("A")
@@ -750,6 +861,145 @@ class ApiRegistryTests(unittest.TestCase):
                 deleted = client.delete(f"/api/v1/registered-services/{service_id}", headers=headers)
                 self.assertEqual(deleted.status_code, 204)
                 self.assertEqual(client.get("/api/v1/scenes").json()["scenes"][0]["service_ids"], [])
+
+    def test_authenticated_user_management(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = Settings(
+                database_path=root / "manager.db", manager_log_path=root / "manager.log",
+                sample_interval_seconds=60,
+            )
+            database = Database(settings.database_path)
+            sampler = Sampler(settings, collector=lambda _: {
+                "sampled_at": "2099-01-01T00:00:00+00:00",
+                "host": {"cpu": {}, "memory": {}, "disks": []}, "gpus": [],
+                "docker": {"containers": []}, "ports": [], "collector_errors": [],
+            })
+            with TestClient(create_app(settings, sampler, database),
+                            client=("127.0.0.1", 50000)) as client:
+                self.assertEqual(client.get("/api/v1/users").status_code, 401)
+                setup = client.post(
+                    "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+                )
+                headers = {"X-CSRF-Token": setup.json()["csrf_token"]}
+
+                initial = client.get("/api/v1/users")
+                self.assertEqual(initial.status_code, 200)
+                self.assertTrue(initial.json()["users"][0]["is_current"])
+                self.assertEqual(client.post(
+                    "/api/v1/users", json={"username": "none", "password": "1234"}
+                ).status_code, 403)
+                self.assertEqual(client.post(
+                    "/api/v1/users", headers={"X-CSRF-Token": "wrong"},
+                    json={"username": "none", "password": "1234"},
+                ).status_code, 403)
+                created = client.post(
+                    "/api/v1/users", headers=headers,
+                    json={"username": "zzq", "password": "5678"},
+                )
+                self.assertEqual(created.status_code, 201, created.text)
+                user_id = created.json()["id"]
+                self.assertEqual(
+                    [user["username"] for user in client.get("/api/v1/users").json()["users"]],
+                    ["admin", "zzq"],
+                )
+
+                changed = client.put(
+                    f"/api/v1/users/{user_id}/password", headers=headers,
+                    json={"password": "8765"},
+                )
+                self.assertEqual(changed.status_code, 200, changed.text)
+                self.assertFalse(changed.json()["current_session_invalidated"])
+                self.assertEqual(
+                    client.delete("/api/v1/users/1", headers=headers).status_code, 409
+                )
+                self.assertEqual(
+                    client.delete(f"/api/v1/users/{user_id}", headers=headers).status_code, 204
+                )
+                self.assertEqual(len(client.get("/api/v1/users").json()["users"]), 1)
+
+    def test_remote_user_creation_is_rejected_by_api(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = Settings(
+                database_path=root / "manager.db", manager_log_path=root / "manager.log",
+                sample_interval_seconds=60,
+            )
+            database = Database(settings.database_path)
+            AuthService(database, 3600).setup("admin", "1234", "127.0.0.1")
+            sampler = Sampler(settings, collector=lambda _: {
+                "sampled_at": "2099-01-01T00:00:00+00:00",
+                "host": {"cpu": {}, "memory": {}, "disks": []}, "gpus": [],
+                "docker": {"containers": []}, "ports": [], "collector_errors": [],
+            })
+            with TestClient(create_app(settings, sampler, database),
+                            client=("192.168.100.20", 50000)) as client:
+                login = client.post(
+                    "/api/v1/auth/login", json={"username": "admin", "password": "1234"}
+                )
+                response = client.post(
+                    "/api/v1/users", headers={"X-CSRF-Token": login.json()["csrf_token"]},
+                    json={"username": "zzq", "password": "5678"},
+                )
+
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(response.json()["error"]["code"], "loopback_required")
+
+    def test_delete_user_serializes_with_login(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = Settings(
+                database_path=root / "manager.db", manager_log_path=root / "manager.log",
+                sample_interval_seconds=60,
+            )
+            database = Database(settings.database_path)
+            sampler = Sampler(settings, collector=lambda _: {
+                "sampled_at": "2099-01-01T00:00:00+00:00",
+                "host": {"cpu": {}, "memory": {}, "disks": []}, "gpus": [],
+                "docker": {"containers": []}, "ports": [], "collector_errors": [],
+            })
+            app = create_app(settings, sampler, database)
+            auth = AuthService(database, settings.session_ttl_seconds)
+            admin_token, csrf_token, _ = auth.setup("admin", "1234", "127.0.0.1")
+            created = auth.create_user("zzq", "5678", "127.0.0.1")
+            original_delete = app.state.auth.delete_user
+            delete_started = threading.Event()
+            release_delete = threading.Event()
+
+            def blocking_delete(*args: Any, **kwargs: Any) -> dict[str, Any]:
+                delete_started.set()
+                if not release_delete.wait(2):
+                    raise RuntimeError("delete concurrency test timeout")
+                return original_delete(*args, **kwargs)
+
+            app.state.auth.delete_user = blocking_delete
+
+            async def exercise_concurrency() -> tuple[Any, Any]:
+                async with app.router.lifespan_context(app):
+                    transport = ASGITransport(app=app, client=("127.0.0.1", 50000))
+                    async with AsyncClient(
+                        transport=transport, base_url="http://testserver",
+                        cookies={SESSION_COOKIE: admin_token},
+                    ) as admin_client, AsyncClient(
+                        transport=transport, base_url="http://testserver"
+                    ) as login_client:
+                        delete_task = asyncio.create_task(admin_client.delete(
+                            f"/api/v1/users/{created['id']}",
+                            headers={"X-CSRF-Token": csrf_token},
+                        ))
+                        self.assertTrue(await asyncio.to_thread(delete_started.wait, 1))
+                        login_task = asyncio.create_task(login_client.post(
+                            "/api/v1/auth/login",
+                            json={"username": "zzq", "password": "5678"},
+                        ))
+                        await asyncio.sleep(0.05)
+                        self.assertFalse(login_task.done())
+                        release_delete.set()
+                        return await delete_task, await login_task
+
+            deleted, login = asyncio.run(exercise_concurrency())
+            self.assertEqual(deleted.status_code, 204, deleted.text)
+            self.assertEqual(login.status_code, 401, login.text)
 
 
 if __name__ == "__main__":

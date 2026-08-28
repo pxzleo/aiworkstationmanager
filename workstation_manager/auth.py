@@ -132,6 +132,7 @@ class AuthService:
             raise
         salt = secrets.token_bytes(32)
         digest = password_digest(password, salt)
+        created_at = utc_now()
         try:
             with self.database.connect() as connection:
                 with connection:
@@ -139,7 +140,7 @@ class AuthService:
                         """INSERT INTO admin_user(
                                username,password_hash,password_salt,iterations,created_at
                            ) VALUES (?,?,?,?,?)""",
-                        (username, digest, salt, PBKDF2_ITERATIONS, utc_now()),
+                        (username, digest, salt, PBKDF2_ITERATIONS, created_at),
                     )
                     self.database.insert_audit(
                         connection, source_ip, "auth.user.create", "success",
@@ -152,7 +153,105 @@ class AuthService:
             raise AuthError(409, "username_exists", "用户名已存在") from exc
         except (sqlite3.Error, TypeError, ValueError) as exc:
             raise DatabaseError(f"创建用户失败: {exc}") from exc
-        return {"id": int(cursor.lastrowid), "username": username}
+        return {"id": int(cursor.lastrowid), "username": username,
+                "created_at": created_at, "active_sessions": 0}
+
+    def list_users(self) -> list[dict[str, Any]]:
+        now = utc_now()
+        try:
+            with self.database.connect() as connection:
+                rows = connection.execute(
+                    """SELECT a.id, a.username, a.created_at,
+                              COUNT(s.token_hash) AS active_sessions
+                       FROM admin_user a
+                       LEFT JOIN sessions s
+                         ON s.admin_id = a.id AND s.expires_at > ?
+                       GROUP BY a.id, a.username, a.created_at
+                       ORDER BY a.id""",
+                    (now,),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取用户列表失败: {exc}") from exc
+        return [
+            {"id": int(row["id"]), "username": row["username"],
+             "created_at": row["created_at"],
+             "active_sessions": int(row["active_sessions"])}
+            for row in rows
+        ]
+
+    def update_user_password(
+        self, user_id: int, password: str, requested_by: str, source_ip: str
+    ) -> dict[str, Any]:
+        try:
+            if len(password) < MIN_PASSWORD_LENGTH:
+                raise AuthError(
+                    422, "weak_password", f"密码至少需要 {MIN_PASSWORD_LENGTH} 个字符"
+                )
+            salt = secrets.token_bytes(32)
+            digest = password_digest(password, salt)
+            with self.database.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute(
+                        "SELECT username FROM admin_user WHERE id = ?", (user_id,)
+                    ).fetchone()
+                    if row is None:
+                        raise AuthError(404, "user_not_found", "用户不存在")
+                    connection.execute(
+                        """UPDATE admin_user
+                           SET password_hash = ?, password_salt = ?, iterations = ?
+                           WHERE id = ?""",
+                        (digest, salt, PBKDF2_ITERATIONS, user_id),
+                    )
+                    connection.execute("DELETE FROM sessions WHERE admin_id = ?", (user_id,))
+                    self.database.insert_audit(
+                        connection, source_ip, "auth.user.password_update", "success",
+                        {"username": row["username"], "requested_by": requested_by},
+                    )
+        except AuthError as exc:
+            self.database.append_audit(
+                source_ip, "auth.user.password_update", "failure",
+                {"user_id": user_id, "requested_by": requested_by, "reason": exc.code},
+            )
+            raise
+        except (sqlite3.Error, TypeError, ValueError) as exc:
+            raise DatabaseError(f"修改用户密码失败: {exc}") from exc
+        return {"id": user_id, "username": row["username"],
+                "current_session_invalidated": row["username"] == requested_by}
+
+    def delete_user(
+        self, user_id: int, requested_by: str, source_ip: str
+    ) -> dict[str, Any]:
+        try:
+            with self.database.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute(
+                        "SELECT username FROM admin_user WHERE id = ?", (user_id,)
+                    ).fetchone()
+                    if row is None:
+                        raise AuthError(404, "user_not_found", "用户不存在")
+                    if row["username"] == requested_by:
+                        raise AuthError(409, "cannot_delete_current_user", "不能删除当前登录用户")
+                    count = connection.execute(
+                        "SELECT COUNT(*) FROM admin_user"
+                    ).fetchone()[0]
+                    if int(count) <= 1:
+                        raise AuthError(409, "cannot_delete_last_user", "不能删除最后一个用户")
+                    connection.execute("DELETE FROM admin_user WHERE id = ?", (user_id,))
+                    self.database.insert_audit(
+                        connection, source_ip, "auth.user.delete", "success",
+                        {"username": row["username"], "requested_by": requested_by},
+                    )
+        except AuthError as exc:
+            self.database.append_audit(
+                source_ip, "auth.user.delete", "failure",
+                {"user_id": user_id, "requested_by": requested_by, "reason": exc.code},
+            )
+            raise
+        except (sqlite3.Error, TypeError, ValueError) as exc:
+            raise DatabaseError(f"删除用户失败: {exc}") from exc
+        return {"id": user_id, "username": row["username"]}
 
     def login(self, username: str, password: str, source_ip: str) -> tuple[str, str, str]:
         since = (datetime.now(timezone.utc) - timedelta(minutes=LOGIN_FAILURE_WINDOW_MINUTES)).isoformat()
@@ -174,16 +273,19 @@ class AuthService:
         expected = bytes(row["password_hash"]) if row else b"\0" * 32
         actual = password_digest(password, salt, iterations)
         if row is None or not hmac.compare_digest(actual, expected):
-            limited = self.database.record_login_failure_atomic(
-                source_ip, since, LOGIN_FAILURE_LIMIT
-            )
-            if limited:
-                raise AuthError(429, "rate_limited", "登录失败次数过多，请稍后重试")
-            raise AuthError(401, "invalid_credentials", "用户名或密码错误")
+            self._reject_login(source_ip, since)
         token, csrf, expires_at = self._new_session_values()
         try:
             with self.database.connect() as connection:
                 with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    current = connection.execute(
+                        "SELECT password_hash FROM admin_user WHERE id = ?", (int(row["id"]),)
+                    ).fetchone()
+                    if current is None or not hmac.compare_digest(
+                        bytes(current["password_hash"]), expected
+                    ):
+                        raise AuthError(401, "invalid_credentials", "用户名或密码错误")
                     self._insert_session(
                         connection, int(row["id"]), token, csrf, expires_at, source_ip
                     )
@@ -194,9 +296,19 @@ class AuthService:
                         "success",
                         {"username": row["username"]},
                     )
+        except AuthError:
+            self._reject_login(source_ip, since)
         except (sqlite3.Error, TypeError, ValueError) as exc:
             raise DatabaseError(f"创建登录会话及审计失败: {exc}") from exc
         return token, csrf, expires_at
+
+    def _reject_login(self, source_ip: str, since: str) -> None:
+        limited = self.database.record_login_failure_atomic(
+            source_ip, since, LOGIN_FAILURE_LIMIT
+        )
+        if limited:
+            raise AuthError(429, "rate_limited", "登录失败次数过多，请稍后重试")
+        raise AuthError(401, "invalid_credentials", "用户名或密码错误")
 
     def _new_session_values(self) -> tuple[str, str, str]:
         token = secrets.token_urlsafe(48)
