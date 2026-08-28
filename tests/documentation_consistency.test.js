@@ -9,7 +9,7 @@ const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 test('local documentation links resolve to repository files', () => {
-  for (const relative of ['README.md', 'README.en.md', 'DEVELOPMENT.md', 'DEVELOPMENT.en.md', 'scriptspec.md', 'SCRIPT_REQUIREMENTS.en.md']) {
+  for (const relative of ['README.md', 'README.zh-CN.md', 'DEVELOPMENT.md', 'DEVELOPMENT.en.md', 'scriptspec.md', 'SCRIPT_REQUIREMENTS.en.md']) {
     const source = read(relative);
     const links = [...source.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map((match) => match[1]);
     for (const link of links) {
@@ -64,7 +64,7 @@ test('development guides document every supported environment variable', () => {
 
 test('release contains runtime language assets and both documentation languages', () => {
   const release = read('Build-Release.ps1');
-  for (const file of ['i18n.js', 'gpu-layout.js', 'monitor-chart.js', 'theme.js', 'README.md', 'README.en.md', 'DEVELOPMENT.md', 'DEVELOPMENT.en.md', 'scriptspec.md', 'SCRIPT_REQUIREMENTS.en.md']) {
+  for (const file of ['i18n.js', 'gpu-layout.js', 'monitor-chart.js', 'theme.js', 'README.md', 'README.zh-CN.md', 'DEVELOPMENT.md', 'DEVELOPMENT.en.md', 'scriptspec.md', 'SCRIPT_REQUIREMENTS.en.md']) {
     assert.ok(release.includes(`"${file}"`), `release is missing ${file}`);
   }
   const schema = /SCHEMA_VERSION = (\d+)/.exec(read('workstation_manager/database.py'))[1];
@@ -73,11 +73,22 @@ test('release contains runtime language assets and both documentation languages'
 });
 
 test('distributable documentation avoids machine-specific and source-only claims', () => {
-  const chinese = read('README.md'); const english = read('README.en.md');
+  const chinese = read('README.zh-CN.md'); const english = read('README.md');
   assert.ok(!chinese.includes('当前工作站已'));
   assert.ok(!english.includes('This workstation currently has'));
   assert.ok(!chinese.includes('## API'));
   assert.ok(!english.includes('## API'));
   assert.ok(chinese.includes('[开发文档、完整 API 与高级配置](DEVELOPMENT.md)'));
   assert.ok(english.includes('[Development, complete API, and advanced configuration](DEVELOPMENT.en.md)'));
+});
+
+test('English main README and Chinese README keep previews and script specification links', () => {
+  const chinese = read('README.zh-CN.md'); const english = read('README.md');
+  for (const image of ['docs/1.png', 'docs/2.png', 'docs/3.png', 'docs/4.png', 'docs/5.png']) {
+    assert.ok(chinese.includes(`(${image})`), `Chinese README is missing ${image}`);
+    assert.ok(english.includes(`(${image})`), `English README is missing ${image}`);
+  }
+  assert.ok(chinese.includes('[scriptspec.md](scriptspec.md)'));
+  assert.ok(english.includes('[scriptspec.md](scriptspec.md)'));
+  assert.ok(english.includes('[简体中文](README.zh-CN.md)'));
 });
