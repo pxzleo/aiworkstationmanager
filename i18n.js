@@ -100,7 +100,7 @@
     '总量不可用': 'Total unavailable', '本机': 'Local host', '未检测到': 'Not detected', '已检测': 'Detected',
     '部分数据降级': 'Some data is degraded', '采集失败': 'Collection failed',
     'CPU 总负载': 'Total CPU load', '内存占用': 'Memory usage', 'GPU 负载': 'GPU load', '% 当前': '% current',
-    '采样点': 'Samples', '图表点': 'Chart points', '已累计': 'Accumulated', '最近更新': 'Last update', '监控设备': 'Monitored devices',
+    '采样点': 'Samples', '监控设备': 'Monitored devices',
     'CPU 温度': 'CPU temperature', '内存用量': 'Memory used', '主机资源': 'Host resources',
     '处理器与系统内存使用同一条采样时间线': 'Processor and system memory share one sampling timeline',
     '处理器负载': 'Processor load', '全部逻辑处理器综合使用率': 'Combined utilization across all logical processors',
