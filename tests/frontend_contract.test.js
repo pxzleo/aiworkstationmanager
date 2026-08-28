@@ -61,7 +61,7 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(js.includes('function createMonitorChart'));
   assert.ok(js.includes('function createMonitorGroup'));
   assert.ok(js.includes('function renderMonitorDetails'));
-  for (const label of ['已累计', '图表点', '最近更新', '处理器负载', '系统内存', '提交内存', '页面文件', '核心负载', '核心频率', '功率', '温度', '显存占用', '存储容量', '磁盘读取', '网络下载', 'WSL 内存', 'Docker 容器', '平均', '峰值', '最低']) assert.ok(js.includes(label), `missing monitor label ${label}`);
+  for (const label of ['处理器负载', '系统内存', '提交内存', '页面文件', '核心负载', '核心频率', '功率', '温度', '显存占用', '存储容量', '磁盘读取', '网络下载', 'WSL 内存', 'Docker 容器', '平均', '峰值', '最低']) assert.ok(js.includes(label), `missing monitor label ${label}`);
   for (const selector of ['.monitor-group', '.monitor-chart-grid', '.chart-y-axis', '.chart-x-axis', '.chart-statistics']) assert.ok(css.includes(selector), `missing ${selector}`);
   assert.ok(js.includes('function chartAxisValues'));
   assert.ok(html.includes('id="historyRangeSelect"'));
@@ -104,6 +104,10 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(css.includes('.monitor-summary-list'));
   assert.ok(css.includes('.monitor-device-selector'));
   assert.ok(css.includes('.monitor-runtime-section'));
+  for (const removed of ['已累计', '图表点', '最近更新', 'monitor-overview']) {
+    assert.ok(!js.includes(removed), `removed monitor metadata remains in app.js: ${removed}`);
+    assert.ok(!css.includes(removed), `removed monitor metadata remains in styles.css: ${removed}`);
+  }
   assert.ok(js.includes('key: gpu._uiKey'));
   assert.ok(js.includes('state.selectedMonitorGpuKey = gpuKey'));
   assert.ok(js.includes("details.summary.get(gpu._uiKey)"));
