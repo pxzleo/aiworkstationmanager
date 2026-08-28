@@ -55,6 +55,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 
 .app-shell { min-height: 100vh; }
 .sidebar { position: fixed; inset: 0 auto 0 0; width: var(--sidebar); background: var(--sidebar-bg); border-right: 1px solid var(--line); padding: 23px 14px 16px; display: flex; flex-direction: column; z-index: 20; transition: background-color .28s ease, border-color .28s ease; }
+.sidebar-backdrop { display: none; }
 .brand { display: flex; align-items: center; gap: 12px; padding: 0 11px 28px; }
 .brand-mark { width: 31px; height: 31px; border: 1px solid rgba(var(--accent-rgb),.45); position: relative; transform: rotate(45deg); }
 .brand-mark span { position: absolute; background: var(--accent); opacity: .95; }
@@ -586,6 +587,8 @@ body:not(.auth-pending) .auth-gate { display: none; }
   :root { --sidebar: 250px; --topbar: 58px; }
   .sidebar { transform: translateX(-100%); transition: transform .22s; box-shadow: 20px 0 50px rgba(0,0,0,.45); }
   .sidebar.open { transform: translateX(0); }
+  .sidebar-backdrop { display: block; position: fixed; inset: 0 0 0 var(--sidebar); z-index: 19; padding: 0; border: 0; background: rgba(0,0,0,.48); opacity: 0; visibility: hidden; pointer-events: none; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: opacity .22s ease, visibility .22s ease; }
+  .sidebar-backdrop.open { opacity: 1; visibility: visible; pointer-events: auto; }
   .brand { justify-content: flex-start; padding-inline: 11px; }
   .brand > div:last-child, .nav-item span, .nav-item b, .host-mini div, .host-load { display: block; }
   .nav-item { justify-content: flex-start; padding: 0 12px; min-height: 44px; }

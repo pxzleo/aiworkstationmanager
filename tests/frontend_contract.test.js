@@ -169,6 +169,14 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(css.includes('.language-select'));
 });
 
+test('mobile navigation closes when the user taps outside the sidebar', () => {
+  assert.ok(html.includes('id="sidebarBackdrop"'));
+  assert.ok(js.includes("sidebarBackdrop.addEventListener('click'"));
+  assert.ok(js.includes("event.key === 'Escape'"));
+  assert.ok(css.includes('.sidebar-backdrop.open'));
+  assert.ok(i18n.includes("'关闭导航': 'Close navigation'"));
+});
+
 test('system settings provides three persistent display styles', () => {
   assert.ok(html.includes('data-page="settings"'));
   assert.ok(html.includes('id="page-settings"'));
