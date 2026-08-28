@@ -88,7 +88,7 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 15)
+            self.assertEqual(SCHEMA_VERSION, 16)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -169,7 +169,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-            self.assertEqual(version, 15)
+                self.assertEqual(version, 16)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -212,7 +212,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 15)
+            self.assertEqual(SCHEMA_VERSION, 16)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -223,7 +223,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             self.assertEqual([row["username"] for row in users], ["admin", "zzq"])
             self.assertEqual(foreign_key_errors, [])
 
-    def test_schema_fifteen_persists_prunes_and_aggregates_resource_history(self) -> None:
+    def test_schema_sixteen_persists_prunes_and_aggregates_resource_history(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "manager.db"
             database = Database(path, resource_history_retention_minutes=1440)
@@ -236,6 +236,8 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "cpu_load_percent": cpu,
                     "cpu_temperature_c": 40 + cpu,
                     "memory_percent": 50 + cpu,
+                    "memory_used_bytes": (8 + cpu / 10) * 1024 ** 3,
+                    "memory_total_bytes": 64 * 1024 ** 3,
                     "gpus": [{
                         "uuid": "GPU-a", "index": 0, "name": "RTX",
                         "load_percent": gpu, "memory_used_mib": 100 + gpu,
@@ -258,10 +260,12 @@ class DatabaseRegistryTests(unittest.TestCase):
                 60, bucket_seconds=15, now=now + timedelta(seconds=30)
             )
 
-            self.assertEqual(SCHEMA_VERSION, 15)
+            self.assertEqual(SCHEMA_VERSION, 16)
             self.assertEqual(result["stored_sample_count"], 3)
             self.assertEqual(len(result["samples"]), 2)
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
+            self.assertEqual(result["samples"][0]["memory_used_bytes"], 9.5 * 1024 ** 3)
+            self.assertEqual(result["samples"][0]["memory_total_bytes"], 64 * 1024 ** 3)
             self.assertEqual(result["samples"][0]["gpus"][0]["load_percent"], 50)
             self.assertEqual(result["samples"][0]["gpus"][0]["graphics_clock_mhz"], 2050)
             self.assertEqual(result["samples"][0]["gpus"][0]["power_w"], 150)
@@ -269,7 +273,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             with reopened.connect() as connection:
                 self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
 
-    def test_schema_fourteen_history_rows_survive_schema_fifteen_upgrade(self) -> None:
+    def test_schema_fourteen_history_rows_survive_current_upgrade(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "manager.db"
             connection = sqlite3.connect(path)
@@ -301,10 +305,49 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_gpu_samples WHERE sample_id=1"
                 ).fetchone()
 
-            self.assertEqual(version, 15)
+            self.assertEqual(version, 16)
             self.assertEqual(row["temperature_c"], 62)
             self.assertIsNone(row["power_w"])
             self.assertIsNone(row["graphics_clock_mhz"])
+
+    def test_schema_fifteen_history_rows_survive_schema_sixteen_upgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "manager.db"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute("CREATE TABLE schema_version(version INTEGER NOT NULL)")
+                connection.execute("INSERT INTO schema_version VALUES (15)")
+                connection.execute(
+                    """CREATE TABLE resource_samples (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sampled_at TEXT NOT NULL UNIQUE,
+                        cpu_load_percent REAL,
+                        cpu_temperature_c REAL,
+                        memory_percent REAL
+                    )"""
+                )
+                connection.execute(
+                    "INSERT INTO resource_samples(sampled_at,memory_percent) VALUES (?,?)",
+                    ("2026-08-28T09:00:00+00:00", 50),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            database = Database(path)
+            with database.connect() as connection:
+                version = connection.execute(
+                    "SELECT version FROM schema_version"
+                ).fetchone()["version"]
+                row = connection.execute(
+                    "SELECT memory_percent,memory_used_bytes,memory_total_bytes "
+                    "FROM resource_samples"
+                ).fetchone()
+
+            self.assertEqual(version, 16)
+            self.assertEqual(row["memory_percent"], 50)
+            self.assertIsNone(row["memory_used_bytes"])
+            self.assertIsNone(row["memory_total_bytes"])
 
     def test_resource_history_normalizes_equivalent_timestamps_to_utc(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

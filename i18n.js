@@ -104,7 +104,7 @@
     'CPU 温度': 'CPU temperature', '内存用量': 'Memory used', '主机资源': 'Host resources',
     '处理器与系统内存使用同一条采样时间线': 'Processor and system memory share one sampling timeline',
     '处理器负载': 'Processor load', '全部逻辑处理器综合使用率': 'Combined utilization across all logical processors',
-    '系统内存': 'System memory', '物理内存实时占用比例': 'Live physical-memory utilization',
+    '系统内存': 'System memory', '已用内存与物理内存容量': 'Used memory and physical-memory capacity',
     '平均': 'Average', '峰值': 'Peak', '最低': 'Minimum', '当前': 'Current', '暂无采样数据': 'No samples yet',
     '温度': 'Temperature', '功耗': 'Power', '显存用量': 'VRAM used', '独立设备遥测': 'Independent device telemetry',
     '核心负载': 'Core load', '图形与计算核心综合使用率': 'Combined graphics and compute-core utilization',

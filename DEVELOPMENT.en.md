@@ -177,6 +177,6 @@ This list follows `workstation_manager/config.py`. Boolean values use `true/fals
 
 ## Data and concurrency
 
-The default database is `data/workstation-manager.db`. The current schema is 15 and migrates automatically at startup. Only one manager instance may use a database at a time, preventing duplicate script execution.
+The default database is `data/workstation-manager.db`. The current schema is 16 and migrates automatically at startup. Only one manager instance may use a database at a time, preventing duplicate script execution.
 
 Stored service state is the control plane's primary state. Scheduled resource sampling never runs service scripts; only an explicit service-status check invokes `status`. Resource sampling writes CPU, memory, and per-GPU load, VRAM, temperature, power, and graphics-clock metrics to SQLite and retains 24 hours by default; the in-memory queue remains limited to the latest 15 minutes.
