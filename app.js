@@ -90,11 +90,12 @@ function navigate(page) {
 }
 navItems.forEach((item) => item.addEventListener('click', () => navigate(item.dataset.page)));
 document.querySelectorAll('[data-nav]').forEach((item) => item.addEventListener('click', () => navigate(item.dataset.nav)));
-const sidebar = byId('sidebar'); const menuButton = byId('menuButton'); const mainContent = document.querySelector('main.main'); const mobileViewport = matchMedia('(max-width: 720px)');
-function closeSidebar(restoreFocus = false) { const open = sidebar.classList.contains('open'); sidebar.classList.remove('open'); menuButton.setAttribute('aria-expanded', 'false'); if (mobileViewport.matches) { sidebar.inert = true; mainContent.inert = false; } if (restoreFocus && open) menuButton.focus(); }
-function openSidebar() { if (!mobileViewport.matches) return; sidebar.inert = false; sidebar.classList.add('open'); mainContent.inert = true; menuButton.setAttribute('aria-expanded', 'true'); }
-function syncSidebar() { if (mobileViewport.matches) closeSidebar(); else { sidebar.inert = false; mainContent.inert = false; sidebar.classList.remove('open'); } }
-menuButton.addEventListener('click', () => sidebar.classList.contains('open') ? closeSidebar(true) : openSidebar()); mobileViewport.addEventListener('change', syncSidebar);
+const sidebar = byId('sidebar'); const sidebarBackdrop = byId('sidebarBackdrop'); const menuButton = byId('menuButton'); const mainContent = document.querySelector('main.main'); const mobileViewport = matchMedia('(max-width: 720px)');
+function closeSidebar(restoreFocus = false) { const open = sidebar.classList.contains('open'); sidebar.classList.remove('open'); sidebarBackdrop.classList.remove('open'); sidebarBackdrop.setAttribute('aria-hidden', 'true'); menuButton.setAttribute('aria-expanded', 'false'); if (mobileViewport.matches) { sidebar.inert = true; mainContent.inert = false; } if (restoreFocus && open) menuButton.focus(); }
+function openSidebar() { if (!mobileViewport.matches) return; sidebar.inert = false; sidebar.classList.add('open'); sidebarBackdrop.classList.add('open'); sidebarBackdrop.setAttribute('aria-hidden', 'false'); mainContent.inert = true; menuButton.setAttribute('aria-expanded', 'true'); }
+function syncSidebar() { if (mobileViewport.matches) closeSidebar(); else { sidebar.inert = false; mainContent.inert = false; sidebar.classList.remove('open'); sidebarBackdrop.classList.remove('open'); sidebarBackdrop.setAttribute('aria-hidden', 'true'); } }
+menuButton.addEventListener('click', () => sidebar.classList.contains('open') ? closeSidebar(true) : openSidebar()); sidebarBackdrop.addEventListener('click', () => closeSidebar(true)); mobileViewport.addEventListener('change', syncSidebar);
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && mobileViewport.matches && sidebar.classList.contains('open')) closeSidebar(true); });
 
 const toast = byId('toast'); let toastTimer;
 function showToast(message) { toast.querySelector('span').textContent = message; toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('show'), 2800); }

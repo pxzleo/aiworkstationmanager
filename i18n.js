@@ -8,7 +8,7 @@
     '已登记服务': 'Registered Services', '资源监控': 'Resource Monitor',
     '用户管理': 'User Management', '日志中心': 'Operation Log',
     'AI 工作站': 'AI Workstation', '地址由当前部署提供': 'Address provided by this deployment',
-    '系统设置': 'System Settings', '打开导航': 'Open navigation', '工作站': 'Workstation',
+    '系统设置': 'System Settings', '打开导航': 'Open navigation', '关闭导航': 'Close navigation', '工作站': 'Workstation',
     '界面偏好': 'Interface preferences', '显示风格': 'Display style',
     '选择适合当前工作环境的显示风格，设置只保存在这个浏览器中。': 'Choose a display style for this workstation. The setting is saved only in this browser.',
     '切换后立即应用，不影响服务、场景和资源数据。': 'Changes apply immediately and do not affect services, scenes, or resource data.',
