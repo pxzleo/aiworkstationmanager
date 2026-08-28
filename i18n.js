@@ -5,7 +5,7 @@
   const translations = {
     'AXIS · AI 工作站': 'AXIS · AI Workstation',
     '主导航': 'Main navigation', '语言': 'Language', '界面语言': 'Interface language', '总览': 'Overview', '工作场景': 'Scenes',
-    '已登记服务': 'Registered Services', '资源监控': 'Resource Monitor',
+    '已登记服务': 'Registered Services', '已启动服务': 'Running Services', '资源监控': 'Resource Monitor',
     '用户管理': 'User Management', '日志中心': 'Operation Log',
     'AI 工作站': 'AI Workstation', '地址由当前部署提供': 'Address provided by this deployment',
     '系统设置': 'System Settings', '打开导航': 'Open navigation', '关闭导航': 'Close navigation', '工作站': 'Workstation',
@@ -151,6 +151,9 @@
     '提交内存不可用': 'Committed memory unavailable', '提交': 'Commit', '可用': 'free',
     '未运行': 'Not running', '运行中': 'Running', '已使用': 'used', '个容器运行': 'containers running',
     '状态未知': 'Unknown', '已激活': 'Active', '部分启动': 'Partially Started', '未激活': 'Inactive',
+    '仅显示最后保存状态为运行中的服务': 'Only services whose last saved state is running are shown',
+    '当前没有已启动服务。': 'No services are currently running.', '没有已启动服务': 'No running services',
+    'GPU 标签下没有已启动服务': 'No running service uses this GPU label',
     '尚未添加已登记服务。': 'No registered services have been added.', '无说明': 'No description',
     '打开 UI': 'Open UI', '查看': 'View', '无端口': 'No port', '尚未登记 GPU 0 服务': 'No GPU 0 services registered',
     'GPU 为用户登记标签': 'GPU is a user-provided label', '尚未登记服务': 'No service registered',

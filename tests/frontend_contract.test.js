@@ -36,6 +36,15 @@ test('registered service editor exposes the agreed fields and actions', () => {
   assert.ok(js.includes('/registered-services/actions/stop-all'));
 });
 
+test('overview only presents services with a saved running state', () => {
+  assert.ok(html.includes('<h2>已启动服务</h2>'));
+  assert.ok(html.includes('仅显示最后保存状态为运行中的服务'));
+  assert.ok(js.includes("function runningServices() { return state.services.filter((service) => service.status.state === 'running'); }"));
+  assert.ok(js.includes('const running = runningServices();'));
+  assert.ok(js.includes("'当前没有已启动服务。'"));
+  assert.ok(js.includes("'GPU 标签下没有已启动服务'"));
+});
+
 test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(html.includes('id="gpuStage"'));
   assert.ok(!html.includes('id="gpu0Name"'));
