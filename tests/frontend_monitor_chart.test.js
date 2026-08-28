@@ -88,6 +88,19 @@ test('chart model scales non-percent GPU telemetry without losing raw values', (
   assert.equal(monitorChart.nearestPoint(model, 830).value, 2500);
 });
 
+test('VRAM chart keeps one-decimal GiB statistics against physical capacity', () => {
+  const model = monitorChart.buildChartModel(
+    [sample(2, 43.25), sample(1, 44.75)], (item) => item.value, end, 15 * minute,
+    { minimum: 0, maximum: 48, precision: 1 },
+  );
+
+  assert.equal(model.current, 44.8);
+  assert.equal(model.average, 44);
+  assert.equal(model.peak, 44.8);
+  assert.equal(model.minimum, 43.3);
+  assert.equal(model.maximumScale, 48);
+});
+
 test('correlation selection keeps one sample timestamp when a metric is missing', () => {
   const samples = [
     { ...sample(2, 80), clock: null },

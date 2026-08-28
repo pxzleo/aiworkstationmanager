@@ -78,6 +78,13 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(css.includes('.range-select button { min-width: 52px; min-height: 42px;'));
   assert.ok(js.includes("announcement.setAttribute('aria-live', 'polite')"));
   assert.ok(js.includes('monitorChart.nearestSample'));
+  assert.ok(js.includes("getter: metricGib('memory_used_mib')"));
+  assert.ok(js.includes("unit: 'GB', decimals: 1"));
+  assert.ok(js.includes('showMaximumInCurrent: true'));
+  assert.ok(js.includes('statisticsIncludeUnit: true'));
+  assert.ok(js.includes('spec.statisticsIncludeUnit === true'));
+  assert.ok(js.includes("metricGib('memory_total_mib')"));
+  assert.ok(!js.includes("getter: metric('memory_percent'), unit: '%', maximum: 100"));
   assert.ok(i18n.includes("'处理器负载': 'Processor load'"));
   assert.ok(js.includes("'未检测到 NVIDIA GPU。'"));
   assert.ok(!js.includes('bindGpuSlots'));
