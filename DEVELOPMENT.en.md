@@ -129,7 +129,8 @@ Action endpoints return asynchronous operations. The frontend uses operation det
 
 ### Query parameters and primary responses
 
-- `/api/v1/history` uses a minute-formatted `window`, defaults to `15m`, and accepts `1m..1440m`; it returns `{"window":"15m","samples":[...]}`.
+- `/api/v1/history` uses a minute-formatted `window`, defaults to `15m`, and accepts `1m..1440m`. `15m` returns raw samples, `1h` uses 15-second buckets, and `24h` uses 60-second buckets. In addition to `samples`, the response includes `bucket_seconds`, `retention_minutes`, `stored_sample_count`, `stored_since`, and `stored_until` so the UI can show the actual accumulated duration.
+- If resource-history persistence fails, `/api/v1/health` returns `status: "degraded"`, `readiness.resource_history: "degraded"`, and a `history_persistence_error` without the underlying cause. Live snapshots remain available; persistence retries on the next sample and clears the degraded state after recovery.
 - `/api/v1/operations` and `/api/v1/audit` use `limit`, default 100, range `1..500`, and return `operations` or `events` arrays respectively.
 - Login and setup return `authenticated`, `csrf_token`, and `expires_at`; `auth/me` returns `username`, `expires_at`, and a new `csrf_token`.
 - Service lists return `{"services":[...],"status_mode":"stored"}`; scene lists return `{"scenes":[...]}`. Create and update endpoints return the complete resulting object.
@@ -176,6 +177,6 @@ This list follows `workstation_manager/config.py`. Boolean values use `true/fals
 
 ## Data and concurrency
 
-The default database is `data/workstation-manager.db`. The current schema is 13 and migrates automatically at startup. Only one manager instance may use a database at a time, preventing duplicate script execution.
+The default database is `data/workstation-manager.db`. The current schema is 14 and migrates automatically at startup. Only one manager instance may use a database at a time, preventing duplicate script execution.
 
-Stored service state is the control plane's primary state. Scheduled resource sampling never runs service scripts; only an explicit service-status check invokes `status`.
+Stored service state is the control plane's primary state. Scheduled resource sampling never runs service scripts; only an explicit service-status check invokes `status`. Resource sampling writes reduced CPU, memory, and per-GPU metrics to SQLite and retains 24 hours by default; the in-memory queue remains limited to the latest 15 minutes.

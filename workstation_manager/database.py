@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 class DatabaseError(RuntimeError):
@@ -33,12 +33,14 @@ class Database:
         audit_retention_days: int = 90,
         login_failure_max_rows: int = 10_000,
         operation_retention_max: int = 1000,
+        resource_history_retention_minutes: int = 1440,
     ) -> None:
         self.path = Path(path)
         self.audit_retention_max_events = audit_retention_max_events
         self.audit_retention_days = audit_retention_days
         self.login_failure_max_rows = login_failure_max_rows
         self.operation_retention_max = operation_retention_max
+        self.resource_history_retention_minutes = resource_history_retention_minutes
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -51,6 +53,7 @@ class Database:
             connection = sqlite3.connect(self.path, timeout=10)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 10000")
         except sqlite3.Error as exc:
             raise DatabaseError(f"无法打开数据库 {self.path}: {exc}") from exc
         try:
@@ -61,6 +64,7 @@ class Database:
     def migrate(self) -> None:
         try:
             with self.connect() as connection:
+                connection.execute("PRAGMA journal_mode = WAL")
                 with connection:
                     # sqlite3 不会仅因 DDL 自动开启事务；显式开启可保证迁移中途失败时
                     # 表、索引、列和版本号作为一个整体回滚。
@@ -92,6 +96,7 @@ class Database:
                         11: self._migrate_to_11,
                         12: self._migrate_to_12,
                         13: self._migrate_to_13,
+                        14: self._migrate_to_14,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -305,6 +310,40 @@ class Database:
         connection.execute("ALTER TABLE admin_user_v13 RENAME TO admin_user")
 
     @staticmethod
+    def _migrate_to_14(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS resource_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sampled_at TEXT NOT NULL UNIQUE,
+                cpu_load_percent REAL,
+                cpu_temperature_c REAL,
+                memory_percent REAL
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS resource_gpu_samples (
+                sample_id INTEGER NOT NULL
+                    REFERENCES resource_samples(id) ON DELETE CASCADE,
+                gpu_key TEXT NOT NULL,
+                uuid TEXT,
+                gpu_index INTEGER,
+                name TEXT,
+                load_percent REAL,
+                memory_used_mib REAL,
+                memory_total_mib REAL,
+                memory_percent REAL,
+                temperature_c REAL,
+                PRIMARY KEY(sample_id, gpu_key)
+            )"""
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_resource_samples_time ON resource_samples(sampled_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_resource_gpu_sample ON resource_gpu_samples(sample_id)"
+        )
+
+    @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
         """保留历史版本号，使旧数据库可以按顺序升级到当前结构。"""
 
@@ -315,6 +354,160 @@ class Database:
         columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
         if column not in columns:
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+    def append_resource_sample(self, sample: dict[str, Any]) -> None:
+        try:
+            parsed_at = datetime.fromisoformat(str(sample["sampled_at"]))
+            if parsed_at.tzinfo is None:
+                raise ValueError("sampled_at 必须包含时区")
+            sampled_at = parsed_at.astimezone(timezone.utc).isoformat()
+            with self.connect() as connection:
+                with connection:
+                    connection.execute(
+                        """INSERT INTO resource_samples(
+                               sampled_at,cpu_load_percent,cpu_temperature_c,memory_percent
+                           ) VALUES (?,?,?,?)
+                           ON CONFLICT(sampled_at) DO UPDATE SET
+                               cpu_load_percent=excluded.cpu_load_percent,
+                               cpu_temperature_c=excluded.cpu_temperature_c,
+                               memory_percent=excluded.memory_percent""",
+                        (sampled_at, sample.get("cpu_load_percent"),
+                         sample.get("cpu_temperature_c"), sample.get("memory_percent")),
+                    )
+                    row = connection.execute(
+                        "SELECT id FROM resource_samples WHERE sampled_at=?", (sampled_at,)
+                    ).fetchone()
+                    if row is None:
+                        raise DatabaseError("资源采样写入后无法读取")
+                    sample_id = int(row["id"])
+                    connection.execute(
+                        "DELETE FROM resource_gpu_samples WHERE sample_id=?", (sample_id,)
+                    )
+                    occurrences: dict[str, int] = {}
+                    for position, gpu in enumerate(sample.get("gpus", [])):
+                        uuid = str(gpu.get("uuid") or "").strip()
+                        gpu_index = gpu.get("index")
+                        base_key = f"uuid:{uuid}" if uuid else \
+                            f"index:{gpu_index}" if isinstance(gpu_index, int) else \
+                            f"position:{position}"
+                        occurrence = occurrences.get(base_key, 0)
+                        occurrences[base_key] = occurrence + 1
+                        gpu_key = f"{base_key}#{occurrence}"
+                        connection.execute(
+                            """INSERT INTO resource_gpu_samples(
+                                   sample_id,gpu_key,uuid,gpu_index,name,load_percent,
+                                   memory_used_mib,memory_total_mib,memory_percent,temperature_c
+                               ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                            (sample_id, gpu_key, uuid or None, gpu_index, gpu.get("name"),
+                             gpu.get("load_percent"), gpu.get("memory_used_mib"),
+                             gpu.get("memory_total_mib"), gpu.get("memory_percent"),
+                             gpu.get("temperature_c")),
+                        )
+                    cutoff = (
+                        datetime.now(timezone.utc)
+                        - timedelta(minutes=self.resource_history_retention_minutes)
+                    ).isoformat()
+                    connection.execute(
+                        "DELETE FROM resource_samples WHERE sampled_at < ?", (cutoff,)
+                    )
+        except DatabaseError:
+            raise
+        except (sqlite3.Error, KeyError, TypeError, ValueError) as exc:
+            raise DatabaseError(f"写入资源历史失败: {exc}") from exc
+
+    def query_resource_history(
+        self, window_minutes: int, bucket_seconds: int = 0,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        current_time = now or datetime.now(timezone.utc)
+        if current_time.tzinfo is None:
+            raise DatabaseError("资源历史查询时间必须包含时区")
+        cutoff = (
+            current_time.astimezone(timezone.utc) - timedelta(minutes=window_minutes)
+        ).isoformat()
+        try:
+            with self.connect() as connection:
+                summary = connection.execute(
+                    """SELECT COUNT(*) AS sample_count, MIN(sampled_at) AS stored_since,
+                              MAX(sampled_at) AS stored_until FROM resource_samples"""
+                ).fetchone()
+                if bucket_seconds > 0:
+                    host_rows = connection.execute(
+                        """SELECT CAST(strftime('%s',sampled_at) AS INTEGER)/? AS bucket,
+                                  MAX(sampled_at) AS sampled_at,
+                                  AVG(cpu_load_percent) AS cpu_load_percent,
+                                  AVG(cpu_temperature_c) AS cpu_temperature_c,
+                                  AVG(memory_percent) AS memory_percent
+                           FROM resource_samples WHERE sampled_at>=?
+                           GROUP BY bucket ORDER BY bucket""",
+                        (bucket_seconds, cutoff),
+                    ).fetchall()
+                    gpu_rows = connection.execute(
+                        """SELECT CAST(strftime('%s',s.sampled_at) AS INTEGER)/? AS bucket,
+                                  g.gpu_key,MAX(g.uuid) AS uuid,MAX(g.gpu_index) AS gpu_index,
+                                  MAX(g.name) AS name,AVG(g.load_percent) AS load_percent,
+                                  AVG(g.memory_used_mib) AS memory_used_mib,
+                                  AVG(g.memory_total_mib) AS memory_total_mib,
+                                  AVG(g.memory_percent) AS memory_percent,
+                                  AVG(g.temperature_c) AS temperature_c
+                           FROM resource_gpu_samples g
+                           JOIN resource_samples s ON s.id=g.sample_id
+                           WHERE s.sampled_at>=? GROUP BY bucket,g.gpu_key
+                           ORDER BY bucket,g.gpu_index,g.gpu_key""",
+                        (bucket_seconds, cutoff),
+                    ).fetchall()
+                    samples = self._assemble_resource_history(host_rows, gpu_rows, "bucket")
+                else:
+                    host_rows = connection.execute(
+                        """SELECT id,sampled_at,cpu_load_percent,cpu_temperature_c,memory_percent
+                           FROM resource_samples WHERE sampled_at>=? ORDER BY sampled_at""",
+                        (cutoff,),
+                    ).fetchall()
+                    gpu_rows = connection.execute(
+                        """SELECT g.*,s.sampled_at FROM resource_gpu_samples g
+                           JOIN resource_samples s ON s.id=g.sample_id
+                           WHERE s.sampled_at>=? ORDER BY s.sampled_at,g.gpu_index,g.gpu_key""",
+                        (cutoff,),
+                    ).fetchall()
+                    samples = self._assemble_resource_history(host_rows, gpu_rows, "sample_id")
+            return {
+                "samples": samples,
+                "bucket_seconds": bucket_seconds,
+                "retention_minutes": self.resource_history_retention_minutes,
+                "stored_sample_count": int(summary["sample_count"]),
+                "stored_since": summary["stored_since"],
+                "stored_until": summary["stored_until"],
+            }
+        except (sqlite3.Error, TypeError, ValueError) as exc:
+            raise DatabaseError(f"读取资源历史失败: {exc}") from exc
+
+    @staticmethod
+    def _assemble_resource_history(
+        host_rows: list[sqlite3.Row], gpu_rows: list[sqlite3.Row], key_name: str,
+    ) -> list[dict[str, Any]]:
+        samples: dict[int, dict[str, Any]] = {}
+        for row in host_rows:
+            key = int(row[key_name] if key_name == "bucket" else row["id"])
+            samples[key] = {
+                "sampled_at": row["sampled_at"],
+                "cpu_load_percent": row["cpu_load_percent"],
+                "cpu_temperature_c": row["cpu_temperature_c"],
+                "memory_percent": row["memory_percent"],
+                "gpus": [],
+            }
+        for row in gpu_rows:
+            key = int(row[key_name])
+            if key not in samples:
+                continue
+            samples[key]["gpus"].append({
+                "uuid": row["uuid"], "index": row["gpu_index"], "name": row["name"],
+                "load_percent": row["load_percent"],
+                "memory_used_mib": row["memory_used_mib"],
+                "memory_total_mib": row["memory_total_mib"],
+                "memory_percent": row["memory_percent"],
+                "temperature_c": row["temperature_c"],
+            })
+        return list(samples.values())
 
     def append_audit(
         self, source_ip: str, event: str, result: str, summary: dict[str, Any]

@@ -2,7 +2,7 @@
   "host": "127.0.0.1",
   "port": 19100,
   "sample_interval_seconds": 5,
-  "history_minutes": 15,
+  "history_minutes": 1440,
   "command_timeout_seconds": 4,
   "critical_ports": [1234, 3000, 8000, 8001, 8080, 8081, 8765, 18020, 18030, 18031],
   "database_path": "data/workstation-manager.db",

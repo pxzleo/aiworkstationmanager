@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -87,7 +88,7 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 13)
+            self.assertEqual(SCHEMA_VERSION, 14)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -168,7 +169,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-            self.assertEqual(version, 13)
+            self.assertEqual(version, 14)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -211,7 +212,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 13)
+            self.assertEqual(SCHEMA_VERSION, 14)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -221,6 +222,72 @@ class DatabaseRegistryTests(unittest.TestCase):
                 foreign_key_errors = connection.execute("PRAGMA foreign_key_check").fetchall()
             self.assertEqual([row["username"] for row in users], ["admin", "zzq"])
             self.assertEqual(foreign_key_errors, [])
+
+    def test_schema_fourteen_persists_prunes_and_aggregates_resource_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "manager.db"
+            database = Database(path, resource_history_retention_minutes=1440)
+            now = datetime.now(timezone.utc).replace(microsecond=0)
+            bucket_start = now - timedelta(seconds=int(now.timestamp()) % 15)
+
+            def history_sample(offset_seconds: int, cpu: float, gpu: float) -> dict[str, Any]:
+                return {
+                    "sampled_at": (bucket_start + timedelta(seconds=offset_seconds)).isoformat(),
+                    "cpu_load_percent": cpu,
+                    "cpu_temperature_c": 40 + cpu,
+                    "memory_percent": 50 + cpu,
+                    "gpus": [{
+                        "uuid": "GPU-a", "index": 0, "name": "RTX",
+                        "load_percent": gpu, "memory_used_mib": 100 + gpu,
+                        "memory_total_mib": 1000, "memory_percent": gpu / 2,
+                        "temperature_c": 60 + gpu / 10,
+                    }],
+                }
+
+            database.append_resource_sample(history_sample(1, 10, 40))
+            database.append_resource_sample(history_sample(6, 20, 60))
+            database.append_resource_sample(history_sample(16, 30, 80))
+            stale = history_sample(0, 99, 99)
+            stale["sampled_at"] = (now - timedelta(hours=25)).isoformat()
+            database.append_resource_sample(stale)
+
+            reopened = Database(path, resource_history_retention_minutes=1440)
+            result = reopened.query_resource_history(
+                60, bucket_seconds=15, now=now + timedelta(seconds=30)
+            )
+
+            self.assertEqual(SCHEMA_VERSION, 14)
+            self.assertEqual(result["stored_sample_count"], 3)
+            self.assertEqual(len(result["samples"]), 2)
+            self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
+            self.assertEqual(result["samples"][0]["gpus"][0]["load_percent"], 50)
+            self.assertEqual(result["samples"][1]["cpu_load_percent"], 30)
+            with reopened.connect() as connection:
+                self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    def test_resource_history_normalizes_equivalent_timestamps_to_utc(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Database(Path(temporary) / "manager.db")
+            first = {
+                "sampled_at": "2026-08-28T17:00:00+08:00",
+                "cpu_load_percent": 10,
+                "gpus": [],
+            }
+            equivalent = {
+                "sampled_at": "2026-08-28T09:00:00Z",
+                "cpu_load_percent": 20,
+                "gpus": [],
+            }
+
+            database.append_resource_sample(first)
+            database.append_resource_sample(equivalent)
+            result = database.query_resource_history(
+                15, now=datetime(2026, 8, 28, 9, 1, tzinfo=timezone.utc)
+            )
+
+            self.assertEqual(result["stored_sample_count"], 1)
+            self.assertEqual(result["samples"][0]["sampled_at"], "2026-08-28T09:00:00+00:00")
+            self.assertEqual(result["samples"][0]["cpu_load_percent"], 20)
 
     def test_user_management_lists_resets_and_deletes_users(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -6,11 +6,23 @@
   else root.AxisMonitorChart = api;
 }(typeof globalThis !== 'undefined' ? globalThis : this, () => {
   const DEFAULT_WINDOW_MS = 15 * 60 * 1000;
+  const RANGE_AXIS_LABELS = Object.freeze({
+    15: Object.freeze(['-15m', '-10m', '-5m', '现在']),
+    60: Object.freeze(['-1h', '-40m', '-20m', '现在']),
+    1440: Object.freeze(['-24h', '-16h', '-8h', '现在']),
+  });
   const WIDTH = 900;
   const HEIGHT = 200;
 
   function finite(value) { return typeof value === 'number' && Number.isFinite(value); }
   function rounded(value) { return finite(value) ? Math.round(value) : '--'; }
+  function supportedWindowMinutes(value) {
+    const minutes = Number(value);
+    if (!Number.isInteger(minutes) || !RANGE_AXIS_LABELS[minutes]) throw new RangeError(`unsupported history window: ${value}`);
+    return minutes;
+  }
+  function axisLabels(minutes) { return [...RANGE_AXIS_LABELS[supportedWindowMinutes(minutes)]]; }
+  function windowMilliseconds(minutes) { return supportedWindowMinutes(minutes) * 60 * 1000; }
 
   function buildChartModel(samples, getter, endTimeMs = Date.now(), windowMs = DEFAULT_WINDOW_MS) {
     if (typeof getter !== 'function') throw new TypeError('getter must be a function');
@@ -50,5 +62,5 @@
     };
   }
 
-  return { buildChartModel, buildChartGeometry };
+  return { axisLabels, windowMilliseconds, buildChartModel, buildChartGeometry };
 }));

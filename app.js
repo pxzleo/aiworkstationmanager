@@ -19,6 +19,7 @@ let draggedSceneId = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], users: [], operations: [], timers: new Map(),
+  historyWindowMinutes: 15, historyMeta: null, historyLoading: false,
   chartSpecs: [], monitorDetails: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
 
@@ -122,7 +123,23 @@ async function logout() { try { await api('/auth/logout', { method: 'POST', auth
 
 async function refreshAll() { await Promise.allSettled([refreshSnapshot(), refreshHistory(), refreshServicesAndScenes(), refreshUsers(), refreshLogs()]); }
 async function refreshSnapshot() { if (document.hidden) return; try { state.snapshot = normalizeSnapshot(await api('/snapshot', { resource: 'snapshot' })); renderSnapshot(); } catch (error) { if (!(error instanceof StaleRequestError)) { text('freshnessLabel', '监控离线'); } } }
-async function refreshHistory() { if (document.hidden) return; try { const result = await api('/history?window=15m', { resource: 'history' }); state.history = (result.samples || []).map(normalizeHistorySample); renderCharts(); } catch (_) {} }
+async function refreshHistory() {
+  if (document.hidden) return;
+  setHistoryLoading(true);
+  try {
+    const result = await api(`/history?window=${state.historyWindowMinutes}m`, { resource: 'history' });
+    state.history = (result.samples || []).map(normalizeHistorySample); state.historyMeta = result; renderCharts();
+  } catch (error) {
+    if (!(error instanceof StaleRequestError)) showToast(`历史数据读取失败：${error.message}`);
+  } finally { setHistoryLoading(false); }
+}
+function setHistoryLoading(loading) { state.historyLoading = loading; const select = byId('historyRangeSelect'); if (select) { select.classList.toggle('loading', loading); select.setAttribute('aria-busy', String(loading)); } }
+async function selectHistoryWindow(minutes) {
+  if (minutes === state.historyWindowMinutes || state.historyLoading) return;
+  monitorChart.windowMilliseconds(minutes); state.historyWindowMinutes = minutes; state.history = []; state.historyMeta = null;
+  byId('historyRangeSelect').querySelectorAll('[data-history-minutes]').forEach((button) => { const selected = Number(button.dataset.historyMinutes) === minutes; button.classList.toggle('active', selected); button.setAttribute('aria-pressed', String(selected)); });
+  buildMonitorCharts(); await refreshHistory();
+}
 async function refreshServicesAndScenes() {
   if (document.hidden) return;
   try { const [serviceData, sceneData] = await Promise.all([api('/registered-services', { resource: 'services' }), api('/scenes', { resource: 'scenes' })]); state.services = serviceData.services || []; state.scenes = sceneData.scenes || []; renderServices(); renderScenes(); }
@@ -136,6 +153,14 @@ function normalizeHistorySample(sample) { return { ...sample, cpu_load_percent: 
 function normalizeSnapshot(snapshot) { const host = snapshot.host || {}; return { ...snapshot, host: { ...host, cpu: { ...(host.cpu || {}), load_percent: normalizedPercent(host.cpu?.load_percent) }, memory: { ...(host.memory || {}), percent: normalizedPercent(host.memory?.percent) }, disks: Array.isArray(host.disks) ? host.disks.map((disk) => ({ ...disk, percent: normalizedPercent(disk.percent) })) : [] }, gpus: Array.isArray(snapshot.gpus) ? snapshot.gpus.map(normalizeGpu) : [] }; }
 function snapshotAsHistory(snapshot) { return snapshot ? { sampled_at: snapshot.sampled_at, cpu_load_percent: snapshot.host?.cpu?.load_percent, cpu_temperature_c: snapshot.host?.cpu?.temperature_c, memory_percent: snapshot.host?.memory?.percent, gpus: snapshot.gpus || [] } : null; }
 function currentSeries() { const samples = state.history.slice(); const current = snapshotAsHistory(state.snapshot); if (current && !samples.some((sample) => sample.sampled_at === current.sampled_at)) samples.push(current); return samples.sort((a, b) => new Date(a.sampled_at) - new Date(b.sampled_at)); }
+function historyWindowLabel() { return { 15: '15m', 60: '1h', 1440: '24h' }[state.historyWindowMinutes]; }
+function historyCoverageLabel() {
+  const since = Date.parse(state.historyMeta?.stored_since); const until = Date.parse(state.historyMeta?.stored_until);
+  if (!Number.isFinite(since) || !Number.isFinite(until)) return `-- / ${historyWindowLabel()}`;
+  const minutes = Math.max(0, Math.min(state.historyWindowMinutes, (until - since) / 60000));
+  const value = minutes < 1 ? '<1m' : minutes < 60 ? `${Math.floor(minutes)}m` : minutes < 1440 ? `${(minutes / 60).toFixed(minutes < 120 ? 1 : 0)}h` : '24h';
+  return `${value} / ${historyWindowLabel()}`;
+}
 
 function renderSnapshot() {
   const snapshot = state.snapshot; if (!snapshot) return; const host = snapshot.host || {}; const cpu = host.cpu || {}; const memory = host.memory || {};
@@ -178,10 +203,10 @@ function createMonitorChart(spec, chartIndex) {
   const statistics = element('div', 'chart-statistics'); const statisticRefs = {};
   [['average', '平均'], ['peak', '峰值'], ['minimum', '最低']].forEach(([key, label]) => { const item = element('span'); const value = userElement('b', '', '--'); item.append(element('small', '', label), value); statistics.append(item); statisticRefs[key] = value; });
   const frame = element('div', 'chart-frame'); const yAxis = element('span', 'chart-y-axis'); ['100%', '75%', '50%', '25%', '0'].forEach((label) => yAxis.append(element('i', '', label)));
-  const plot = element('div', 'chart-plot'); const svg = svgElement('svg', { class: 'line-chart', viewBox: '0 0 900 200', preserveAspectRatio: 'none', role: 'img', 'aria-label': `${ui(spec.title)} · ${ui('最近 15 分钟')}` });
+  const plot = element('div', 'chart-plot'); const svg = svgElement('svg', { class: 'line-chart', viewBox: '0 0 900 200', preserveAspectRatio: 'none', role: 'img', 'aria-label': `${ui(spec.title)} · ${historyWindowLabel()}` });
   const gradientId = `monitorGradient${chartIndex}`; const defs = svgElement('defs'); const gradient = svgElement('linearGradient', { id: gradientId, x1: '0', y1: '0', x2: '0', y2: '1' }); gradient.append(svgElement('stop', { class: 'chart-gradient-start', offset: '0%' }), svgElement('stop', { class: 'chart-gradient-end', offset: '100%' })); defs.append(gradient);
   const grid = svgElement('path', { class: 'chart-grid-lines', d: 'M0 1H900M0 50H900M0 100H900M0 150H900M0 199H900M1 0V200M300 0V200M600 0V200M899 0V200' }); const areaLayer = svgElement('g', { class: 'chart-areas' }); const lineLayer = svgElement('g', { class: 'chart-lines' }); const isolatedLayer = svgElement('g', { class: 'chart-isolated-points' }); const marker = svgElement('circle', { class: 'chart-marker', cx: '0', cy: '0', r: '4', hidden: '' }); svg.append(defs, grid, areaLayer, lineLayer, isolatedLayer, marker);
-  const noData = element('span', 'chart-no-data', '暂无采样数据'); plot.append(svg, noData); const xAxis = element('div', 'chart-x-axis'); ['-15m', '-10m', '-5m', '现在'].forEach((label) => xAxis.append(element('span', '', label))); frame.append(yAxis, plot, xAxis);
+  const noData = element('span', 'chart-no-data', '暂无采样数据'); plot.append(svg, noData); const xAxis = element('div', 'chart-x-axis'); monitorChart.axisLabels(state.historyWindowMinutes).forEach((label) => xAxis.append(element('span', '', label))); frame.append(yAxis, plot, xAxis);
   section.append(heading, statistics, frame); return { ...spec, section, current, statisticRefs, svg, gradientId, areaLayer, lineLayer, isolatedLayer, marker, noData };
 }
 function createMonitorGroup({ className, kicker, title, description, descriptionDetail = '', titleIsUserData = false, color, details, charts }) {
@@ -191,7 +216,7 @@ function createMonitorGroup({ className, kicker, title, description, description
 }
 function buildMonitorCharts() {
   const container = document.querySelector('.monitor-grid'); container.replaceChildren(); state.chartSpecs = []; const details = { gpus: new Map() }; state.monitorDetails = details;
-  const overview = element('div', 'monitor-overview'); const sampleCount = monitorDetail('采样点'); const lastSample = monitorDetail('最近更新'); const deviceCount = monitorDetail('监控设备'); overview.append(sampleCount.node, lastSample.node, deviceCount.node); details.sampleCount = sampleCount.value; details.lastSample = lastSample.value; details.deviceCount = deviceCount.value; container.append(overview);
+  const overview = element('div', 'monitor-overview'); const coverage = monitorDetail('已累计'); const sampleCount = monitorDetail('图表点'); const lastSample = monitorDetail('最近更新'); const deviceCount = monitorDetail('监控设备'); overview.append(coverage.node, sampleCount.node, lastSample.node, deviceCount.node); details.coverage = coverage.value; details.sampleCount = sampleCount.value; details.lastSample = lastSample.value; details.deviceCount = deviceCount.value; container.append(overview);
   let chartIndex = 0; const cpuTemp = monitorDetail('CPU 温度'); const memoryUsage = monitorDetail('内存用量'); details.cpuTemp = cpuTemp.value; details.memoryUsage = memoryUsage.value;
   const hostSpecs = [{ kicker: 'CPU', title: '处理器负载', description: '全部逻辑处理器综合使用率', color: 'var(--accent)', getter: (sample) => sample.cpu_load_percent }, { kicker: 'RAM', title: '系统内存', description: '物理内存实时占用比例', color: '#60a5fa', getter: (sample) => sample.memory_percent }];
   const hostCharts = hostSpecs.map((spec) => { const chart = createMonitorChart(spec, chartIndex++); state.chartSpecs.push(chart); return chart; });
@@ -208,13 +233,13 @@ function buildMonitorCharts() {
 function syncMonitorCharts() { const signature = gpuLayout.gpuSetSignature(state.gpus); if (signature !== state.monitorGpuSignature) { state.monitorGpuSignature = signature; buildMonitorCharts(); } }
 function renderMonitorDetails(samples) {
   const details = state.monitorDetails; if (!details) return; const snapshot = state.snapshot || {}; const host = snapshot.host || {}; const memory = host.memory || {};
-  details.sampleCount.textContent = String(samples.length); details.lastSample.textContent = samples.length ? formatDate(samples.at(-1).sampled_at) : '--'; details.deviceCount.textContent = `${state.gpus.length + 1}`;
+  details.coverage.textContent = historyCoverageLabel(); details.sampleCount.textContent = String(samples.length); details.lastSample.textContent = samples.length ? formatDate(samples.at(-1).sampled_at) : '--'; details.deviceCount.textContent = `${state.gpus.length + 1}`;
   details.cpuTemp.textContent = finite(host.cpu?.temperature_c) ? `${Math.round(host.cpu.temperature_c)}°C` : ui('不支持'); const used = gib(memory.used_bytes); const total = gib(memory.total_bytes); details.memoryUsage.textContent = used !== null && total !== null ? `${used.toFixed(1)} / ${total.toFixed(1)} GB` : ui('不支持');
   state.gpus.forEach((gpu) => { const refs = details.gpus.get(gpu._uiKey); if (!refs) return; const gpuUsed = mibToGib(gpu.memory_used_mib); const gpuTotal = mibToGib(gpu.memory_total_mib); refs.temperature.textContent = finite(gpu.temperature_c) ? `${Math.round(gpu.temperature_c)}°C` : ui('不支持'); refs.power.textContent = finite(gpu.power_w) ? `${Math.round(gpu.power_w)} W` : ui('不支持'); refs.memory.textContent = gpuUsed !== null && gpuTotal !== null ? `${gpuUsed.toFixed(1)} / ${gpuTotal.toFixed(1)} GB` : ui('不支持'); refs.uuid.textContent = compactUuid(gpu.uuid); });
 }
 function renderCharts() {
   const samples = currentSeries(); const endTimeMs = Date.now(); renderMonitorDetails(samples); state.chartSpecs.forEach((spec) => {
-    const model = monitorChart.buildChartModel(samples, spec.getter, endTimeMs); const geometry = monitorChart.buildChartGeometry(model); spec.current.firstChild.nodeValue = String(model.current); Object.entries(spec.statisticRefs).forEach(([key, node]) => { node.textContent = String(model[key]); }); const unit = (value) => value === '--' ? '--' : `${value}%`; spec.svg.setAttribute('aria-label', model.pointCount ? `${ui(spec.title)}: ${ui('当前')} ${unit(model.current)}, ${ui('峰值')} ${unit(model.peak)}, ${ui('平均')} ${unit(model.average)}` : `${ui(spec.title)}: ${ui('暂无采样数据')}`);
+    const model = monitorChart.buildChartModel(samples, spec.getter, endTimeMs, monitorChart.windowMilliseconds(state.historyWindowMinutes)); const geometry = monitorChart.buildChartGeometry(model); spec.current.firstChild.nodeValue = String(model.current); Object.entries(spec.statisticRefs).forEach(([key, node]) => { node.textContent = String(model[key]); }); const unit = (value) => value === '--' ? '--' : `${value}%`; spec.svg.setAttribute('aria-label', model.pointCount ? `${ui(spec.title)}: ${ui('当前')} ${unit(model.current)}, ${ui('峰值')} ${unit(model.peak)}, ${ui('平均')} ${unit(model.average)}` : `${ui(spec.title)}: ${ui('暂无采样数据')}`);
     spec.lineLayer.replaceChildren(...geometry.lines.map((segment) => svgElement('polyline', { class: 'chart-line', points: segment.map(({ x, y }) => `${x},${y}`).join(' ') })));
     spec.areaLayer.replaceChildren(...geometry.areas.map((segment) => { const points = segment.map(({ x, y }) => `${x},${y}`).join(' '); return svgElement('polygon', { class: 'chart-area', fill: `url(#${spec.gradientId})`, points: `${segment[0].x},200 ${points} ${segment.at(-1).x},200` }); }));
     spec.isolatedLayer.replaceChildren(...geometry.isolatedPoints.map((point) => svgElement('circle', { class: 'chart-isolated-point', cx: String(point.x), cy: String(point.y), r: '3' })));
@@ -378,6 +403,7 @@ function renderOperationTimeline() { const timeline = byId('auditTimeline'); tim
 function renderOperations() { const list = byId('operationList'); list.replaceChildren(); if (!state.operations.length) { list.append(element('p', 'empty-state', '暂无服务或场景操作。')); return; } state.operations.forEach((item) => { const failed = ['failed', 'interrupted'].includes(item.status); const row = element('article', `operation-row${failed ? ' operation-failed' : ''}`); const copy = element('div'); copy.append(element('strong', '', `${ui(item.kind === 'scene' ? '场景' : '服务')} · ${targetName(item.kind, item.target_id)} · ${ui(operationActionLabel(item.action))}`), element('small', '', item.error_summary || ui(operationResultLabel(item.result)) || ui('等待执行'))); row.append(copy, element('span', `status-label ${item.status === 'succeeded' ? 'ready' : failed ? 'danger' : 'partial'}`, ui(operationStatusLabel(item.status))), element('time', '', formatDate(item.created_at, true))); const steps = element('ol', 'operation-steps'); (item.steps || []).forEach((step) => { const entry = element('li', step.status === 'failed' ? 'failed' : ''); entry.append(element('b', '', `${step.sequence}. ${ui(operationPhaseLabel(step.phase))} · ${targetName('service', step.target_id)} · ${ui(operationActionLabel(step.action))}`), element('span', 'step-status', ui(operationStatusLabel(step.status))), element('small', '', `${formatDate(step.started_at, true)} → ${step.finished_at ? formatDate(step.finished_at, true) : ui('进行中')}`)); if (step.error_summary) entry.append(element('code', '', step.error_summary)); steps.append(entry); }); if (steps.childNodes.length) row.append(steps); list.append(row); }); }
 
 byId('authForm').addEventListener('submit', submitAuth); byId('logoutButton').addEventListener('click', logout); byId('refreshButton').addEventListener('click', refreshAll); byId('refreshLogsButton').addEventListener('click', refreshLogs); byId('overviewSceneSelect').addEventListener('change', handleOverviewSceneChange); byId('stopAllServicesButton').addEventListener('click', stopAllServices); byId('addServiceButton').addEventListener('click', () => openServiceDialog()); byId('addSceneButton').addEventListener('click', () => openSceneDialog()); byId('addUserButton').addEventListener('click', openUserDialog); byId('cancelSceneSwitchButton').addEventListener('click', cancelSceneSwitch); byId('closeSceneProgressButton').addEventListener('click', () => byId('sceneProgressDialog').close()); byId('sceneProgressDialog').addEventListener('cancel', (event) => { if (sceneProgressOperationId) event.preventDefault(); }); byId('serviceForm').addEventListener('submit', saveService); byId('sceneForm').addEventListener('submit', saveScene); byId('userForm').addEventListener('submit', saveUser); byId('passwordForm').addEventListener('submit', saveUserPassword); byId('serviceSearch').addEventListener('input', renderRegisteredServiceTable); byId('serviceFilters').addEventListener('click', (event) => { const button = event.target.closest('[data-filter]'); if (!button) return; state.serviceFilter = button.dataset.filter; byId('serviceFilters').querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item === button)); renderRegisteredServiceTable(); }); document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => byId(button.dataset.close).close())); document.addEventListener('visibilitychange', () => { if (!document.hidden && !document.body.classList.contains('auth-pending')) refreshAll(); });
+byId('historyRangeSelect').addEventListener('click', (event) => { const button = event.target.closest('[data-history-minutes]'); if (button) selectHistoryWindow(Number(button.dataset.historyMinutes)); });
 document.addEventListener('languagechange', () => { buildMonitorCharts(); if (state.snapshot) renderSnapshot(); renderServices(); renderScenes(); renderUsers(); renderOperations(); renderOperationTimeline(); text('pageTitle', byId(`page-${state.activePage}`)?.dataset.title || ''); });
 
 bootstrap();

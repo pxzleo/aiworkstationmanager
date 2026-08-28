@@ -32,6 +32,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.sample_interval_seconds, 2.5)
         self.assertEqual(settings.critical_ports, (8080, 18030))
 
+    def test_default_history_uses_disk_retention_and_bounded_realtime_memory(self) -> None:
+        settings = Settings()
+        self.assertEqual(settings.history_minutes, 1440)
+        self.assertEqual(settings.realtime_history_capacity, 181)
+
     def test_security_and_storage_configuration(self) -> None:
         settings = load_settings(
             {
@@ -257,6 +262,49 @@ class HistoryTests(unittest.TestCase):
 
 
 class SamplerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_history_sink_failure_degrades_and_recovers_without_losing_snapshot(self) -> None:
+        calls = 0
+
+        def sink(_: dict) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("disk full")
+
+        snapshot = {
+            "sampled_at": datetime.now(timezone.utc).isoformat(),
+            "host": {"cpu": {}, "memory": {}},
+            "gpus": [],
+        }
+        sampler = Sampler(Settings(), collector=lambda _: snapshot, sample_sink=sink)
+
+        self.assertIs(await sampler.sample_once(), snapshot)
+        self.assertEqual(sampler.current, snapshot)
+        self.assertEqual(len(sampler.history.query(15)), 1)
+        self.assertEqual(sampler.history_persistence_error["error_type"], "RuntimeError")
+        self.assertEqual(sampler.history_persistence_error["cause"], "disk full")
+
+        await sampler.sample_once()
+        self.assertIsNone(sampler.history_persistence_error)
+
+    async def test_sample_sink_receives_reduced_history_record(self) -> None:
+        records = []
+        settings = Settings(sample_interval_seconds=5)
+        snapshot = {
+            "sampled_at": datetime.now(timezone.utc).isoformat(),
+            "host": {"cpu": {"load_percent": 12}, "memory": {"percent": 34}, "disks": [1]},
+            "gpus": [{"uuid": "GPU-a", "index": 0, "name": "RTX", "load_percent": 56}],
+            "docker": {"containers": [1]},
+        }
+        sampler = Sampler(settings, collector=lambda _: snapshot, sample_sink=records.append)
+
+        await sampler.sample_once()
+
+        self.assertEqual(records[0]["cpu_load_percent"], 12)
+        self.assertEqual(records[0]["gpus"][0]["uuid"], "GPU-a")
+        self.assertNotIn("docker", records[0])
+        self.assertNotIn("disks", records[0])
+
     async def test_stop_does_not_overwrite_scheduler_started_during_cleanup(self) -> None:
         settings = Settings(sample_interval_seconds=60)
 
@@ -454,7 +502,11 @@ class ApiTests(unittest.TestCase):
     def test_health_snapshot_history_and_services(self) -> None:
         self.assertEqual(self.client.get("/api/v1/health").status_code, 200)
         self.assertEqual(self.client.get("/api/v1/snapshot").json()["gpus"][0]["uuid"], "GPU-a")
-        self.assertEqual(len(self.client.get("/api/v1/history?window=15m").json()["samples"]), 1)
+        history = self.client.get("/api/v1/history?window=15m").json()
+        self.assertEqual(len(history["samples"]), 1)
+        self.assertEqual(history["bucket_seconds"], 0)
+        self.assertEqual(history["retention_minutes"], 1440)
+        self.assertEqual(history["stored_sample_count"], 1)
         services = self.client.get("/api/v1/host-services").json()
         self.assertEqual(services["containers"][0]["name"], "example")
         self.assertEqual(services["listening_ports"][0]["port"], 8080)
@@ -478,6 +530,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "degraded")
         self.assertEqual(response.json()["collector_errors"][0]["collector"], "docker")
+
+    def test_health_is_degraded_when_resource_history_persistence_fails(self) -> None:
+        self.client.app.state.sampler.history_persistence_error = {
+            "error_type": "DatabaseError",
+            "message": "资源历史写入失败",
+            "cause": "disk full at secret path",
+        }
+
+        body = self.client.get("/api/v1/health").json()
+
+        self.assertEqual(body["status"], "degraded")
+        self.assertEqual(body["readiness"]["resource_history"], "degraded")
+        self.assertEqual(body["history_persistence_error"]["error_type"], "DatabaseError")
+        self.assertNotIn("cause", body["history_persistence_error"])
 
     def test_invalid_history_window_returns_structured_error(self) -> None:
         response = self.client.get("/api/v1/history?window=1h")
@@ -535,7 +601,7 @@ class ApiTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden_demo, html)
         for endpoint in (
-            "/auth/status", "/snapshot", "/history?window=15m", "/registered-services",
+            "/auth/status", "/snapshot", "/history?window=", "/registered-services",
             "/scenes", "/operations?limit=50",
         ):
             self.assertIn(endpoint, source)

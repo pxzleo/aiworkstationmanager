@@ -20,12 +20,11 @@ class HistoryStore:
     def __init__(self, capacity: int) -> None:
         self._samples: deque[dict[str, Any]] = deque(maxlen=capacity)
 
-    def append(self, snapshot: dict[str, Any]) -> None:
+    def append(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         host = snapshot.get("host", {})
         cpu = host.get("cpu", {})
         memory = host.get("memory", {})
-        self._samples.append(
-            {
+        record = {
                 "sampled_at": snapshot["sampled_at"],
                 "cpu_load_percent": cpu.get("load_percent"),
                 "cpu_temperature_c": cpu.get("temperature_c"),
@@ -44,7 +43,8 @@ class HistoryStore:
                     for gpu in snapshot.get("gpus", [])
                 ],
             }
-        )
+        self._samples.append(record)
+        return record
 
     def query(
         self, window_minutes: int, now: datetime | None = None
@@ -58,15 +58,21 @@ class Sampler:
         self,
         settings: Settings,
         collector: Callable[[Settings], dict[str, Any]] = collect_snapshot,
+        sample_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.settings = settings
-        self.history = HistoryStore(settings.history_capacity)
+        self.history = HistoryStore(settings.realtime_history_capacity)
         self.current: dict[str, Any] | None = None
         self._collector = collector
+        self._sample_sink = sample_sink
         self._task: asyncio.Task[None] | None = None
         self._collection_task: asyncio.Task[dict[str, Any]] | None = None
         self._lock = asyncio.Lock()
         self.last_error: dict[str, str] | None = None
+        self.history_persistence_error: dict[str, str] | None = None
+
+    def set_sample_sink(self, sample_sink: Callable[[dict[str, Any]], None]) -> None:
+        self._sample_sink = sample_sink
 
     async def sample_once(self) -> dict[str, Any]:
         async with self._lock:
@@ -83,7 +89,18 @@ class Sampler:
                 if collection_task.done():
                     self._collection_task = None
             self.current = snapshot
-            self.history.append(snapshot)
+            history_record = self.history.append(snapshot)
+            if self._sample_sink is not None:
+                try:
+                    await asyncio.to_thread(self._sample_sink, history_record)
+                except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                    self.history_persistence_error = {
+                        "error_type": type(exc).__name__,
+                        "message": "资源历史写入失败，将在下个采样周期重试",
+                        "cause": str(exc),
+                    }
+                else:
+                    self.history_persistence_error = None
             self.last_error = None
             return snapshot
 

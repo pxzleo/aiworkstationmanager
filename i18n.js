@@ -49,7 +49,7 @@
     '搜索服务、说明、GPU 或端口': 'Search services, descriptions, GPUs, or ports',
     '全部': 'All', '已启动': 'Running', '异常': 'Unhealthy', '已停止': 'Stopped',
     '服务名称': 'Service name', '说明': 'Description', '端口': 'Port', '尚未添加服务。': 'No services have been added.',
-    '真实采样 · 最近 15 分钟': 'Live samples · Last 15 minutes',
+    '持久采样 · 最近 24 小时': 'Persistent samples · Last 24 hours', '历史范围': 'History range',
     '主机资源与每张 GPU 独立分区，统一刻度展示负载、显存和关键指标。': 'Host resources and every GPU have distinct sections with consistent scales for load, VRAM, and key metrics.',
     '15 分钟': '15 minutes', '1 小时': '1 hour', '24 小时': '24 hours',
     '当前 API 尚未开放此范围': 'This range is not available in the current API',
@@ -100,7 +100,7 @@
     '总量不可用': 'Total unavailable', '本机': 'Local host', '未检测到': 'Not detected', '已检测': 'Detected',
     '部分数据降级': 'Some data is degraded', '采集失败': 'Collection failed',
     'CPU 总负载': 'Total CPU load', '内存占用': 'Memory usage', 'GPU 负载': 'GPU load', '% 当前': '% current',
-    '采样点': 'Samples', '最近更新': 'Last update', '监控设备': 'Monitored devices',
+    '采样点': 'Samples', '图表点': 'Chart points', '已累计': 'Accumulated', '最近更新': 'Last update', '监控设备': 'Monitored devices',
     'CPU 温度': 'CPU temperature', '内存用量': 'Memory used', '主机资源': 'Host resources',
     '处理器与系统内存使用同一条采样时间线': 'Processor and system memory share one sampling timeline',
     '处理器负载': 'Processor load', '全部逻辑处理器综合使用率': 'Combined utilization across all logical processors',
@@ -158,10 +158,12 @@
     '等待执行': 'Queued', '执行中': 'Running', '场景切换': 'Scene switch', '服务操作': 'Service operation',
     '暂无服务或场景操作。': 'No service or scene operations.', '场景': 'Scene', '服务': 'Service',
     '最近 30 分钟没有服务或场景操作。': 'No service or scene operations in the last 30 minutes.',
+    '历史数据读取失败': 'Unable to read history data',
   };
 
   const templates = [
     [/^请求失败（(.+)）$/, 'Request failed ($1)'], [/^服务状态读取失败：(.+)$/, 'Unable to read service states: $1'],
+    [/^历史数据读取失败：(.+)$/, 'Unable to read history data: $1'],
     [/^用户加载失败：(.+)$/, 'Unable to load users: $1'], [/^温度 (.+)$/, 'Temperature $1'],
     [/^(.+) 已使用 · 共 (.+)$/, '$1 used · $2 total'], [/^(.+) 已使用$/, '$1 used'],
     [/^(.+) 可用$/, '$1 available'], [/^(.+) 运行 · (.+) 停止$/, '$1 running · $2 stopped'],

@@ -150,14 +150,16 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
                database: Database | None = None,
                registry_manager: RegisteredServiceManager | None = None) -> FastAPI:
     resolved_settings = settings or load_settings()
-    resolved_sampler = sampler or Sampler(resolved_settings)
     resolved_database = database or Database(
         resolved_settings.database_path,
         audit_retention_max_events=resolved_settings.audit_retention_max_events,
         audit_retention_days=resolved_settings.audit_retention_days,
         login_failure_max_rows=resolved_settings.login_failure_max_rows,
         operation_retention_max=resolved_settings.operation_retention_max,
+        resource_history_retention_minutes=resolved_settings.history_minutes,
     )
+    resolved_sampler = sampler or Sampler(resolved_settings)
+    resolved_sampler.set_sample_sink(resolved_database.append_resource_sample)
     resolved_auth = AuthService(resolved_database, resolved_settings.session_ttl_seconds,
                                 resolved_settings.session_max_active)
     resolved_registry = registry_manager or RegisteredServiceManager(
@@ -299,17 +301,26 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         sampler_running = resolved_sampler._task is not None and not resolved_sampler._task.done()
         collector_errors = resolved_sampler.current.get("collector_errors", []) \
             if resolved_sampler.current else []
+        history_persistence_error = resolved_sampler.history_persistence_error
+        public_history_error = None if history_persistence_error is None else {
+            "error_type": history_persistence_error["error_type"],
+            "message": history_persistence_error["message"],
+        }
         operation_error = resolved_registry.last_operation_error
         return {"version": __version__, "schema": {"api": "v1", "database": DATABASE_SCHEMA_VERSION},
-                "status": "healthy" if sampler_running and not collector_errors and not operation_error else "degraded",
+                "status": "healthy" if sampler_running and not collector_errors
+                and not history_persistence_error and not operation_error else "degraded",
                 "sampler_running": sampler_running,
                 "collector_errors": collector_errors,
+                "history_persistence_error": public_history_error,
                 "service_operation_error": operation_error,
                 "service_status_mode": "stored",
                 "sampled_at": resolved_sampler.current.get("sampled_at")
                 if resolved_sampler.current else None,
                 "readiness": {"setup_complete": resolved_auth.is_setup(),
                               "sampler": "ready" if sampler_running else "not_ready",
+                              "resource_history": "ready" if not history_persistence_error
+                              else "degraded",
                               "registered_services": "ready" if not operation_error else "degraded"}}
 
     @app.get("/api/v1/auth/status")
@@ -407,7 +418,11 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         except ValueError as exc:
             raise HTTPException(422, {"error_type": type(exc).__name__,
                                       "message": "无效的历史窗口", "cause": str(exc)}) from exc
-        return {"window": f"{minutes}m", "samples": resolved_sampler.history.query(minutes)}
+        bucket_seconds = 0 if minutes <= 15 else 15 if minutes <= 60 else 60
+        result = await asyncio.to_thread(
+            resolved_database.query_resource_history, minutes, bucket_seconds
+        )
+        return {"window": f"{minutes}m", **result}
 
     @app.get("/api/v1/host-services", dependencies=[Depends(protected_access)])
     async def host_services() -> dict[str, Any]:

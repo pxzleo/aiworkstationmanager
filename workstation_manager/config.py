@@ -21,6 +21,7 @@ MIN_SAMPLE_INTERVAL_SECONDS = 0.5
 MAX_SAMPLE_INTERVAL_SECONDS = 3600.0
 MIN_HISTORY_MINUTES = 1
 MAX_HISTORY_MINUTES = 1440
+REALTIME_HISTORY_MINUTES = 15
 MIN_COMMAND_TIMEOUT_SECONDS = 0.1
 MAX_COMMAND_TIMEOUT_SECONDS = 120.0
 MAX_HISTORY_CAPACITY = 172801
@@ -31,7 +32,7 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 19100
     sample_interval_seconds: float = 5.0
-    history_minutes: int = 15
+    history_minutes: int = 1440
     command_timeout_seconds: float = 4.0
     critical_ports: tuple[int, ...] = DEFAULT_PORTS
     database_path: Path = PROJECT_ROOT / "data" / "workstation-manager.db"
@@ -56,8 +57,15 @@ class Settings:
 
     @property
     def history_capacity(self) -> int:
+        return self._history_capacity(self.history_minutes)
+
+    @property
+    def realtime_history_capacity(self) -> int:
+        return self._history_capacity(min(float(self.history_minutes), REALTIME_HISTORY_MINUTES))
+
+    def _history_capacity(self, history_minutes_value: float | int) -> int:
         try:
-            history_minutes = float(self.history_minutes)
+            history_minutes = float(history_minutes_value)
             sample_interval_seconds = float(self.sample_interval_seconds)
         except (TypeError, ValueError, OverflowError) as exc:
             raise ConfigError(f"无法计算历史容量: {exc}") from exc
@@ -288,7 +296,7 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
     if not host:
         raise ConfigError("host 不能为空")
     history_minutes = _bounded_integer(
-        data.get("history_minutes", 15),
+        data.get("history_minutes", 1440),
         "history_minutes",
         MIN_HISTORY_MINUTES,
         MAX_HISTORY_MINUTES,
