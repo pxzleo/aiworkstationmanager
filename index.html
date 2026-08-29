@@ -79,7 +79,7 @@
             <div>
               <p class="eyebrow">当前工作场景</p>
               <h1><span class="scene-indicator"></span><span id="activeSceneName">场景检测尚未配置</span></h1>
-              <p id="activeSceneSummary">场景状态由已登记服务最后保存的状态计算。</p>
+              <p id="activeSceneSummary">场景状态由低开销健康检查发现的实际状态计算。</p>
             </div>
             <div class="heading-actions">
               <button class="button secondary" data-nav="scenes">查看场景</button>
@@ -106,7 +106,7 @@
 
           <div class="overview-lower">
             <section class="running-section">
-              <div class="section-heading"><div><h2>已启动服务</h2><p>仅显示最后保存状态为运行中的服务</p></div><button class="text-button" data-nav="environments">全部服务 <svg><use href="#i-chevron"/></svg></button></div>
+              <div class="section-heading"><div><h2>已启动服务</h2><p>仅显示健康检查确认为运行中的服务</p></div><button class="text-button" data-nav="environments">全部服务 <svg><use href="#i-chevron"/></svg></button></div>
               <div class="service-list" id="serviceList">
                 <p class="empty-state">登录后加载真实服务状态。</p>
               </div>
@@ -131,7 +131,7 @@
         </section>
 
         <section class="page" id="page-environments" data-title="已登记服务">
-          <div class="page-heading"><div><p class="eyebrow">脚本服务</p><h1>已登记服务</h1><p>启停结果永久保存；status 仅在点击“检查状态”时调用一次。</p></div><div class="heading-actions"><button class="button secondary" id="stopAllServicesButton">停止全部服务</button><button class="button primary" id="addServiceButton"><span>＋</span>添加服务</button></div></div>
+          <div class="page-heading"><div><p class="eyebrow">脚本服务</p><h1>已登记服务</h1><p>管理器直接检查本机健康接口；status 脚本只在点击“深度检查”时执行。</p></div><div class="heading-actions"><button class="button secondary" id="stopAllServicesButton">停止全部服务</button><button class="button primary" id="addServiceButton"><span>＋</span>添加服务</button></div></div>
             <div class="toolbar"><div class="search"><svg><use href="#i-search"/></svg><input id="serviceSearch" type="search" placeholder="搜索服务、说明、GPU 或端口"></div><div class="filter-group" id="serviceFilters"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="running">已启动</button><button class="filter" data-filter="unhealthy">异常</button><button class="filter" data-filter="stopped">已停止</button></div></div>
           <div class="data-table env-table">
             <div class="table-head"><span>服务名称</span><span>说明</span><span>GPU</span><span>端口</span><span>状态</span><span></span></div>
@@ -219,6 +219,8 @@
       <label>GPU 展示标签<input id="serviceGpu" maxlength="100" placeholder="例如 RTX 4090"></label>
       <label>服务端口<input id="servicePort" type="number" min="1" max="65535"></label>
       <label>UI 地址<input id="serviceUiUrl" type="url" maxlength="2048" placeholder="http://192.168.1.10:8080"></label>
+      <label>健康检查地址<input id="serviceHealthUrl" type="url" maxlength="2048" placeholder="http://127.0.0.1:8080/health"></label>
+      <label>响应必须包含<input id="serviceHealthExpect" maxlength="512" placeholder="可选，用于区分共用端口的服务"></label>
       <p class="auth-error" id="serviceFormError" role="alert"></p>
       <div class="dialog-actions"><button class="button secondary" type="button" data-close="serviceDialog">取消</button><button class="button primary" type="submit">保存服务</button></div>
     </form>

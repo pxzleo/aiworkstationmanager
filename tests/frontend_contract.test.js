@@ -22,7 +22,7 @@ test('authentication UI accepts the configured four-character minimum', () => {
 });
 
 test('registered service editor exposes the agreed fields and actions', () => {
-  for (const value of ['已登记服务', '服务名称', '管理脚本绝对路径', 'GPU 展示标签', '服务端口', 'UI 地址']) {
+  for (const value of ['已登记服务', '服务名称', '管理脚本绝对路径', 'GPU 展示标签', '服务端口', 'UI 地址', '健康检查地址', '响应必须包含']) {
     assert.ok(html.includes(value), `missing ${value}`);
   }
   for (const action of ['start', 'stop', 'restart']) assert.ok(js.includes(action));
@@ -30,15 +30,18 @@ test('registered service editor exposes the agreed fields and actions', () => {
   assert.ok(js.includes("/registered-services"));
   assert.ok(js.includes("service.busy ? '操作中'"));
   assert.ok(js.includes("service.operation_pending || actionGuard.pending"));
-  assert.ok(js.includes("检查状态"));
+  assert.ok(js.includes("深度检查"));
   assert.ok(js.includes("/status"));
+  assert.ok(js.includes("serviceStatusLabel"));
+  assert.ok(js.includes("health_url"));
+  assert.ok(js.includes("health_expect"));
   assert.ok(html.includes('id="stopAllServicesButton"'));
   assert.ok(js.includes('/registered-services/actions/stop-all'));
 });
 
-test('overview only presents services with a saved running state', () => {
+test('overview only presents services with an observed running state', () => {
   assert.ok(html.includes('<h2>已启动服务</h2>'));
-  assert.ok(html.includes('仅显示最后保存状态为运行中的服务'));
+  assert.ok(html.includes('仅显示健康检查确认为运行中的服务'));
   assert.ok(js.includes("function runningServices() { return state.services.filter((service) => service.status.state === 'running'); }"));
   assert.ok(js.includes('const running = runningServices();'));
   assert.ok(js.includes("'当前没有已启动服务。'"));

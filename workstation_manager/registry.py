@@ -4,12 +4,15 @@ import asyncio
 import os
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import ProxyHandler, Request, build_opener
 from urllib.parse import urlsplit
 
 from .database import Database, DatabaseError, OperationBusyError, utc_now
@@ -20,6 +23,11 @@ SERVICE_STATES = {"running", "stopped", "unhealthy", "unknown"}
 SERVICE_ACTIONS = {"start", "stop", "restart"}
 SCRIPT_SUFFIXES = {".cmd", ".bat", ".ps1"}
 ID_RE = re.compile(r"[0-9a-f]{32}")
+HEALTH_INTERVAL_SECONDS = 5.0
+HEALTH_TIMEOUT_SECONDS = 1.0
+HEALTH_CONCURRENCY = 2
+HEALTH_FAILURE_THRESHOLD = 2
+HEALTH_BODY_LIMIT = 256 * 1024
 
 
 class RegistryError(RuntimeError):
@@ -85,6 +93,53 @@ class ScriptResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+@dataclass(frozen=True)
+class HealthProbeResult:
+    state: str
+    error: str | None = None
+    reachable: bool = False
+
+
+class HttpHealthProbe:
+    def __init__(self, timeout_seconds: float = HEALTH_TIMEOUT_SECONDS) -> None:
+        self.timeout_seconds = timeout_seconds
+
+    def probe(self, url: str, expected_text: str) -> HealthProbeResult:
+        request = Request(url, headers={"User-Agent": "AXIS-Service-Monitor/1"})
+        try:
+            response = build_opener(ProxyHandler({})).open(
+                request, timeout=self.timeout_seconds
+            )
+            with response:
+                status = int(response.status)
+                body = response.read(HEALTH_BODY_LIMIT + 1)
+        except HTTPError as exc:
+            return HealthProbeResult(
+                "unhealthy", f"健康接口返回 HTTP {exc.code}", True
+            )
+        except URLError as exc:
+            reason = exc.reason
+            if isinstance(reason, (ConnectionRefusedError, ConnectionResetError)):
+                return HealthProbeResult("stopped", None, False)
+            if isinstance(reason, (TimeoutError, socket.timeout)):
+                return HealthProbeResult("unhealthy", "健康接口响应超时", True)
+            return HealthProbeResult("unknown", f"健康检查失败: {reason}", False)
+        except (OSError, ValueError) as exc:
+            if isinstance(exc, (ConnectionRefusedError, ConnectionResetError)):
+                return HealthProbeResult("stopped", None, False)
+            if isinstance(exc, (TimeoutError, socket.timeout)):
+                return HealthProbeResult("unhealthy", "健康接口响应超时", True)
+            return HealthProbeResult("unknown", f"健康检查失败: {exc}", False)
+        if not 200 <= status < 300:
+            return HealthProbeResult("unhealthy", f"健康接口返回 HTTP {status}", True)
+        if len(body) > HEALTH_BODY_LIMIT:
+            return HealthProbeResult("unknown", "健康接口响应超过 256 KiB", True)
+        text = body.decode("utf-8", errors="replace")
+        if expected_text and expected_text not in text:
+            return HealthProbeResult("unhealthy", "健康接口响应与服务身份不匹配", True)
+        return HealthProbeResult("running", None, True)
 
 
 class ScriptRunner:
@@ -180,8 +235,31 @@ def validate_service_input(payload: dict[str, Any], runner: ScriptRunner) -> dic
         parsed = urlsplit(ui_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise RegistryError(422, "invalid_ui_url", "UI 地址必须是完整的 HTTP/HTTPS 地址")
+    health_url = str(payload.get("health_url") or "").strip()
+    if health_url:
+        try:
+            parsed = urlsplit(health_url)
+            port_value = parsed.port
+        except ValueError as exc:
+            raise RegistryError(422, "invalid_health_url", "健康检查地址格式无效") from exc
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
+            raise RegistryError(
+                422, "invalid_health_url", "健康检查地址必须是完整的 HTTP/HTTPS 地址"
+            )
+        if parsed.username is not None or parsed.password is not None:
+            raise RegistryError(422, "invalid_health_url", "健康检查地址不能包含用户名或密码")
+        if parsed.hostname.lower() not in {"127.0.0.1", "localhost", "::1"}:
+            raise RegistryError(422, "invalid_health_url", "健康检查地址只允许本机 loopback")
+        if port_value is not None and not 1 <= port_value <= 65535:
+            raise RegistryError(422, "invalid_health_url", "健康检查端口必须在 1..65535")
+    health_expect = str(payload.get("health_expect") or "").strip()
+    if len(health_expect) > 512:
+        raise RegistryError(422, "invalid_health_expect", "健康检查匹配内容不能超过 512 个字符")
+    if health_expect and not health_url:
+        raise RegistryError(422, "invalid_health_expect", "填写匹配内容前必须填写健康检查地址")
     return {"name": name, "description": description, "script_path": script_path,
-            "gpu_label": gpu_label, "port": port, "ui_url": ui_url}
+            "gpu_label": gpu_label, "port": port, "ui_url": ui_url,
+            "health_url": health_url, "health_expect": health_expect}
 
 
 def validate_scene_input(payload: dict[str, Any], database: Database) -> dict[str, Any]:
@@ -203,13 +281,29 @@ def validate_scene_input(payload: dict[str, Any], database: Database) -> dict[st
 
 
 class RegisteredServiceManager:
-    def __init__(self, database: Database, runner: ScriptRunner | None = None) -> None:
+    def __init__(
+        self, database: Database, runner: ScriptRunner | None = None,
+        health_probe: HttpHealthProbe | None = None,
+        health_interval_seconds: float = HEALTH_INTERVAL_SECONDS,
+        health_failure_threshold: int = HEALTH_FAILURE_THRESHOLD,
+    ) -> None:
+        if health_interval_seconds <= 0:
+            raise ValueError("健康检查间隔必须大于 0")
+        if health_failure_threshold < 1:
+            raise ValueError("健康检查失败阈值必须至少为 1")
         self.database = database
         self.runner = runner or ScriptRunner()
-        self.statuses = {
-            item["id"]: self._stored_status(item)
-            for item in self.database.list_registered_services()
+        self.health_probe = health_probe or HttpHealthProbe()
+        self.health_interval_seconds = health_interval_seconds
+        self.health_failure_threshold = health_failure_threshold
+        initial_services = self.database.list_registered_services()
+        self.statuses = {item["id"]: self._stored_status(item) for item in initial_services}
+        self._health_authorities = {
+            item["id"]: self._health_authority(item) for item in initial_services
         }
+        self._health_failures: dict[str, int] = {}
+        self._health_task: asyncio.Task[None] | None = None
+        self._health_semaphore = asyncio.Semaphore(HEALTH_CONCURRENCY)
         self._operation_tasks: set[asyncio.Task[None]] = set()
         self._cancel_requests: dict[str, asyncio.Event] = {}
         self._operation_pending = False
@@ -217,26 +311,45 @@ class RegisteredServiceManager:
         self._service_locks: dict[str, asyncio.Lock] = {}
         self._instance_lock = ManagerInstanceLock(self.database.path)
         self.last_operation_error: str | None = None
+        self.last_health_error: str | None = None
 
     @staticmethod
     def _stored_status(service: dict[str, Any]) -> dict[str, Any]:
         return {
-            "state": service.get("recorded_state", "unknown"),
-            "checked_at": service.get("state_updated_at"),
-            "error": service.get("state_error"),
+            "state": service.get("observed_state", service.get("recorded_state", "unknown")),
+            "checked_at": service.get("observed_at", service.get("state_updated_at")),
+            "error": service.get("observed_error", service.get("state_error")),
+            "source": "stored",
         }
 
-    def _set_status(self, service_id: str, state: str, error: str | None = None) -> dict[str, Any]:
+    def _set_status(
+        self, service_id: str, state: str, error: str | None = None,
+        source: str = "script",
+    ) -> dict[str, Any]:
         if state not in SERVICE_STATES:
             raise RegistryError(500, "invalid_stored_state", "无法保存无效的服务状态")
         safe_error = redact_value(error) if error is not None else None
-        if not self.database.update_registered_service_status(service_id, state, safe_error):
-            raise RegistryError(404, "service_not_found", "已登记服务不存在")
-        status = {"state": state, "checked_at": utc_now(), "error": safe_error}
+        previous = self.statuses.get(service_id, {})
+        checked_at = utc_now()
+        if previous.get("state") != state or previous.get("error") != safe_error:
+            if not self.database.update_registered_service_status(service_id, state, safe_error):
+                raise RegistryError(404, "service_not_found", "已登记服务不存在")
+        status = {
+            "state": state, "checked_at": checked_at, "error": safe_error,
+            "source": source,
+        }
         self.statuses[service_id] = status
         return status
 
+    def _set_desired_state(self, service_id: str, state: str) -> None:
+        if state not in {"running", "stopped", "unknown"}:
+            raise RegistryError(500, "invalid_desired_state", "无法保存无效的服务期望状态")
+        if not self.database.update_registered_service_desired_state(service_id, state):
+            raise RegistryError(404, "service_not_found", "已登记服务不存在")
+
     async def start(self) -> None:
+        if self._health_task is not None:
+            raise RuntimeError("服务健康监控已经启动")
         self._instance_lock.acquire()
         try:
             self.database.interrupt_simple_operations()
@@ -244,14 +357,122 @@ class RegisteredServiceManager:
                 item["id"]: self._stored_status(item)
                 for item in self.database.list_registered_services()
             }
+            self._reload_health_authorities()
+            self._health_task = asyncio.create_task(self._health_loop())
         except Exception:
             self._instance_lock.release()
             raise
 
     async def shutdown(self) -> None:
+        health_task = self._health_task
+        self._health_task = None
+        if health_task is not None:
+            health_task.cancel()
+            try:
+                await health_task
+            except asyncio.CancelledError:
+                pass
         if self._operation_tasks:
             await asyncio.gather(*tuple(self._operation_tasks), return_exceptions=True)
         self._instance_lock.release()
+
+    @staticmethod
+    def _health_authority(service: dict[str, Any]) -> tuple[str, str, int | None] | None:
+        health_url = str(service.get("health_url") or "")
+        if not health_url:
+            return None
+        parsed = urlsplit(health_url)
+        scheme = parsed.scheme.lower()
+        port = parsed.port if parsed.port is not None else (443 if scheme == "https" else 80)
+        return scheme, (parsed.hostname or "").lower(), port
+
+    def _peer_is_running(self, service: dict[str, Any]) -> bool:
+        authority = self._health_authority(service)
+        if authority is None:
+            return False
+        for peer_id, peer_authority in self._health_authorities.items():
+            if peer_id == service["id"] or peer_authority != authority:
+                continue
+            if self.statuses.get(peer_id, {}).get("state") == "running":
+                return True
+        return False
+
+    def _reload_health_authorities(self) -> None:
+        self._health_authorities = {
+            item["id"]: self._health_authority(item)
+            for item in self.database.list_registered_services()
+        }
+
+    async def _probe_health(self, service: dict[str, Any]) -> HealthProbeResult:
+        async with self._health_semaphore:
+            return await asyncio.to_thread(
+                self.health_probe.probe,
+                service["health_url"], service.get("health_expect", ""),
+            )
+
+    def _record_health_result(
+        self, service: dict[str, Any], result: HealthProbeResult,
+        *, immediate: bool = False,
+    ) -> dict[str, Any]:
+        service_id = service["id"]
+        state = result.state
+        error = result.error
+        if state == "unhealthy" and result.reachable and self._peer_is_running(service):
+            state, error = "stopped", None
+        if state == "running" or immediate:
+            self._health_failures.pop(service_id, None)
+            return self._set_status(service_id, state, error, "health")
+        failures = self._health_failures.get(service_id, 0) + 1
+        self._health_failures[service_id] = failures
+        if failures >= self.health_failure_threshold:
+            return self._set_status(service_id, state, error, "health")
+        previous = self.statuses.get(
+            service_id, {"state": "unknown", "checked_at": None, "error": None}
+        )
+        pending = dict(previous)
+        pending["checked_at"] = utc_now()
+        pending["source"] = "health"
+        self.statuses[service_id] = pending
+        return pending
+
+    async def refresh_service_health(
+        self, service: dict[str, Any], *, immediate: bool = False,
+    ) -> dict[str, Any]:
+        if not service.get("health_url"):
+            return self.statuses.get(service["id"], self._stored_status(service))
+        async with self._service_lock(service["id"]):
+            result = await self._probe_health(service)
+            return self._record_health_result(service, result, immediate=immediate)
+
+    async def refresh_all_health(self, *, immediate: bool = False) -> None:
+        services = [
+            item for item in self.database.list_registered_services()
+            if item.get("health_url") and item["id"] not in self._busy_services
+        ]
+        if not services:
+            self.last_health_error = None
+            return
+        results = await asyncio.gather(
+            *(self.refresh_service_health(service, immediate=immediate) for service in services),
+            return_exceptions=True,
+        )
+        errors = [result for result in results if isinstance(result, Exception)]
+        if errors:
+            self.last_health_error = "; ".join(
+                f"{type(error).__name__}: {error}" for error in errors
+            )[:1024]
+        else:
+            self.last_health_error = None
+
+    async def _health_loop(self) -> None:
+        while True:
+            try:
+                await self.refresh_all_health()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.last_health_error = f"{type(exc).__name__}: {exc}"[:1024]
+            await asyncio.sleep(self.health_interval_seconds)
 
     async def _probe_status(self, service: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -277,7 +498,10 @@ class RegisteredServiceManager:
         service_id = service["id"]
         async with self._service_lock(service_id):
             status = await self._probe_status(service)
-            return self._set_status(service_id, status["state"], status["error"])
+            self._health_failures.pop(service_id, None)
+            return self._set_status(
+                service_id, status["state"], status["error"], "script"
+            )
 
     async def check_service_status(self, service_id: str) -> dict[str, Any]:
         self._require_idle()
@@ -295,8 +519,12 @@ class RegisteredServiceManager:
         for item in self.database.list_registered_services():
             enriched = dict(item)
             enriched["status"] = self.statuses.get(
-                item["id"], {"state": "unknown", "checked_at": None, "error": None}
+                item["id"], {
+                    "state": "unknown", "checked_at": None, "error": None,
+                    "source": "stored",
+                }
             )
+            enriched["desired_state"] = item.get("desired_state", "unknown")
             enriched["busy"] = item["id"] in self._busy_services
             enriched["operation_pending"] = self._operation_pending
             result.append(enriched)
@@ -315,6 +543,7 @@ class RegisteredServiceManager:
         self.statuses[item["id"]] = self._stored_status(
             self.database.get_registered_service(item["id"]) or item
         )
+        self._reload_health_authorities()
         return next(service for service in self.list_services() if service["id"] == item["id"])
 
     async def update_service(self, service_id: str, payload: dict[str, Any],
@@ -335,6 +564,8 @@ class RegisteredServiceManager:
         if stored is None:
             raise RegistryError(404, "service_not_found", "已登记服务不存在")
         self.statuses[service_id] = self._stored_status(stored)
+        self._health_failures.pop(service_id, None)
+        self._reload_health_authorities()
         return next(value for value in self.list_services() if value["id"] == service_id)
 
     def delete_service(self, service_id: str, username: str, source_ip: str) -> None:
@@ -345,6 +576,8 @@ class RegisteredServiceManager:
         if not self.database.delete_registered_service(service_id):
             raise RegistryError(404, "service_not_found", "已登记服务不存在")
         self.statuses.pop(service_id, None)
+        self._health_failures.pop(service_id, None)
+        self._health_authorities.pop(service_id, None)
         self._service_locks.pop(service_id, None)
         self.database.append_audit(source_ip, "management.service.delete", "success",
                                    {"service_id": service_id, "name": service["name"],
@@ -422,8 +655,12 @@ class RegisteredServiceManager:
                 "name": service_map[service_id]["name"],
                 "ui_url": service_map[service_id]["ui_url"],
                 "status": self.statuses.get(
-                    service_id, {"state": "unknown", "checked_at": None, "error": None}
+                    service_id, {
+                        "state": "unknown", "checked_at": None, "error": None,
+                        "source": "stored",
+                    }
                 ),
+                "desired_state": service_map[service_id].get("desired_state", "unknown"),
                 "busy": service_id in self._busy_services,
             }
             for service_id in scene["service_ids"]
@@ -538,16 +775,30 @@ class RegisteredServiceManager:
                                                 action, before_state=before)
             self._busy_services.add(service_id)
             try:
-                result = await asyncio.to_thread(self.runner.run, service["script_path"], action)
                 expected = "stopped" if action == "stop" else "running"
-                success = result.returncode == 0
+                self._set_desired_state(service_id, expected)
+                result = await asyncio.to_thread(self.runner.run, service["script_path"], action)
                 if result.returncode != 0:
                     error = result.stderr or result.stdout or f"脚本退出码 {result.returncode}"
                 else:
                     error = None
-                status = self._set_status(
-                    service_id, expected if success else "unknown", error
-                )
+                if service.get("health_url"):
+                    health_result = await self._probe_health(service)
+                    status = self._record_health_result(
+                        service, health_result, immediate=True
+                    )
+                    health_ok = status["state"] == expected
+                    if result.returncode == 0 and not health_ok:
+                        error = status.get("error") or (
+                            f"脚本执行成功，但健康检查状态为 {status['state']}"
+                        )
+                else:
+                    status = self._set_status(
+                        service_id, expected if result.returncode == 0 else "unknown",
+                        error, "action",
+                    )
+                    health_ok = status["state"] == expected
+                success = result.returncode == 0 and health_ok
                 self.database.finish_operation_step(
                     operation_id, sequence, "succeeded" if success else "failed",
                     status["state"], "success" if success else "failure", error,
@@ -555,20 +806,20 @@ class RegisteredServiceManager:
                 return success
             except RegistryError as exc:
                 try:
-                    self._set_status(service_id, "unknown", exc.message)
+                    self._set_status(service_id, "unknown", exc.message, "action")
                 except (DatabaseError, RegistryError):
                     self.statuses[service_id] = {"state": "unknown", "checked_at": utc_now(),
-                                                 "error": exc.message}
+                                                 "error": exc.message, "source": "action"}
                 self.database.finish_operation_step(operation_id, sequence, "failed", "unknown",
                                                     "failure", exc.message)
                 return False
             except Exception as exc:
                 message = f"{type(exc).__name__}: {exc}"
                 try:
-                    self._set_status(service_id, "unknown", message)
+                    self._set_status(service_id, "unknown", message, "action")
                 except (DatabaseError, RegistryError):
                     self.statuses[service_id] = {"state": "unknown", "checked_at": utc_now(),
-                                                 "error": message}
+                                                 "error": message, "source": "action"}
                 self.database.finish_operation_step(operation_id, sequence, "failed", "unknown",
                                                     "failure", message)
                 return False
@@ -589,12 +840,17 @@ class RegisteredServiceManager:
         )
 
     async def _run_stop_all_operation(self, operation_id: str, _: str, __: str) -> None:
+        await self.refresh_all_health(immediate=True)
         before = {key: value.get("state", "unknown") for key, value in self.statuses.items()}
         self.database.update_operation(operation_id, status="running", started_at=utc_now(),
                                        before_state=str(before))
         services = self.database.list_registered_services()
         success = True
-        for sequence, service in enumerate(services, start=1):
+        targets = [
+            service for service in services
+            if self.statuses.get(service["id"], {}).get("state") != "stopped"
+        ]
+        for sequence, service in enumerate(targets, start=1):
             success = await self._run_script_action(
                 operation_id, sequence, "stop_all", service, "stop"
             ) and success
@@ -612,6 +868,7 @@ class RegisteredServiceManager:
 
     async def _run_scene_operation(self, operation_id: str, scene_id: str, _: str) -> None:
         scene = self._require_scene(scene_id)
+        await self.refresh_all_health()
         before = {key: value.get("state", "unknown") for key, value in self.statuses.items()}
         self.database.update_operation(operation_id, status="running", started_at=utc_now(),
                                        before_state=str(before))
@@ -642,6 +899,8 @@ class RegisteredServiceManager:
                 if cancel_event.is_set():
                     cancelled = True
                     break
+                if self.statuses.get(service_id, {}).get("state") == "running":
+                    continue
                 sequence += 1
                 start_ok = await self._run_script_action(
                     operation_id, sequence, "start_selected", services[service_id], "start"

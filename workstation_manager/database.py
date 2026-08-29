@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 
 class DatabaseError(RuntimeError):
@@ -100,6 +100,7 @@ class Database:
                         15: self._migrate_to_15,
                         16: self._migrate_to_16,
                         17: self._migrate_to_17,
+                        18: self._migrate_to_18,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -390,6 +391,37 @@ class Database:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_resource_disk_sample "
             "ON resource_disk_samples(sample_id)"
+        )
+
+    @classmethod
+    def _migrate_to_18(cls, connection: sqlite3.Connection) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='registered_services'"
+        ).fetchone()
+        if table is None:
+            return
+        cls._ensure_column(
+            connection, "registered_services", "health_url", "TEXT NOT NULL DEFAULT ''"
+        )
+        cls._ensure_column(
+            connection, "registered_services", "health_expect", "TEXT NOT NULL DEFAULT ''"
+        )
+        cls._ensure_column(
+            connection, "registered_services", "desired_state",
+            "TEXT NOT NULL DEFAULT 'unknown'",
+        )
+        cls._ensure_column(
+            connection, "registered_services", "observed_state",
+            "TEXT NOT NULL DEFAULT 'unknown'",
+        )
+        cls._ensure_column(connection, "registered_services", "observed_at", "TEXT")
+        cls._ensure_column(connection, "registered_services", "observed_error", "TEXT")
+        connection.execute(
+            """UPDATE registered_services
+               SET desired_state=recorded_state,
+                   observed_state=recorded_state,
+                   observed_at=state_updated_at,
+                   observed_error=state_error"""
         )
 
     @staticmethod
@@ -1019,10 +1051,11 @@ class Database:
                     connection.execute(
                         """INSERT INTO registered_services(
                                id,name,description,script_path,gpu_label,port,ui_url,
-                               created_at,updated_at
-                           ) VALUES (?,?,?,?,?,?,?,?,?)""",
+                               health_url,health_expect,created_at,updated_at
+                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                         (item["id"], item["name"], item["description"], item["script_path"],
-                         item["gpu_label"], item["port"], item["ui_url"], now, now),
+                         item["gpu_label"], item["port"], item["ui_url"],
+                         item.get("health_url", ""), item.get("health_expect", ""), now, now),
                     )
         except sqlite3.IntegrityError as exc:
             raise DatabaseError("服务名称或 ID 已存在") from exc
@@ -1035,14 +1068,37 @@ class Database:
                 with connection:
                     cursor = connection.execute(
                         """UPDATE registered_services SET name=?,description=?,script_path=?,
-                               gpu_label=?,port=?,ui_url=?,
-                               recorded_state=CASE WHEN script_path<>? THEN 'unknown' ELSE recorded_state END,
-                               state_updated_at=CASE WHEN script_path<>? THEN NULL ELSE state_updated_at END,
-                               state_error=CASE WHEN script_path<>? THEN NULL ELSE state_error END,
+                               gpu_label=?,port=?,ui_url=?,health_url=?,health_expect=?,
+                               desired_state=CASE WHEN script_path<>? THEN 'unknown' ELSE desired_state END,
+                               observed_state=CASE
+                                   WHEN script_path<>? OR health_url<>? OR health_expect<>?
+                                   THEN 'unknown' ELSE observed_state END,
+                               observed_at=CASE
+                                   WHEN script_path<>? OR health_url<>? OR health_expect<>?
+                                   THEN NULL ELSE observed_at END,
+                               observed_error=CASE
+                                   WHEN script_path<>? OR health_url<>? OR health_expect<>?
+                                   THEN NULL ELSE observed_error END,
+                               recorded_state=CASE
+                                   WHEN script_path<>? OR health_url<>? OR health_expect<>?
+                                   THEN 'unknown' ELSE recorded_state END,
+                               state_updated_at=CASE
+                                   WHEN script_path<>? OR health_url<>? OR health_expect<>?
+                                   THEN NULL ELSE state_updated_at END,
+                               state_error=CASE
+                                   WHEN script_path<>? OR health_url<>? OR health_expect<>?
+                                   THEN NULL ELSE state_error END,
                                updated_at=? WHERE id=?""",
                         (item["name"], item["description"], item["script_path"],
                          item["gpu_label"], item["port"], item["ui_url"],
-                         item["script_path"], item["script_path"], item["script_path"],
+                         item["health_url"], item["health_expect"],
+                         item["script_path"],
+                         item["script_path"], item["health_url"], item["health_expect"],
+                         item["script_path"], item["health_url"], item["health_expect"],
+                         item["script_path"], item["health_url"], item["health_expect"],
+                         item["script_path"], item["health_url"], item["health_expect"],
+                         item["script_path"], item["health_url"], item["health_expect"],
+                         item["script_path"], item["health_url"], item["health_expect"],
                          utc_now(), service_id),
                     )
                     return cursor.rowcount == 1
@@ -1054,17 +1110,31 @@ class Database:
     def update_registered_service_status(
         self, service_id: str, state: str, error: str | None
     ) -> bool:
+        checked_at = utc_now()
         try:
             with self.connect() as connection:
                 with connection:
                     cursor = connection.execute(
                         """UPDATE registered_services
-                           SET recorded_state=?,state_updated_at=?,state_error=? WHERE id=?""",
-                        (state, utc_now(), error, service_id),
+                           SET observed_state=?,observed_at=?,observed_error=?,
+                               recorded_state=?,state_updated_at=?,state_error=? WHERE id=?""",
+                        (state, checked_at, error, state, checked_at, error, service_id),
                     )
                     return cursor.rowcount == 1
         except sqlite3.Error as exc:
             raise DatabaseError(f"保存服务状态失败: {exc}") from exc
+
+    def update_registered_service_desired_state(self, service_id: str, state: str) -> bool:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        "UPDATE registered_services SET desired_state=? WHERE id=?",
+                        (state, service_id),
+                    )
+                    return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"保存服务期望状态失败: {exc}") from exc
 
     def delete_registered_service(self, service_id: str) -> bool:
         try:

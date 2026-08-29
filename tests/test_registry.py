@@ -10,7 +10,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
@@ -21,6 +21,8 @@ from workstation_manager.config import Settings
 from workstation_manager.database import Database, DatabaseError, SCHEMA_VERSION
 from workstation_manager.history import Sampler
 from workstation_manager.registry import (
+    HealthProbeResult,
+    HttpHealthProbe,
     RegisteredServiceManager,
     RegistryError,
     ScriptResult,
@@ -84,11 +86,56 @@ class BlockingActionRunner(FakeRunner):
         return super().run(script_path, action)
 
 
+class FakeHealthProbe:
+    def __init__(self) -> None:
+        self.results: dict[str, HealthProbeResult] = {}
+        self.calls: list[tuple[str, str]] = []
+
+    def probe(self, url: str, expected_text: str) -> HealthProbeResult:
+        self.calls.append((url, expected_text))
+        return self.results.get(
+            url, HealthProbeResult("stopped", None, False)
+        )
+
+
 class DatabaseRegistryTests(unittest.TestCase):
+    def test_schema_seventeen_service_state_migrates_to_dual_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "manager.db"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute("CREATE TABLE schema_version(version INTEGER NOT NULL)")
+                connection.execute("INSERT INTO schema_version(version) VALUES (17)")
+                connection.execute(
+                    """CREATE TABLE registered_services(
+                           id TEXT PRIMARY KEY,name TEXT,description TEXT,script_path TEXT,
+                           gpu_label TEXT,port INTEGER,ui_url TEXT,created_at TEXT,updated_at TEXT,
+                           recorded_state TEXT,state_updated_at TEXT,state_error TEXT
+                       )"""
+                )
+                connection.execute(
+                    """INSERT INTO registered_services VALUES(
+                           ?,?,?,?,?,?,?,?,?,?,?,?
+                       )""",
+                    ("a" * 32, "迁移服务", "", "D:/a.ps1", "", 8080, "", "now",
+                     "now", "running", "checked", None),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            database = Database(path)
+            service = database.get_registered_service("a" * 32)
+
+            self.assertEqual(service["desired_state"], "running")
+            self.assertEqual(service["observed_state"], "running")
+            self.assertEqual(service["observed_at"], "checked")
+            self.assertEqual(service["health_url"], "")
+
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 17)
+            self.assertEqual(SCHEMA_VERSION, 18)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -101,6 +148,9 @@ class DatabaseRegistryTests(unittest.TestCase):
             database.create_registered_service(service)
             stored = database.get_registered_service(service["id"])
             self.assertEqual(stored["recorded_state"], "unknown")
+            self.assertEqual(stored["desired_state"], "unknown")
+            self.assertEqual(stored["observed_state"], "unknown")
+            self.assertEqual(stored["health_url"], "")
             self.assertIsNone(stored["state_updated_at"])
             database.create_scene({"id": "b" * 32, "name": "场景 A", "description": "",
                                    "service_ids": [service["id"]]})
@@ -169,7 +219,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-                self.assertEqual(version, 17)
+                self.assertEqual(version, 18)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -212,7 +262,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 17)
+            self.assertEqual(SCHEMA_VERSION, 18)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -278,7 +328,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 60, bucket_seconds=15, now=now + timedelta(seconds=30)
             )
 
-            self.assertEqual(SCHEMA_VERSION, 17)
+            self.assertEqual(SCHEMA_VERSION, 18)
             self.assertEqual(result["stored_sample_count"], 3)
             self.assertEqual(len(result["samples"]), 2)
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
@@ -328,7 +378,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_gpu_samples WHERE sample_id=1"
                 ).fetchone()
 
-            self.assertEqual(version, 17)
+            self.assertEqual(version, 18)
             self.assertEqual(row["temperature_c"], 62)
             self.assertIsNone(row["power_w"])
             self.assertIsNone(row["graphics_clock_mhz"])
@@ -367,7 +417,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_samples"
                 ).fetchone()
 
-            self.assertEqual(version, 17)
+            self.assertEqual(version, 18)
             self.assertEqual(row["memory_percent"], 50)
             self.assertIsNone(row["memory_used_bytes"])
             self.assertIsNone(row["memory_total_bytes"])
@@ -375,13 +425,17 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_resource_history_normalizes_equivalent_timestamps_to_utc(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
+            now = datetime.now(timezone.utc).replace(microsecond=0)
+            sampled_at = now - timedelta(minutes=1)
             first = {
-                "sampled_at": "2026-08-28T17:00:00+08:00",
+                "sampled_at": sampled_at.astimezone(
+                    timezone(timedelta(hours=8))
+                ).isoformat(),
                 "cpu_load_percent": 10,
                 "gpus": [],
             }
             equivalent = {
-                "sampled_at": "2026-08-28T09:00:00Z",
+                "sampled_at": sampled_at.isoformat().replace("+00:00", "Z"),
                 "cpu_load_percent": 20,
                 "gpus": [],
             }
@@ -389,11 +443,11 @@ class DatabaseRegistryTests(unittest.TestCase):
             database.append_resource_sample(first)
             database.append_resource_sample(equivalent)
             result = database.query_resource_history(
-                15, now=datetime(2026, 8, 28, 9, 1, tzinfo=timezone.utc)
+                15, now=now
             )
 
             self.assertEqual(result["stored_sample_count"], 1)
-            self.assertEqual(result["samples"][0]["sampled_at"], "2026-08-28T09:00:00+00:00")
+            self.assertEqual(result["samples"][0]["sampled_at"], sampled_at.isoformat())
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 20)
 
     def test_user_management_lists_resets_and_deletes_users(self) -> None:
@@ -560,6 +614,25 @@ class ScriptRunnerTests(unittest.TestCase):
             with self.assertRaises(RegistryError):
                 ScriptRunner.validate_path(str(script))
 
+    def test_http_health_probe_requires_expected_identity_text(self) -> None:
+        response = MagicMock()
+        response.status = 200
+        response.read.return_value = b'{"data":[{"id":"expected-model"}]}'
+        response.__enter__.return_value = response
+        opener = MagicMock()
+        opener.open.return_value = response
+        with patch("workstation_manager.registry.build_opener", return_value=opener):
+            result = HttpHealthProbe().probe(
+                "http://127.0.0.1:8000/v1/models", "expected-model"
+            )
+            mismatch = HttpHealthProbe().probe(
+                "http://127.0.0.1:8000/v1/models", "other-model"
+            )
+
+        self.assertEqual(result.state, "running")
+        self.assertEqual(mismatch.state, "unhealthy")
+        self.assertTrue(mismatch.reachable)
+
 
 class ManagerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -567,7 +640,11 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.temp.name)
         self.database = Database(self.root / "manager.db")
         self.runner = FakeRunner()
-        self.manager = RegisteredServiceManager(self.database, self.runner)
+        self.health_probe = FakeHealthProbe()
+        self.manager = RegisteredServiceManager(
+            self.database, self.runner, self.health_probe,
+            health_interval_seconds=0.01,
+        )
 
     async def asyncTearDown(self) -> None:
         await self.manager.shutdown()
@@ -578,11 +655,15 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         script.write_text("param($action)", encoding="utf-8")
         return script
 
-    async def add_service(self, name: str, gpu: str = "") -> dict:
+    async def add_service(
+        self, name: str, gpu: str = "", health_url: str = "",
+        health_expect: str = "",
+    ) -> dict:
         return await self.manager.create_service(
             {"name": name, "description": f"{name}说明",
              "script_path": str(self.make_script(name)), "gpu_label": gpu,
-             "port": None, "ui_url": ""}, "admin", "127.0.0.1"
+             "port": None, "ui_url": "", "health_url": health_url,
+             "health_expect": health_expect}, "admin", "127.0.0.1"
         )
 
     async def wait_operation(self, operation_id: str) -> dict:
@@ -626,8 +707,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         result = await self.wait_operation(operation)
         self.assertEqual(result["status"], "succeeded")
         action_calls = [call for call in self.runner.calls if call[1] in {"start", "stop"}]
-        self.assertEqual(action_calls, [("A.ps1", "stop"), ("C.ps1", "start"),
-                                        ("B.ps1", "start")])
+        self.assertEqual(action_calls, [("A.ps1", "stop")])
         self.assertNotIn(("D.ps1", "stop"), action_calls)
         self.assertEqual(self.manager.list_scenes()[0]["state"], "active")
 
@@ -913,6 +993,62 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         restarted = RegisteredServiceManager(self.database, self.runner)
         self.assertEqual(restarted.list_services()[0]["status"]["state"], "running")
 
+    async def test_health_probe_tracks_observed_state_without_running_status_script(self) -> None:
+        health_url = "http://127.0.0.1:18030/health"
+        service = await self.add_service("自动健康", health_url=health_url)
+        self.health_probe.results[health_url] = HealthProbeResult("running", None, True)
+
+        await self.manager.refresh_all_health()
+
+        item = self.manager.list_services()[0]
+        self.assertEqual(item["status"]["state"], "running")
+        self.assertEqual(item["status"]["source"], "health")
+        self.assertEqual(item["desired_state"], "unknown")
+        self.assertEqual(self.runner.calls, [])
+        self.assertEqual(self.health_probe.calls, [(health_url, "")])
+
+        self.health_probe.results[health_url] = HealthProbeResult(
+            "stopped", None, False
+        )
+        await self.manager.refresh_all_health()
+        self.assertEqual(self.manager.list_services()[0]["status"]["state"], "running")
+        await self.manager.refresh_all_health()
+        self.assertEqual(self.manager.list_services()[0]["status"]["state"], "stopped")
+
+    async def test_action_records_desired_state_and_immediately_verifies_health(self) -> None:
+        health_url = "http://127.0.0.1:8000/v1/models"
+        service = await self.add_service(
+            "健康动作", health_url=health_url, health_expect="expected-model"
+        )
+        self.health_probe.results[health_url] = HealthProbeResult("running", None, True)
+
+        operation_id = self.manager.submit_service_action(
+            service["id"], "start", "admin", "local"
+        )
+
+        self.assertEqual((await self.wait_operation(operation_id))["status"], "succeeded")
+        item = self.manager.list_services()[0]
+        self.assertEqual(item["desired_state"], "running")
+        self.assertEqual(item["status"]["state"], "running")
+        self.assertEqual(self.runner.calls, [("健康动作.ps1", "start")])
+        self.assertEqual(self.health_probe.calls, [(health_url, "expected-model")])
+
+    async def test_shared_port_identity_mismatch_is_stopped_when_peer_is_running(self) -> None:
+        first_url = "http://127.0.0.1:8000/v1/models"
+        second_url = "http://127.0.0.1:8000/system_stats"
+        first = await self.add_service("vLLM", health_url=first_url, health_expect="model")
+        second = await self.add_service("ComfyUI", health_url=second_url, health_expect="RTX")
+        self.health_probe.results[first_url] = HealthProbeResult("running", None, True)
+        self.health_probe.results[second_url] = HealthProbeResult(
+            "unhealthy", "健康接口响应与服务身份不匹配", True
+        )
+
+        await self.manager.refresh_service_health(first, immediate=True)
+        await self.manager.refresh_service_health(second, immediate=True)
+
+        states = {item["name"]: item["status"]["state"] for item in self.manager.list_services()}
+        self.assertEqual(states, {"ComfyUI": "stopped", "vLLM": "running"})
+
     async def test_status_error_is_redacted_before_storage_and_response(self) -> None:
         service = await self.add_service("脱敏检查")
         with patch.object(
@@ -977,6 +1113,30 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runner.calls, [])
         await manager.shutdown()
 
+    async def test_manager_background_health_check_never_runs_status_script(self) -> None:
+        runner = BlockingStatusRunner()
+        probe = FakeHealthProbe()
+        manager = RegisteredServiceManager(
+            self.database, runner, probe, health_interval_seconds=0.01
+        )
+        script = self.make_script("后台健康")
+        health_url = "http://127.0.0.1:18090/health"
+        probe.results[health_url] = HealthProbeResult("running", None, True)
+        await manager.create_service(
+            {"name": "后台健康", "description": "", "script_path": str(script),
+             "gpu_label": "", "port": 18090, "ui_url": "",
+             "health_url": health_url, "health_expect": ""}, "admin", "local"
+        )
+        await manager.start()
+        for _ in range(100):
+            if probe.calls:
+                break
+            await asyncio.sleep(0.01)
+
+        self.assertTrue(probe.calls)
+        self.assertEqual(runner.calls, [])
+        await manager.shutdown()
+
 
 class ApiRegistryTests(unittest.TestCase):
     def test_authenticated_service_and_scene_crud(self) -> None:
@@ -987,7 +1147,7 @@ class ApiRegistryTests(unittest.TestCase):
             settings = Settings(database_path=root / "manager.db", manager_log_path=root / "manager.log",
                                 sample_interval_seconds=60)
             database = Database(settings.database_path)
-            registry = RegisteredServiceManager(database, FakeRunner())
+            registry = RegisteredServiceManager(database, FakeRunner(), FakeHealthProbe())
             sampler = Sampler(settings, collector=lambda _: {
                 "sampled_at": "2099-01-01T00:00:00+00:00", "host": {"cpu": {}, "memory": {}, "disks": []},
                 "gpus": [], "docker": {"containers": []}, "ports": [], "collector_errors": [],
@@ -1000,6 +1160,8 @@ class ApiRegistryTests(unittest.TestCase):
                 created = client.post("/api/v1/registered-services", headers=headers, json={
                     "name": "API 服务", "description": "说明", "script_path": str(script),
                     "gpu_label": "RTX 3090", "port": 8080, "ui_url": "http://127.0.0.1:8080",
+                    "health_url": "http://127.0.0.1:8080/v1/models",
+                    "health_expect": "api-model",
                 })
                 self.assertEqual(created.status_code, 201, created.text)
                 service_id = created.json()["id"]
@@ -1026,7 +1188,7 @@ class ApiRegistryTests(unittest.TestCase):
                     time.sleep(0.01)
                 self.assertEqual(operation["status"], "succeeded")
                 service_list = client.get("/api/v1/services").json()
-                self.assertEqual(service_list["status_mode"], "stored")
+                self.assertEqual(service_list["status_mode"], "health")
                 self.assertNotIn("poll_interval_seconds", service_list)
                 checked = client.post(
                     f"/api/v1/registered-services/{service_id}/status", headers=headers

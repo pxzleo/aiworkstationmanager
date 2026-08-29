@@ -45,6 +45,8 @@ class ServicePayload(BaseModel):
     gpu_label: str = Field(default="", max_length=100)
     port: int | None = Field(default=None, ge=1, le=65535)
     ui_url: str = Field(default="", max_length=2048)
+    health_url: str = Field(default="", max_length=2048)
+    health_expect: str = Field(default="", max_length=512)
 
 
 class ScenePayload(BaseModel):
@@ -307,21 +309,25 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             "message": history_persistence_error["message"],
         }
         operation_error = resolved_registry.last_operation_error
+        health_monitor_error = resolved_registry.last_health_error
         return {"version": __version__, "schema": {"api": "v1", "database": DATABASE_SCHEMA_VERSION},
                 "status": "healthy" if sampler_running and not collector_errors
-                and not history_persistence_error and not operation_error else "degraded",
+                and not history_persistence_error and not operation_error
+                and not health_monitor_error else "degraded",
                 "sampler_running": sampler_running,
                 "collector_errors": collector_errors,
                 "history_persistence_error": public_history_error,
                 "service_operation_error": operation_error,
-                "service_status_mode": "stored",
+                "service_health_monitor_error": health_monitor_error,
+                "service_status_mode": "health",
                 "sampled_at": resolved_sampler.current.get("sampled_at")
                 if resolved_sampler.current else None,
                 "readiness": {"setup_complete": resolved_auth.is_setup(),
                               "sampler": "ready" if sampler_running else "not_ready",
                               "resource_history": "ready" if not history_persistence_error
                               else "degraded",
-                              "registered_services": "ready" if not operation_error else "degraded"}}
+                              "registered_services": "ready"
+                              if not operation_error and not health_monitor_error else "degraded"}}
 
     @app.get("/api/v1/auth/status")
     async def auth_status(request: Request) -> dict[str, bool]:
@@ -433,7 +439,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     @app.get("/api/v1/services")
     async def registered_services(_: AuthenticatedSession = Depends(require_session)) -> dict[str, Any]:
         return {"services": resolved_registry.list_services(),
-                "status_mode": "stored"}
+                "status_mode": "health"}
 
     @app.post("/api/v1/registered-services", status_code=201)
     async def create_service(payload: ServicePayload, request: Request,

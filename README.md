@@ -29,7 +29,8 @@ AXIS unifies the services of an AI workstation and organizes them into different
 ## Features
 
 - Register `.ps1`, `.cmd`, or `.bat` service-management scripts
-- Start, stop, restart, and manually check one service, or stop all services
+- Start, stop, restart, and deep-check one service, or stop all services
+- Detect external starts, stops, failures, and unexpected exits through lightweight local health checks
 - Create and reorder scenes that switch an ordered group of services
 - Monitor CPU, memory, and every detected NVIDIA GPU in distinct sections with consistent scales, current/average/peak/minimum values, and key hardware metrics
 - Record service actions and scene-switch steps, times, and results
@@ -56,7 +57,7 @@ Create the initial administrator on the first visit. Passwords must contain at l
 
 ## Register a service
 
-Open Registered Services and enter a name, description, and absolute management-script path. The GPU label, port, and UI URL are optional display fields.
+Open Registered Services and enter a name, description, and absolute management-script path. GPU label, port, and UI URL are display and navigation fields. A health-check URL and optional response match text let AXIS confirm the real service state automatically.
 
 Every script must support four actions:
 
@@ -67,13 +68,13 @@ D:\AIWork\example\manage.ps1 restart
 D:\AIWork\example\manage.ps1 status
 ```
 
-AXIS does not continuously poll scripts. A successful start, stop, or restart saves the new state. The `status` action runs only when a user clicks Check Status for one service.
+AXIS never polls management scripts and never launches PowerShell, WSL, or Docker commands for background status monitoring. Every five seconds it checks registered local health URLs inside the manager process and changes a stable state only after two consecutive failures. The `status` action runs only when a user clicks Deep Check.
 
 See [Script Requirements](SCRIPT_REQUIREMENTS.en.md) for the full contract and examples.
 
 ## Use scenes
 
-Create a scene in Work Scenes and select its registered services. When switching scenes, AXIS first stops services whose saved state is Running and that are not in the target scene. It starts target services in scene order only after every required stop succeeds.
+Create a scene in Work Scenes and select its registered services. Before switching, AXIS refreshes lightweight observed health, stops only actually running services outside the target, and starts only target services that are not already running. Target startup begins only after every required stop succeeds.
 
 The progress window shows every step and can cancel steps that have not started. Completed service actions are not rolled back automatically.
 
@@ -95,7 +96,7 @@ Most installations need only these fields:
 | `database_path` | `data/workstation-manager.db` | Users, services, scenes, and operation records |
 | `sample_interval_seconds` | `5` | Resource sampling interval; it never calls service scripts |
 | `history_minutes` | `1440` | SQLite resource-history retention in minutes |
-| `script_status_timeout_seconds` | `3` | Timeout for a manual single-service status check |
+| `script_status_timeout_seconds` | `3` | Timeout for a manual single-service deep check |
 | `script_action_timeout_seconds` | `600` | Service-action timeout |
 
 Resource monitoring writes one SQLite sample every 5 seconds by default and retains the latest 24 hours. The UI supports `15m`, `1h`, and `24h`; longer windows are aggregated by the server before they are returned. For each GPU, aligned charts and a linked pointer compare core load, clock, power, and temperature, while VRAM capacity remains separate. Only the latest 15 minutes remain in memory, so 24-hour history does not create a large in-memory buffer.
