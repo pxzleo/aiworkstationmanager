@@ -124,13 +124,13 @@ class HttpHealthProbe:
             if isinstance(reason, (ConnectionRefusedError, ConnectionResetError)):
                 return HealthProbeResult("stopped", None, False)
             if isinstance(reason, (TimeoutError, socket.timeout)):
-                return HealthProbeResult("unhealthy", "健康接口响应超时", True)
+                return HealthProbeResult("unknown", "健康接口响应超时", False)
             return HealthProbeResult("unknown", f"健康检查失败: {reason}", False)
         except (OSError, ValueError) as exc:
             if isinstance(exc, (ConnectionRefusedError, ConnectionResetError)):
                 return HealthProbeResult("stopped", None, False)
             if isinstance(exc, (TimeoutError, socket.timeout)):
-                return HealthProbeResult("unhealthy", "健康接口响应超时", True)
+                return HealthProbeResult("unknown", "健康接口响应超时", False)
             return HealthProbeResult("unknown", f"健康检查失败: {exc}", False)
         if not 200 <= status < 300:
             return HealthProbeResult("unhealthy", f"健康接口返回 HTTP {status}", True)
@@ -417,6 +417,12 @@ class RegisteredServiceManager:
         service_id = service["id"]
         state = result.state
         error = result.error
+        desired_state = service.get("desired_state", "unknown")
+        if state == "unknown" and not result.reachable:
+            if desired_state == "stopped":
+                state, error = "stopped", None
+            elif desired_state == "running":
+                state = "unhealthy"
         if state == "unhealthy" and result.reachable and self._peer_is_running(service):
             state, error = "stopped", None
         if state == "running" or immediate:
