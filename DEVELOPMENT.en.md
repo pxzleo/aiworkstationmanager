@@ -112,6 +112,8 @@ Registration payload fields are `name`, `description`, `script_path`, `gpu_label
 
 Reading service lists, reloading the page, and starting AXIS never run script `status` actions. AXIS checks health URLs directly inside the manager process every five seconds with a one-second timeout and concurrency limit of two; two consecutive failures are required to change a stable state. Background checks never launch PowerShell, WSL, Docker CLI, or another child process. The `status` endpoint is a user-triggered deep check.
 
+When a health endpoint is unreachable, AXIS combines the result with desired state: a service desired to be stopped remains `stopped`, while one desired to be running becomes `unhealthy`. This avoids timeout false alarms when a Windows port-forward listener remains present after its backend has stopped.
+
 ### Scenes and operation records
 
 | Method | Path | Purpose |

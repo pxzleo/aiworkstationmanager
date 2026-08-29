@@ -1033,6 +1033,31 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runner.calls, [("健康动作.ps1", "start")])
         self.assertEqual(self.health_probe.calls, [(health_url, "expected-model")])
 
+    async def test_unreachable_timeout_uses_desired_state_without_false_alarm(self) -> None:
+        health_url = "http://127.0.0.1:18090/health"
+        service = await self.add_service("转发超时", health_url=health_url)
+        self.health_probe.results[health_url] = HealthProbeResult(
+            "unknown", "健康接口响应超时", False
+        )
+
+        self.assertTrue(
+            self.database.update_registered_service_desired_state(service["id"], "stopped")
+        )
+        await self.manager.refresh_all_health()
+        await self.manager.refresh_all_health()
+        stopped = self.manager.list_services()[0]
+        self.assertEqual(stopped["status"]["state"], "stopped")
+        self.assertIsNone(stopped["status"]["error"])
+
+        self.assertTrue(
+            self.database.update_registered_service_desired_state(service["id"], "running")
+        )
+        await self.manager.refresh_all_health()
+        await self.manager.refresh_all_health()
+        running = self.manager.list_services()[0]
+        self.assertEqual(running["status"]["state"], "unhealthy")
+        self.assertEqual(running["status"]["error"], "健康接口响应超时")
+
     async def test_shared_port_identity_mismatch_is_stopped_when_peer_is_running(self) -> None:
         first_url = "http://127.0.0.1:8000/v1/models"
         second_url = "http://127.0.0.1:8000/system_stats"
