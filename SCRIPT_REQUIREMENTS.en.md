@@ -73,7 +73,9 @@ Do not add prefixes, explanations, JSON, logs, or other text. `status: running`,
 
 A non-zero exit code, timeout, or invalid output is stored as `unknown`.
 
-AXIS never polls `status`. Starting AXIS, opening or reloading the page, and reading the service list do not execute scripts. AXIS invokes `status` once only when a user clicks Check Status for one service. A service's manual status check and lifecycle actions execute serially.
+AXIS never polls `status`. Starting AXIS, opening or reloading the page, and reading the service list do not execute scripts. AXIS invokes `status` once only when a user clicks Deep Check for one service. A service's deep check and lifecycle actions execute serially.
+
+When a local health-check URL is registered, AXIS accesses that URL directly inside the manager process every five seconds. This never launches PowerShell, WSL, Docker CLI, or this script. The lightweight check measures service availability; `status` remains the user-triggered process, unit, or container-level deep check.
 
 ## 4. `start`, `stop`, and `restart`
 
@@ -85,8 +87,8 @@ AXIS never polls `status`. Starting AXIS, opening or reloading the page, and rea
   - `stop` waits until the service has actually stopped and exits.
   - `restart` completes both stop and start, waits until the service is usable, and exits.
 - A background service started by the script must not inherit the management script's standard-output or standard-error handles. Redirect background output to a service-owned log or a null device; inherited handles can keep the management action open indefinitely.
-- AXIS does not call `status` after a lifecycle action. Exit code 0 from `start` or `restart` stores `running`; exit code 0 from `stop` stores `stopped`; a non-zero exit stores `unknown`.
-- Return success only after the real service has reached the intended state. AXIS restart and page reload restore the stored state without probing the service.
+- AXIS does not call `status` after a lifecycle action. When a health-check URL is configured, AXIS validates that endpoint directly after the action; the operation succeeds only when both the script exit code and observed health reach the target state. Without a health URL, AXIS falls back to the action result.
+- Return success only after the real service has reached the intended state. After restart, AXIS restores the last observation and confirms it again through the lightweight health endpoint without running status scripts.
 
 ## 5. Idempotency
 
@@ -201,15 +203,19 @@ exit /b 0
 
 ## 9. Registration fields versus script responsibilities
 
-The following values are entered by the user for display or navigation only. AXIS does not pass them to the script or verify them automatically:
+The following values are entered by the user and are never passed to the script:
 
 - Service name
 - Service description
 - GPU display label
 - Service port
 - UI URL
+- Health-check URL
+- Optional response text that must be present
 
-The script owns real lifecycle control and health evaluation. GPU selection, process management, port checks, dependency checks, and service-specific logging belong in the script.
+Name, description, GPU, port, and UI URL are display or navigation values. The health URL must be a complete HTTP or HTTPS URL on local `127.0.0.1`, `localhost`, or `::1`. AXIS requires HTTP 2xx and, when configured, the expected response text. Services sharing a port should use distinct paths or expected text to identify themselves.
+
+The script owns real lifecycle control and deep status evaluation. GPU selection, process management, dependency checks, and service-specific logging remain script responsibilities.
 
 ## 10. Pre-registration checklist
 
@@ -222,3 +228,5 @@ Before registration, test the script from an ordinary PowerShell or Command Prom
 5. Run `stop`, confirm the script exits, and then confirm `status` prints `stopped`.
 6. Run `stop` again and confirm repeated stop succeeds.
 7. Force one startup failure and confirm the script returns a non-zero exit code with a clear cause.
+8. Register the health-check URL. If another service can share the port, also enter response text that uniquely identifies this service.
+9. Start and stop the service outside AXIS and confirm the UI updates within two health cycles without spawning PowerShell, WSL, or Docker status-polling processes.

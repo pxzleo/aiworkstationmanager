@@ -108,7 +108,9 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 | POST | `/api/v1/registered-services/{id}/actions` | 提交 `start`、`stop` 或 `restart` |
 | POST | `/api/v1/registered-services/actions/stop-all` | 创建停止全部服务的操作 |
 
-服务列表读取、页面刷新和管理器启动都不会调用脚本 `status`。
+登记请求字段为 `name`、`description`、`script_path`、`gpu_label`、`port`、`ui_url`、`health_url` 和 `health_expect`。`health_url` 只允许本机 loopback HTTP/HTTPS；`health_expect` 可留空，非空时要求响应正文包含该文本。
+
+服务列表读取、页面刷新和管理器启动都不会调用脚本 `status`。管理器以固定 5 秒周期在进程内直接检查健康地址，单次超时 1 秒、并发上限 2；连续两次失败才改变稳定状态。后台检查不启动 PowerShell、WSL、Docker CLI 或其他子进程。`status` 接口是用户主动触发的深度检查。
 
 ### 场景与操作记录
 
@@ -131,10 +133,10 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 
 - `/api/v1/history` 的 `window` 使用分钟格式，默认 `15m`，范围为 `1m..1440m`。`15m` 返回原始采样，`1h` 按 15 秒分桶，`24h` 按 60 秒分桶。响应除 `samples` 外仍返回 `bucket_seconds`、`retention_minutes`、`stored_sample_count`、`stored_since` 和 `stored_until`，供客户端判断历史数据覆盖范围；当前资源监控界面不显示这些元数据。
 - 资源历史的主机字段包含 CPU 负载/频率/温度、物理/提交/页面文件内存、主物理网卡收发、WSL 内存与 Swap；`gpus` 额外包含显存控制器及编码/解码负载，`disks` 按物理磁盘保存读写吞吐和平均延迟。GPU P-State、风扇、PCIe、时钟限制、进程归属和 Docker 容器资源仅属于实时快照，不写入历史。
-- `/api/v1/health` 在资源历史写入失败时返回 `status: "degraded"`、`readiness.resource_history: "degraded"` 和不含底层 cause 的 `history_persistence_error`。实时快照仍可用，下一采样周期自动重试，成功后清除降级状态。
+- `/api/v1/health` 在资源历史写入失败时返回 `status: "degraded"`、`readiness.resource_history: "degraded"` 和不含底层 cause 的 `history_persistence_error`；健康监控循环异常时返回 `service_health_monitor_error` 并把 `readiness.registered_services` 标为 `degraded`。实时快照仍可用，后台任务会继续重试。
 - `/api/v1/operations` 和 `/api/v1/audit` 的 `limit` 默认为 100，范围为 `1..500`，分别返回 `operations` 或 `events` 数组。
 - 登录和首次设置成功返回 `authenticated`、`csrf_token`、`expires_at`；`auth/me` 返回 `username`、`expires_at`、新的 `csrf_token`。
-- 服务列表返回 `{"services":[...],"status_mode":"stored"}`；场景列表返回 `{"scenes":[...]}`。创建和更新接口返回创建或更新后的完整对象。
+- 服务列表返回 `{"services":[...],"status_mode":"health"}`；每个服务包含 `desired_state` 以及带 `state`、`checked_at`、`error`、`source` 的 `status` 观察结果。场景列表返回 `{"scenes":[...]}`。创建和更新接口返回创建或更新后的完整对象。
 - 服务动作、停止全部和场景切换返回 `{"operation_id":"32位十六进制ID","status":"queued"}`。取消请求成功返回相同 ID 和 `cancellation_requested`；操作详情包含操作状态及步骤记录。
 
 ## 配置加载
@@ -178,6 +180,6 @@ WM_TRUSTED_PROXY_IPS
 
 ## 数据与并发
 
-默认数据库是 `data/workstation-manager.db`，当前 schema 为 17，并在启动时自动迁移。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
+默认数据库是 `data/workstation-manager.db`，当前 schema 为 18，并在启动时自动迁移。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
 
-服务的保存状态是控制面的主要状态来源。资源监控定时采样不会调用服务脚本；只有显式状态检查才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留 24 小时；内存队列固定只保留最近 15 分钟。
+服务控制面分别保存期望状态和实际观察状态。场景、总览及 GPU 服务摘要只使用实际观察状态；状态或错误变化时才写入 SQLite，连续成功检查不会每 5 秒写盘。资源监控定时采样和健康监控都不会调用服务脚本；只有显式深度检查才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留 24 小时；内存队列固定只保留最近 15 分钟。

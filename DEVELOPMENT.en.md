@@ -108,7 +108,9 @@ A single-service action uses `{"action":"start"}`; `action` is one of `start`, `
 | POST | `/api/v1/registered-services/{id}/actions` | Submit `start`, `stop`, or `restart` |
 | POST | `/api/v1/registered-services/actions/stop-all` | Create a stop-all operation |
 
-Reading service lists, reloading the page, and starting AXIS never run script `status` actions.
+Registration payload fields are `name`, `description`, `script_path`, `gpu_label`, `port`, `ui_url`, `health_url`, and `health_expect`. `health_url` accepts only local-loopback HTTP or HTTPS. `health_expect` may be empty; otherwise the response body must contain that text.
+
+Reading service lists, reloading the page, and starting AXIS never run script `status` actions. AXIS checks health URLs directly inside the manager process every five seconds with a one-second timeout and concurrency limit of two; two consecutive failures are required to change a stable state. Background checks never launch PowerShell, WSL, Docker CLI, or another child process. The `status` endpoint is a user-triggered deep check.
 
 ### Scenes and operation records
 
@@ -131,10 +133,10 @@ Action endpoints return asynchronous operations. The frontend uses operation det
 
 - `/api/v1/history` uses a minute-formatted `window`, defaults to `15m`, and accepts `1m..1440m`. `15m` returns raw samples, `1h` uses 15-second buckets, and `24h` uses 60-second buckets. In addition to `samples`, the response still includes `bucket_seconds`, `retention_minutes`, `stored_sample_count`, `stored_since`, and `stored_until` so clients can determine historical coverage; the current resource-monitor UI does not display this metadata.
 - Host history includes CPU load/frequency/temperature, physical/committed/page-file memory, primary physical-adapter traffic, and WSL memory/swap. `gpus` also stores memory-controller and encoder/decoder utilization, while `disks` stores per-physical-disk throughput and average latency. GPU P-State, fan, PCIe, clock-limit reasons, process ownership, and Docker container resources are live-snapshot data only and are not persisted.
-- If resource-history persistence fails, `/api/v1/health` returns `status: "degraded"`, `readiness.resource_history: "degraded"`, and a `history_persistence_error` without the underlying cause. Live snapshots remain available; persistence retries on the next sample and clears the degraded state after recovery.
+- If resource-history persistence fails, `/api/v1/health` returns `status: "degraded"`, `readiness.resource_history: "degraded"`, and a `history_persistence_error` without the underlying cause. A health-monitor loop failure adds `service_health_monitor_error` and marks `readiness.registered_services` as `degraded`. Live snapshots remain available while background tasks retry.
 - `/api/v1/operations` and `/api/v1/audit` use `limit`, default 100, range `1..500`, and return `operations` or `events` arrays respectively.
 - Login and setup return `authenticated`, `csrf_token`, and `expires_at`; `auth/me` returns `username`, `expires_at`, and a new `csrf_token`.
-- Service lists return `{"services":[...],"status_mode":"stored"}`; scene lists return `{"scenes":[...]}`. Create and update endpoints return the complete resulting object.
+- Service lists return `{"services":[...],"status_mode":"health"}`. Each service includes `desired_state` and a `status` observation with `state`, `checked_at`, `error`, and `source`. Scene lists return `{"scenes":[...]}`. Create and update endpoints return the complete resulting object.
 - Service actions, stop-all, and scene activation return `{"operation_id":"32-character hexadecimal ID","status":"queued"}`. A successful cancel request returns the same ID and `cancellation_requested`; operation details contain the operation state and step records.
 
 ## Configuration loading
@@ -178,6 +180,6 @@ This list follows `workstation_manager/config.py`. Boolean values use `true/fals
 
 ## Data and concurrency
 
-The default database is `data/workstation-manager.db`. The current schema is 17 and migrates automatically at startup. Only one manager instance may use a database at a time, preventing duplicate script execution.
+The default database is `data/workstation-manager.db`. The current schema is 18 and migrates automatically at startup. Only one manager instance may use a database at a time, preventing duplicate script execution.
 
-Stored service state is the control plane's primary state. Scheduled resource sampling never runs service scripts; only an explicit service-status check invokes `status`. Resource sampling writes CPU, memory, and per-GPU load, VRAM, temperature, power, and graphics-clock metrics to SQLite and retains 24 hours by default; the in-memory queue remains limited to the latest 15 minutes.
+The service control plane stores desired and observed states separately. Scenes, the overview, and GPU service summaries use only observed state. SQLite is updated only when the state or error changes, so successful five-second checks do not write continuously. Neither scheduled resource sampling nor health monitoring runs service scripts; only an explicit deep check invokes `status`. Resource sampling writes CPU, memory, and per-GPU load, VRAM, temperature, power, and graphics-clock metrics to SQLite and retains 24 hours by default; the in-memory queue remains limited to the latest 15 minutes.
