@@ -65,6 +65,7 @@ class ScenePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=1000)
+    detailed_description: str | None = Field(default=None, max_length=8000)
     service_ids: list[str] = Field(default_factory=list, max_length=1000)
 
 
@@ -515,7 +516,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     @app.put("/api/v1/scenes/{scene_id}")
     async def update_scene(scene_id: str, payload: ScenePayload, request: Request,
                            session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, Any]:
-        return resolved_registry.update_scene(scene_id, payload.model_dump(), session.username,
+        return resolved_registry.update_scene(scene_id, payload.model_dump(exclude_unset=True), session.username,
                                               _client_ip(request))
 
     @app.delete("/api/v1/scenes/{scene_id}", status_code=204)

@@ -139,6 +139,18 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
 
 test('scene editor and management log remain wired', () => {
   assert.ok(html.includes('id="sceneServiceChoices"'));
+  assert.ok(html.includes('id="sceneDescription" maxlength="1000"'));
+  assert.ok(html.includes('id="sceneDetailedDescription"'));
+  assert.ok(html.includes('maxlength="8000"'));
+  assert.ok(html.includes('id="sceneDetailDialog"'));
+  assert.ok(html.includes('id="sceneDetailBody"'));
+  assert.ok(js.includes("'详细说明'"));
+  assert.ok(js.includes('openSceneDetails(scene)'));
+  assert.ok(js.includes('scene.detailed_description'));
+  assert.ok(js.includes("detailed_description: byId('sceneDetailedDescription').value.trim()"));
+  assert.ok(css.includes('.scene-detail-body'));
+  assert.ok(css.includes('white-space: pre-wrap'));
+  assert.ok(i18n.includes("'详细使用说明': 'Detailed Usage Instructions'"));
   assert.ok(html.includes('停止未选服务'));
   assert.ok(js.includes('/scenes'));
   assert.ok(js.includes('/operations?limit=50'));
@@ -230,9 +242,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260830-6'));
-  assert.ok(html.includes('i18n.js?v=20260830-5'));
-  assert.ok(html.includes('app.js?v=20260830-5'));
+  assert.ok(html.includes('styles.css?v=20260830-7'));
+  assert.ok(html.includes('i18n.js?v=20260830-6'));
+  assert.ok(html.includes('app.js?v=20260830-6'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

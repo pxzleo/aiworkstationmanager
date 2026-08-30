@@ -18,6 +18,7 @@ ENGLISH_ERROR_MESSAGES = {
     "invalid_credentials": "The username or password is invalid.",
     "invalid_csrf": "CSRF validation failed.",
     "invalid_description": "The description is invalid or too long.",
+    "invalid_detailed_description": "The detailed scene instructions are invalid or too long.",
     "invalid_gpu": "The GPU label is too long.",
     "invalid_health_expect": "The health-response match text is invalid.",
     "invalid_health_url": "The health-check URL must use HTTP or HTTPS on local loopback.",

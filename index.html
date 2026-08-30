@@ -8,7 +8,7 @@
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
   <script src="theme.js?v=20260828-1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260830-6">
+  <link rel="stylesheet" href="styles.css?v=20260830-7">
 </head>
 <body class="auth-pending">
   <svg class="svg-sprite" aria-hidden="true">
@@ -241,11 +241,21 @@
       <p class="eyebrow">场景编辑器</p><h2 id="sceneDialogTitle">添加场景</h2>
       <input id="sceneId" type="hidden">
       <label>场景名称<input id="sceneName" maxlength="100" required></label>
-      <label>说明<textarea id="sceneDescription" maxlength="1000"></textarea></label>
+      <label>简短介绍<textarea id="sceneDescription" maxlength="1000"></textarea></label>
+      <label>详细使用说明<textarea id="sceneDetailedDescription" class="scene-detailed-description" maxlength="8000" placeholder="填写外部 URL、协议、模型名和调用注意事项"></textarea></label>
       <div class="scene-service-editor"><strong>需要启动的服务</strong><small>使用箭头调整启动顺序</small><div id="sceneServiceChoices"></div></div>
       <p class="auth-error" id="sceneFormError" role="alert"></p>
       <div class="dialog-actions"><button class="button secondary" type="button" data-close="sceneDialog">取消</button><button class="button primary" type="submit">保存场景</button></div>
     </form>
+  </dialog>
+  <dialog class="control-dialog scene-detail-dialog" id="sceneDetailDialog">
+    <section>
+      <p class="eyebrow">场景详细说明</p>
+      <h2 id="sceneDetailTitle">场景名称</h2>
+      <p class="scene-detail-intro" id="sceneDetailIntro"></p>
+      <div class="scene-detail-body" id="sceneDetailBody"></div>
+      <div class="dialog-actions"><button class="button primary" type="button" data-close="sceneDetailDialog">关闭</button></div>
+    </section>
   </dialog>
   <dialog class="control-dialog editor-dialog" id="userDialog">
     <form id="userForm">
@@ -279,10 +289,10 @@
       <div class="dialog-actions"><button class="button secondary" id="cancelSceneSwitchButton" type="button">终止切换并返回</button><button class="button primary" id="closeSceneProgressButton" type="button" hidden>返回工作场景</button></div>
     </section>
   </dialog>
-  <script src="i18n.js?v=20260830-5"></script>
+  <script src="i18n.js?v=20260830-6"></script>
   <script src="request-guard.js?v=20260827-5"></script>
   <script src="gpu-layout.js?v=20260828-1"></script>
   <script src="monitor-chart.js?v=20260828-6"></script>
-  <script src="app.js?v=20260830-5"></script>
+  <script src="app.js?v=20260830-6"></script>
 </body>
 </html>
