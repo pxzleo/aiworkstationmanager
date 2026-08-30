@@ -760,12 +760,12 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
 
     async def add_service(
         self, name: str, gpu: str = "", health_url: str = "",
-        health_expect: str = "",
+        health_expect: str = "", port: int | None = None,
     ) -> dict:
         return await self.manager.create_service(
             {"name": name, "description": f"{name}说明",
              "script_path": str(self.make_script(name)), "gpu_label": gpu,
-             "port": None, "ui_url": "", "health_url": health_url,
+             "port": port, "ui_url": "", "health_url": health_url,
              "health_expect": health_expect}, "admin", "127.0.0.1"
         )
 
@@ -1249,6 +1249,27 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
 
         states = {item["name"]: item["status"]["state"] for item in self.manager.list_services()}
         self.assertEqual(states, {"ComfyUI": "stopped", "vLLM": "running"})
+
+    async def test_registered_port_identity_mismatch_is_stopped_when_peer_uses_other_health_port(
+        self,
+    ) -> None:
+        ninfer_url = "http://127.0.0.1:8081/api/snapshot"
+        q27_url = "http://127.0.0.1:8080/v1/models"
+        ninfer = await self.add_service("4090 NInfer", health_url=ninfer_url, port=8080)
+        q27 = await self.add_service(
+            "4090 q27", health_url=q27_url,
+            health_expect="qwen38-27b-mtp-q6k", port=8080,
+        )
+        self.health_probe.results[ninfer_url] = HealthProbeResult("running", None, True)
+        self.health_probe.results[q27_url] = HealthProbeResult(
+            "unhealthy", "健康接口响应与服务身份不匹配", True
+        )
+
+        await self.manager.refresh_service_health(ninfer, immediate=True)
+        await self.manager.refresh_service_health(q27, immediate=True)
+
+        states = {item["name"]: item["status"]["state"] for item in self.manager.list_services()}
+        self.assertEqual(states, {"4090 NInfer": "running", "4090 q27": "stopped"})
 
     async def test_status_error_is_redacted_before_storage_and_response(self) -> None:
         service = await self.add_service("脱敏检查")
