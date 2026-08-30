@@ -37,6 +37,9 @@ test('registered service editor exposes the agreed fields and actions', () => {
   assert.ok(js.includes("health_expect"));
   assert.ok(html.includes('id="stopAllServicesButton"'));
   assert.ok(js.includes('/registered-services/actions/stop-all'));
+  assert.ok(js.includes('filtered.forEach((service, index)'));
+  assert.ok(js.includes("userElement('i', 'env-logo', String(index + 1))"));
+  assert.ok(!js.includes('service.name.slice(0, 1).toUpperCase()'));
 });
 
 test('overview only presents services with an observed running state', () => {
