@@ -406,8 +406,17 @@ function renderScenes() {
     panel.addEventListener('drop', (event) => { event.preventDefault(); const after = panel.classList.contains('drop-after'); const sourceId = draggedSceneId || event.dataTransfer.getData('text/plain'); document.querySelector(`[data-scene-id="${sourceId}"]`)?.classList.remove('dragging'); clearSceneDropMarkers(); draggedSceneId = null; moveSceneCard(sourceId, scene.id, after); });
     panel.addEventListener('dragend', () => { draggedSceneId = null; panel.classList.remove('dragging'); panel.setAttribute('aria-grabbed', 'false'); clearSceneDropMarkers(); });
     const top = element('div', 'scene-panel-top'); const topActions = element('span', 'scene-panel-meta'); const handle = element('button', 'scene-drag-handle', '⠿'); handle.type = 'button'; handle.title = '拖动调整场景位置'; handle.setAttribute('aria-label', `拖动调整 ${scene.name} 的位置`); const sceneStatusClass = scene.state === 'active' ? 'scene-status' : scene.state === 'inactive' ? 'scene-inactive' : ''; topActions.append(element('i', sceneStatusClass, sceneStatusLabels[scene.state] || '状态未知')); topActions.append(handle); top.append(element('span', '', `场景 ${String(index + 1).padStart(2, '0')}`), topActions);
-    if (scene.is_default || scene.state === 'active') { const banners = element('div', 'scene-state-banners'); if (scene.is_default && scene.state === 'active') { const banner = element('div', 'scene-default-banner scene-combined-banner'); banner.append(element('strong', '', '默认场景 · 已激活'), element('span', '', 'AXIS 启动时自动切换')); banners.append(banner); } else if (scene.is_default) { const banner = element('div', 'scene-default-banner'); banner.append(element('strong', '', '默认启动场景'), element('span', '', 'AXIS 启动时自动切换')); banners.append(banner); } else { const banner = element('div', 'scene-active-banner'); banner.append(element('strong', '', '当前已激活场景'), element('span', '', '服务组合正在生效')); banners.append(banner); } panel.append(banners); }
-    panel.append(top, userElement('h2', '', scene.name), userOrUiElement('p', '', scene.description, '无说明'));
+    let cardHeader = top;
+    if (scene.is_default || scene.state === 'active') {
+      const banners = element('div', 'scene-state-banners');
+      const combined = scene.is_default && scene.state === 'active';
+      const banner = element('div', scene.is_default ? `scene-default-banner${combined ? ' scene-combined-banner' : ''}` : 'scene-active-banner');
+      const bannerMeta = element('div', 'scene-banner-meta');
+      bannerMeta.append(element('span', '', scene.is_default ? 'AXIS 启动时自动切换' : '服务组合正在生效'), handle);
+      banner.append(element('strong', '', combined ? '默认场景 · 已激活' : scene.is_default ? '默认启动场景' : '当前已激活场景'), bannerMeta);
+      banners.append(banner); cardHeader = banners;
+    }
+    panel.append(cardHeader, userElement('h2', '', scene.name), userOrUiElement('p', '', scene.description, '无说明'));
     const map = element('div', 'scene-map'); const sceneServices = scene.services || scene.service_ids.map((id, order) => ({ id, name: scene.service_names[order], ui_url: '', status: { state: 'unknown' } })); if (!sceneServices.length) map.append(element('div', '', '此场景不启动任何服务'));
     sceneServices.forEach((service, order) => { const item = element('div'); item.append(element('span', '', `启动顺序 ${order + 1}`), userElement('strong', '', service.name)); const meta = element('small', 'scene-service-meta'); const status = element('i', 'scene-service-status'); status.append(element('i', `service-state ${statusClass(service.status.state)}`), document.createTextNode(service.busy ? '操作中' : serviceStatusLabel(service))); meta.append(status); item.append(meta); if (service.ui_url) { const uiButton = element('button', 'scene-ui-link', '打开 UI ↗'); uiButton.type = 'button'; uiButton.addEventListener('click', () => window.open(service.ui_url, '_blank', 'noopener,noreferrer')); item.append(uiButton); } map.append(item); });
     const actions = element('div', 'scene-card-actions');
