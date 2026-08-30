@@ -123,13 +123,15 @@ When a health endpoint is unreachable, AXIS combines the result with desired sta
 | POST | `/api/v1/scenes/reorder` | Save scene-card order |
 | PUT | `/api/v1/scenes/{id}` | Update a scene and service order |
 | DELETE | `/api/v1/scenes/{id}` | Delete a scene without controlling services |
+| PUT | `/api/v1/scenes/{id}/default` | Make a scene the project's unique default |
+| DELETE | `/api/v1/scenes/{id}/default` | Clear the scene's default setting |
 | POST | `/api/v1/scenes/{id}/activate` | Create a scene-switch operation |
 | GET | `/api/v1/operations` | List operations |
 | GET | `/api/v1/operations/{id}` | Read operation steps and results |
 | POST | `/api/v1/operations/{id}/cancel` | Cancel steps that have not started |
 | GET | `/api/v1/audit` | Read audit events |
 
-Action endpoints return asynchronous operations. The frontend uses operation details to show progress. Cancellation does not undo completed service actions.
+Action endpoints return asynchronous operations. The frontend uses operation details to show progress. Cancellation does not undo completed service actions. Setting a default scene does not switch immediately; on its next startup the manager submits the normal scene activation as `system/startup`. Startup controls no services when no default is configured.
 
 ### Query parameters and primary responses
 
@@ -182,6 +184,6 @@ This list follows `workstation_manager/config.py`. Boolean values use `true/fals
 
 ## Data and concurrency
 
-The default database is `data/workstation-manager.db`. The current schema is 18 and migrates automatically at startup. Only one manager instance may use a database at a time, preventing duplicate script execution.
+The default database is `data/workstation-manager.db`. The current schema is 19 and migrates automatically at startup. Schema 19 adds the unique scene `is_default` marker; all existing scenes remain non-default after migration. Only one manager instance may use a database at a time, preventing duplicate script execution.
 
 The service control plane stores desired and observed states separately. Scenes, the overview, and GPU service summaries use only observed state. SQLite is updated only when the state or error changes, so successful five-second checks do not write continuously. Neither scheduled resource sampling nor health monitoring runs service scripts; only an explicit deep check invokes `status`. Resource sampling writes CPU, memory, and per-GPU load, VRAM, temperature, power, and graphics-clock metrics to SQLite and retains 24 hours by default; the in-memory queue remains limited to the latest 15 minutes.

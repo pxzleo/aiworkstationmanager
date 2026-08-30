@@ -123,13 +123,15 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 | POST | `/api/v1/scenes/reorder` | 保存场景卡片顺序 |
 | PUT | `/api/v1/scenes/{id}` | 修改场景和服务顺序 |
 | DELETE | `/api/v1/scenes/{id}` | 删除场景，不操作服务 |
+| PUT | `/api/v1/scenes/{id}/default` | 将场景设为项目唯一默认场景 |
+| DELETE | `/api/v1/scenes/{id}/default` | 取消该场景的默认设置 |
 | POST | `/api/v1/scenes/{id}/activate` | 创建场景切换操作 |
 | GET | `/api/v1/operations` | 操作列表 |
 | GET | `/api/v1/operations/{id}` | 操作步骤和结果 |
 | POST | `/api/v1/operations/{id}/cancel` | 取消尚未执行的后续步骤 |
 | GET | `/api/v1/audit` | 审计事件 |
 
-动作接口返回异步操作；前端通过操作详情展示进度。取消不会撤销已经完成的服务动作。
+动作接口返回异步操作；前端通过操作详情展示进度。取消不会撤销已经完成的服务动作。设置默认场景本身不会立即切换；管理器下次启动后以 `system/startup` 提交普通场景切换操作。没有默认场景时启动过程不控制任何服务。
 
 ### 查询参数与主要响应
 
@@ -182,6 +184,6 @@ WM_TRUSTED_PROXY_IPS
 
 ## 数据与并发
 
-默认数据库是 `data/workstation-manager.db`，当前 schema 为 18，并在启动时自动迁移。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
+默认数据库是 `data/workstation-manager.db`，当前 schema 为 19，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记，旧数据库升级后默认均为未设置。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
 
 服务控制面分别保存期望状态和实际观察状态。场景、总览及 GPU 服务摘要只使用实际观察状态；状态或错误变化时才写入 SQLite，连续成功检查不会每 5 秒写盘。资源监控定时采样和健康监控都不会调用服务脚本；只有显式深度检查才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留 24 小时；内存队列固定只保留最近 15 分钟。

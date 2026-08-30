@@ -78,6 +78,8 @@ D:\AIWork\example\manage.ps1 status
 
 切换窗口会显示每一步的进度，可以终止尚未执行的后续步骤。已经完成的启停操作不会自动回滚。
 
+每个项目可以选择一个“默认场景”。设置后不会立即切换；AXIS 下次启动时会自动执行该场景。取消默认只清除启动设置，不会停止当前服务。
+
 ## 常用配置
 
 需要修改配置时，先复制示例文件：
@@ -117,7 +119,7 @@ Copy-Item .\config\settings.example.json .\config\settings.json
 .\Install-ManagerTask.ps1 -Trigger Startup -ConfigFile .\config\settings.json
 ```
 
-卸载任务使用 `.\Uninstall-ManagerTask.ps1`。计划任务只启动管理器，不会自动启动任何已登记服务。
+卸载任务使用 `.\Uninstall-ManagerTask.ps1`。未设置默认场景时，计划任务只启动管理器；设置默认场景后，AXIS 启动时会按现有场景切换规则自动启停对应服务。
 
 ## 更多文档
 
