@@ -922,11 +922,22 @@ class RegisteredServiceManager:
         scene = self._require_scene(scene_id)
         await self.refresh_all_health()
         before = {key: value.get("state", "unknown") for key, value in self.statuses.items()}
-        self.database.update_operation(operation_id, status="running", started_at=utc_now(),
-                                       before_state=str(before))
         target_ids = list(scene["service_ids"])
         target = set(target_ids)
         services = {item["id"]: item for item in self.database.list_registered_services()}
+        stop_targets = [
+            service for service in services.values()
+            if service["id"] not in target
+            and self.statuses.get(service["id"], {}).get("state") == "running"
+        ]
+        start_targets = [
+            services[service_id] for service_id in target_ids
+            if self.statuses.get(service_id, {}).get("state") != "running"
+        ]
+        self.database.update_operation(
+            operation_id, status="running", started_at=utc_now(),
+            before_state=str(before), total_steps=len(stop_targets) + len(start_targets),
+        )
         sequence = 0
         stop_ok = True
         cancelled = False
