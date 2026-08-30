@@ -663,6 +663,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
 
 @media (max-width: 720px) {
   .top-actions .language-select span { display: none; }
+  .top-actions { gap: 6px; }
   :root { --sidebar: 250px; --topbar: 58px; }
   .sidebar { transform: translateX(-100%); transition: transform .22s; box-shadow: 20px 0 50px rgba(0,0,0,.45); }
   .sidebar.open { transform: translateX(0); }
@@ -678,7 +679,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .breadcrumb > span, .breadcrumb > svg { display: none; }
   .breadcrumb strong { white-space: nowrap; }
   .freshness time { display: none; }
-  .freshness { padding: 0 12px; }
+  .freshness { padding: 0 8px; }
   .workspace { padding: 26px 17px 60px; }
   .page-heading { align-items: flex-start; flex-direction: column; }
   .page-heading .heading-actions { width: 100%; }
@@ -850,6 +851,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .scene-utility-actions { justify-content: flex-start; flex-wrap: wrap; gap: 4px; }
   .scene-reorder-controls { gap: 2px; margin-right: auto; padding-right: 6px; }
   .scene-utility-actions .icon-button { width: 32px; height: 34px; }
+  .scene-card-actions .icon-button::after { display: none; }
   .scene-activate-button { width: 100%; }
   .scene-progress-dialog > section { padding: 22px 18px; }
   .scene-progress-heading { gap: 12px; }
