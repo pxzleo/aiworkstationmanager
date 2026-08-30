@@ -37,7 +37,7 @@
     '服务组合': 'Service combinations',
     '新场景添加在末尾；拖动卡片或使用上移、下移调整顺序。': 'New scenes are added last. Drag cards or use Move up and Move down to reorder them.',
     '添加场景': 'Add Scene', '尚未添加场景。': 'No scenes have been added.', '切换规则': 'Switching rules',
-    '默认场景': 'Default Scene', '默认启动场景': 'Default Startup Scene', 'AXIS 启动时自动切换': 'AXIS switches here on startup', '当前已激活场景': 'Currently Active Scene', '服务组合正在生效': 'Service combination is active', '设为默认': 'Set as Default', '取消默认': 'Clear Default',
+    '默认场景': 'Default Scene', '默认启动场景': 'Default Startup Scene', '默认场景 · 已激活': 'Default · Active', 'AXIS 启动时自动切换': 'AXIS switches here on startup', '当前已激活场景': 'Currently Active Scene', '服务组合正在生效': 'Service combination is active', '设为默认': 'Set as Default', '取消默认': 'Clear Default',
     '已设置默认场景': 'Default scene set', '已取消默认场景': 'Default scene cleared',
     '不执行自动回滚，最终状态和失败原因写入操作日志。': 'There is no automatic rollback. Final states and failures are written to the operation log.',
     '停止未选服务': 'Stop unselected services', '逐个调用 stop': 'Run stop one by one',
