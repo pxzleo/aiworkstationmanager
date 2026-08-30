@@ -245,9 +245,17 @@ test('scene editor and management log remain wired', () => {
   assert.ok(css.includes('width: 8em'));
   assert.ok(!html.includes('id="switchSceneButton"'));
   assert.ok(!js.includes("switchButton.onclick = () => navigate('scenes')"));
-  assert.ok(html.includes('只记录服务启停与场景切换'));
+  assert.ok(html.includes('记录服务启停与场景切换的时间、结果和操作账号'));
   assert.ok(!html.includes('管理审计'));
   assert.ok(!js.includes('/audit?limit=100'));
+  assert.ok(js.includes("operation.requested_by || ''"));
+  assert.ok(js.includes("'operation-actor'"));
+  assert.ok(js.includes("操作账号"));
+  assert.ok(css.includes('.operation-actor'));
+  assert.equal((js.match(/operationActor\(/g) || []).length, 3);
+  assert.ok(css.includes('.operation-row > div { min-width: 0; }'));
+  assert.ok(css.includes('.timeline li > div { min-width: 0; }'));
+  assert.ok(css.includes('overflow-wrap: anywhere'));
 });
 
 test('user management lists accounts and wires account actions', () => {
@@ -272,9 +280,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260830-10'));
-  assert.ok(html.includes('i18n.js?v=20260830-7'));
-  assert.ok(html.includes('app.js?v=20260830-8'));
+  assert.ok(html.includes('styles.css?v=20260830-11'));
+  assert.ok(html.includes('i18n.js?v=20260830-8'));
+  assert.ok(html.includes('app.js?v=20260830-9'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
