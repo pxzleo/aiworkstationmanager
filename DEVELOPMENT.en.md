@@ -21,6 +21,10 @@ Release packages contain neither `requirements-dev.txt` nor `tests/`; their deve
 .\Build-Release.ps1 -Destination D:\Release\axis-manager
 ```
 
+## Versioning
+
+`__version__` in `workstation_manager/__init__.py` is the single source of the application version; both the health endpoint and System Settings read this value. Every delivered code commit must increment the semantic version: compatible fixes increment the patch version, backward-compatible features increment the minor version, and incompatible changes increment the major version.
+
 ## API conventions
 
 The API prefix is `/api/v1`; requests and responses use JSON. Error responses keep a stable `error.code` and localize the message from `Accept-Language`.

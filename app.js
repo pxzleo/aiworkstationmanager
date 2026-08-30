@@ -123,7 +123,11 @@ async function bootstrap() {
 function enterApplication() { document.body.classList.remove('auth-pending'); text('logoutButton', (state.username || '管理员').slice(0, 2).toUpperCase()); clearTimers(); refreshAll(); startPolling('snapshot', refreshSnapshot, SNAPSHOT_INTERVAL_MS); startPolling('history', refreshHistory, HISTORY_INTERVAL_MS); startPolling('services', refreshServicesAndScenes, SERVICE_INTERVAL_MS); startPolling('logs', refreshLogs, SERVICE_INTERVAL_MS); }
 async function logout() { try { await api('/auth/logout', { method: 'POST', authRequest: true }); showAuth('login', '已退出登录。'); } catch (error) { showToast(error.message); } }
 
-async function refreshAll() { await Promise.allSettled([refreshSnapshot(), refreshHistory(), refreshServicesAndScenes(), refreshUsers(), refreshLogs()]); }
+async function refreshAll() { await Promise.allSettled([refreshSnapshot(), refreshHistory(), refreshServicesAndScenes(), refreshUsers(), refreshLogs(), refreshSystemInfo()]); }
+async function refreshSystemInfo() {
+  try { const health = await api('/health', { resource: 'system-info' }); dataText('systemVersion', health.version, '版本未知'); }
+  catch (error) { dataText('systemVersion', '', '读取失败'); throw error; }
+}
 async function refreshSnapshot() { if (document.hidden) return; try { state.snapshot = normalizeSnapshot(await api('/snapshot', { resource: 'snapshot' })); renderSnapshot(); } catch (error) { if (!(error instanceof StaleRequestError)) { text('freshnessLabel', '监控离线'); } } }
 async function refreshHistory() {
   if (document.hidden) return;

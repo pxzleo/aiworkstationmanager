@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from workstation_manager import __version__
 from workstation_manager.app import create_app
 from workstation_manager.auth import REMEMBER_SESSION_TTL_SECONDS
 from workstation_manager.collectors import (
@@ -568,7 +569,9 @@ class ApiTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_health_snapshot_history_and_services(self) -> None:
-        self.assertEqual(self.client.get("/api/v1/health").status_code, 200)
+        health = self.client.get("/api/v1/health")
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json()["version"], __version__)
         self.assertEqual(self.client.get("/api/v1/snapshot").json()["gpus"][0]["uuid"], "GPU-a")
         history = self.client.get("/api/v1/history?window=15m").json()
         self.assertEqual(len(history["samples"]), 1)

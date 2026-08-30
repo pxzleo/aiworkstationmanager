@@ -72,6 +72,14 @@ test('release contains runtime language assets and both documentation languages'
   assert.ok(read('DEVELOPMENT.en.md').includes(`schema is ${schema}`));
 });
 
+test('application version is semantic and documented as the single UI source', () => {
+  const packageSource = read('workstation_manager/__init__.py');
+  const version = /__version__ = "(\d+\.\d+\.\d+)"/.exec(packageSource)?.[1];
+  assert.ok(version, 'application version must use semantic major.minor.patch format');
+  assert.ok(read('DEVELOPMENT.md').includes('workstation_manager/__init__.py'));
+  assert.ok(read('DEVELOPMENT.en.md').includes('workstation_manager/__init__.py'));
+});
+
 test('distributable documentation avoids machine-specific and source-only claims', () => {
   const chinese = read('README.zh-CN.md'); const english = read('README.md');
   assert.ok(!chinese.includes('当前工作站已'));

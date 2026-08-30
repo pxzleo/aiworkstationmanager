@@ -36,6 +36,7 @@ AXIS unifies the services of an AI workstation and organizes them into different
 - Record service actions and scene-switch steps, times, and results
 - Use Chinese, English, or automatic browser-language detection
 - Choose Matrix Green, Aurora Blue, or Obsidian Gold display styles
+- View the running AXIS version and open the GitHub project from System Settings
 - Manage multiple users
 
 ## Install and start
