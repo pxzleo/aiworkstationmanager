@@ -194,6 +194,10 @@ test('scene editor and management log remain wired', () => {
   assert.ok(css.includes('.scene-state-banners { margin: -28px -28px 0;'));
   assert.ok(css.includes('.scene-default-banner, .scene-active-banner { min-height: 55px;'));
   assert.ok(css.includes('.scene-state-banners .scene-drag-handle'));
+  assert.ok(css.includes('.scene-panel > p { height: 3.1em; min-height: 3.1em; max-height: 3.1em;'));
+  assert.ok(css.includes('margin: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;'));
+  assert.ok(css.includes('-webkit-line-clamp: 2'));
+  assert.ok(css.includes('font-size: 12px; line-height: 1.55;'));
   assert.ok(css.includes('.scene-panel.scene-default { border-color: rgba(var(--accent-rgb),.68)'));
   assert.ok(css.includes('.scene-default-banner { border-bottom: 1px solid rgba(var(--accent-rgb),.42)'));
   assert.ok(!css.includes('.scene-panel.scene-default { border-color: rgba(231,184,106'));
@@ -268,7 +272,7 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260830-9'));
+  assert.ok(html.includes('styles.css?v=20260830-10'));
   assert.ok(html.includes('i18n.js?v=20260830-7'));
   assert.ok(html.includes('app.js?v=20260830-8'));
   assert.ok(i18n.includes("navigator.languages"));
