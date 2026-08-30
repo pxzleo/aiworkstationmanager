@@ -21,6 +21,10 @@ node --test tests/frontend_request_guard.test.js tests/frontend_gpu_layout.test.
 .\Build-Release.ps1 -Destination D:\Release\axis-manager
 ```
 
+## 版本管理
+
+`workstation_manager/__init__.py` 中的 `__version__` 是程序版本的唯一来源，健康接口和系统设置页面均读取该值。每次交付代码提交都必须按语义化版本规则递增版本号：兼容修正递增补丁版本，新增兼容功能递增次版本，不兼容变更递增主版本。
+
 ## API 约定
 
 API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定的 `error.code`，并根据 `Accept-Language` 返回中文或英文错误信息。

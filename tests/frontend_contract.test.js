@@ -165,6 +165,10 @@ test('scene editor and management log remain wired', () => {
   assert.ok(css.includes('.scene-panel.selected.scene-default'));
   assert.ok(css.includes('.scene-active-banner'));
   assert.ok(css.includes('.scene-combined-banner'));
+  assert.ok(css.includes('.scene-panel.scene-default { border-color: rgba(var(--accent-rgb),.68)'));
+  assert.ok(css.includes('.scene-default-banner { border-bottom: 1px solid rgba(var(--accent-rgb),.42)'));
+  assert.ok(!css.includes('.scene-panel.scene-default { border-color: rgba(231,184,106'));
+  assert.ok(!css.includes('.scene-default-banner { border-bottom: 1px solid rgba(231,184,106'));
   assert.ok(i18n.includes("'默认启动场景': 'Default Startup Scene'"));
   assert.ok(i18n.includes("'AXIS 启动时自动切换': 'AXIS switches here on startup'"));
   assert.ok(i18n.includes("'当前已激活场景': 'Currently Active Scene'"));
@@ -226,9 +230,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260830-5'));
-  assert.ok(html.includes('i18n.js?v=20260830-4'));
-  assert.ok(html.includes('app.js?v=20260830-4'));
+  assert.ok(html.includes('styles.css?v=20260830-6'));
+  assert.ok(html.includes('i18n.js?v=20260830-5'));
+  assert.ok(html.includes('app.js?v=20260830-5'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
@@ -270,6 +274,17 @@ test('system settings provides three persistent display styles', () => {
     assert.ok(!css.includes(staleColor), `fixed Matrix Green surface remains: ${staleColor}`);
   }
   for (const label of ['矩阵绿', '极光蓝', '曜石金']) assert.ok(i18n.includes(`'${label}':`));
+});
+
+test('system settings shows the runtime version and GitHub project link', () => {
+  assert.ok(html.includes('id="systemVersion"'));
+  assert.ok(html.includes('https://github.com/pxzleo/aiworkstationmanager'));
+  assert.ok(html.includes('rel="noopener noreferrer"'));
+  assert.ok(js.includes("api('/health', { resource: 'system-info' })"));
+  assert.ok(js.includes("dataText('systemVersion', health.version, '版本未知')"));
+  assert.ok(css.includes('.system-information-list'));
+  assert.ok(i18n.includes("'系统信息': 'System information'"));
+  assert.ok(i18n.includes("'系统版本': 'System version'"));
 });
 
 test('legacy adapter, discovery and service-log UI are absent', () => {

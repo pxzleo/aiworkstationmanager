@@ -15,6 +15,8 @@
     '矩阵绿': 'Matrix Green', '深色工程监控风格，使用清晰的荧光绿强调。': 'A dark engineering console with crisp fluorescent-green accents.',
     '极光蓝': 'Aurora Blue', '冷静的深海蓝界面，配合冰蓝与淡紫光感。': 'A calm deep-blue interface with icy blue and subtle violet light.',
     '曜石金': 'Obsidian Gold', '温暖克制的专业设备风格，以香槟金突出操作。': 'A restrained warm-black equipment style with champagne-gold actions.',
+    '系统信息': 'System information', '查看当前程序版本和项目地址。': 'View the current application version and project address.',
+    '系统版本': 'System version', '正在读取': 'Loading', '版本未知': 'Unknown version', '读取失败': 'Unable to load',
     '正在连接': 'Connecting', '刷新数据': 'Refresh data', '退出登录': 'Sign out',
     '当前工作场景': 'Current Scene', '场景检测尚未配置': 'Scene detection is not configured',
     '场景状态由低开销健康检查发现的实际状态计算。': 'Scene state is calculated from low-overhead health checks.',
