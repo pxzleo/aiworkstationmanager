@@ -626,6 +626,20 @@ class RegisteredServiceManager:
                                    {"scene_id": scene_id, "name": scene["name"],
                                     "requested_by": username})
 
+    def set_default_scene(self, scene_id: str, enabled: bool,
+                          username: str, source_ip: str) -> dict[str, Any]:
+        self._require_idle()
+        scene = self._require_scene(scene_id)
+        if not self.database.set_default_scene(scene_id, enabled):
+            raise RegistryError(404, "scene_not_found", "场景不存在")
+        self.database.append_audit(
+            source_ip,
+            "management.scene.default.set" if enabled else "management.scene.default.clear",
+            "success",
+            {"scene_id": scene_id, "name": scene["name"], "requested_by": username},
+        )
+        return self._scene_with_state(self.database.get_scene(scene_id))
+
     def reorder_scenes(self, scene_ids: list[str], username: str, source_ip: str) -> list[dict[str, Any]]:
         self._require_idle()
         known = {scene["id"] for scene in self.database.list_scenes()}
@@ -693,6 +707,12 @@ class RegisteredServiceManager:
         self._require_scene(scene_id)
         return self._submit("scene", scene_id, "activate", username, source_ip,
                             self._run_scene_operation)
+
+    def submit_default_scene_activation(self) -> str | None:
+        scene = self.database.get_default_scene()
+        if scene is None:
+            return None
+        return self.submit_scene_activation(scene["id"], "system", "startup")
 
     def submit_stop_all(self, username: str, source_ip: str) -> str:
         return self._submit("service_group", "all", "stop_all", username, source_ip,

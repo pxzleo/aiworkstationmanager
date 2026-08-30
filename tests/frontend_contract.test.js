@@ -135,6 +135,10 @@ test('scene editor and management log remain wired', () => {
   assert.ok(js.includes("panel.draggable"));
   assert.ok(js.includes("dragstart"));
   assert.ok(js.includes("上移"));
+  assert.ok(js.includes("scene.is_default ? '取消默认' : '设为默认'"));
+  assert.ok(js.includes("`/scenes/${scene.id}/default`"));
+  assert.ok(js.includes("AXIS 下次启动时会自动切换到该场景"));
+  assert.ok(css.includes('.scene-default-badge'));
   assert.ok(html.includes('id="sceneProgressDialog"'));
   assert.ok(html.includes('id="cancelSceneSwitchButton"'));
   assert.ok(js.includes('/cancel'));

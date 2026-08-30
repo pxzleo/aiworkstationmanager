@@ -184,6 +184,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         resolved_sampler.start()
         try:
             await resolved_registry.start()
+            resolved_registry.submit_default_scene_activation()
             yield
         finally:
             try:
@@ -507,6 +508,20 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
                            session: AuthenticatedSession = Depends(require_csrf)) -> Response:
         resolved_registry.delete_scene(scene_id, session.username, _client_ip(request))
         return Response(status_code=204)
+
+    @app.put("/api/v1/scenes/{scene_id}/default")
+    async def set_default_scene(scene_id: str, request: Request,
+                                session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, Any]:
+        return resolved_registry.set_default_scene(
+            scene_id, True, session.username, _client_ip(request)
+        )
+
+    @app.delete("/api/v1/scenes/{scene_id}/default")
+    async def clear_default_scene(scene_id: str, request: Request,
+                                  session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, Any]:
+        return resolved_registry.set_default_scene(
+            scene_id, False, session.username, _client_ip(request)
+        )
 
     @app.post("/api/v1/scenes/{scene_id}/activate", status_code=202)
     async def activate_scene(scene_id: str, request: Request,

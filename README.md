@@ -78,6 +78,8 @@ Create a scene in Work Scenes and select its registered services. Before switchi
 
 The progress window shows every step and can cancel steps that have not started. Completed service actions are not rolled back automatically.
 
+A project can have one optional default scene. Setting it does not switch immediately; AXIS activates it the next time the manager starts. Clearing the default only removes this startup behavior and does not stop current services.
+
 ## Common configuration
 
 Copy the example before changing settings:
@@ -117,7 +119,7 @@ Install a system-start task with an explicit configuration file:
 .\Install-ManagerTask.ps1 -Trigger Startup -ConfigFile .\config\settings.json
 ```
 
-Remove it with `.\Uninstall-ManagerTask.ps1`. The scheduled task starts AXIS only; it never starts registered services automatically.
+Remove it with `.\Uninstall-ManagerTask.ps1`. With no default scene, the task starts AXIS only. When a default scene is configured, AXIS applies the normal scene-switch rules at startup and controls the corresponding services.
 
 ## More documentation
 

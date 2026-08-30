@@ -99,6 +99,44 @@ class FakeHealthProbe:
 
 
 class DatabaseRegistryTests(unittest.TestCase):
+    def test_schema_eighteen_upgrade_keeps_existing_scenes_non_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "manager.db"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute("CREATE TABLE schema_version(version INTEGER NOT NULL)")
+                connection.execute("INSERT INTO schema_version(version) VALUES (18)")
+                connection.execute(
+                    """CREATE TABLE scenes(
+                           id TEXT PRIMARY KEY,name TEXT,description TEXT,display_order INTEGER,
+                           created_at TEXT,updated_at TEXT
+                       )"""
+                )
+                connection.execute(
+                    "INSERT INTO scenes VALUES (?,?,?,?,?,?)",
+                    ("a" * 32, "旧场景", "", 0, "created", "updated"),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            database = Database(path)
+            with database.connect() as connection:
+                version = connection.execute(
+                    "SELECT version FROM schema_version"
+                ).fetchone()["version"]
+                scene = connection.execute(
+                    "SELECT is_default FROM scenes WHERE id=?", ("a" * 32,)
+                ).fetchone()
+                index = connection.execute(
+                    """SELECT 1 FROM sqlite_master
+                       WHERE type='index' AND name='idx_scenes_single_default'"""
+                ).fetchone()
+
+            self.assertEqual(version, 19)
+            self.assertEqual(scene["is_default"], 0)
+            self.assertIsNotNone(index)
+
     def test_schema_seventeen_service_state_migrates_to_dual_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "manager.db"
@@ -135,7 +173,7 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 18)
+            self.assertEqual(SCHEMA_VERSION, 19)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -176,6 +214,25 @@ class DatabaseRegistryTests(unittest.TestCase):
             self.assertEqual([item["id"] for item in database.list_scenes()],
                              [second["id"], first["id"], third["id"]])
             self.assertEqual([item["display_order"] for item in database.list_scenes()], [0, 1, 2])
+
+    def test_default_scene_is_unique_and_deleting_it_clears_the_setting(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Database(Path(temporary) / "manager.db")
+            first = {"id": "1" * 32, "name": "场景一", "description": "", "service_ids": []}
+            second = {"id": "2" * 32, "name": "场景二", "description": "", "service_ids": []}
+            database.create_scene(first)
+            database.create_scene(second)
+
+            self.assertIsNone(database.get_default_scene())
+            self.assertTrue(database.set_default_scene(first["id"], True))
+            self.assertEqual(database.get_default_scene()["id"], first["id"])
+            self.assertTrue(database.set_default_scene(second["id"], True))
+            scenes = {item["id"]: item for item in database.list_scenes()}
+            self.assertEqual(scenes[first["id"]]["is_default"], 0)
+            self.assertEqual(scenes[second["id"]]["is_default"], 1)
+
+            self.assertTrue(database.delete_scene(second["id"]))
+            self.assertIsNone(database.get_default_scene())
 
     def test_scene_reorder_rolls_back_when_audit_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -219,7 +276,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-                self.assertEqual(version, 18)
+                self.assertEqual(version, 19)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -262,7 +319,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 18)
+            self.assertEqual(SCHEMA_VERSION, 19)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -328,7 +385,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 60, bucket_seconds=15, now=now + timedelta(seconds=30)
             )
 
-            self.assertEqual(SCHEMA_VERSION, 18)
+            self.assertEqual(SCHEMA_VERSION, 19)
             self.assertEqual(result["stored_sample_count"], 3)
             self.assertEqual(len(result["samples"]), 2)
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
@@ -378,7 +435,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_gpu_samples WHERE sample_id=1"
                 ).fetchone()
 
-            self.assertEqual(version, 18)
+            self.assertEqual(version, 19)
             self.assertEqual(row["temperature_c"], 62)
             self.assertIsNone(row["power_w"])
             self.assertIsNone(row["graphics_clock_mhz"])
@@ -417,7 +474,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_samples"
                 ).fetchone()
 
-            self.assertEqual(version, 18)
+            self.assertEqual(version, 19)
             self.assertEqual(row["memory_percent"], 50)
             self.assertIsNone(row["memory_used_bytes"])
             self.assertIsNone(row["memory_total_bytes"])
@@ -710,6 +767,29 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action_calls, [("A.ps1", "stop")])
         self.assertNotIn(("D.ps1", "stop"), action_calls)
         self.assertEqual(self.manager.list_scenes()[0]["state"], "active")
+
+    async def test_default_scene_uses_the_normal_scene_activation_operation(self) -> None:
+        service = await self.add_service("默认服务")
+        scene = self.manager.create_scene(
+            {"name": "默认工作", "description": "", "service_ids": [service["id"]]},
+            "admin", "local",
+        )
+
+        self.assertIsNone(self.manager.submit_default_scene_activation())
+        updated = self.manager.set_default_scene(scene["id"], True, "admin", "local")
+        self.assertEqual(updated["is_default"], 1)
+        operation_id = self.manager.submit_default_scene_activation()
+        self.assertIsNotNone(operation_id)
+        operation = await self.wait_operation(operation_id)
+
+        self.assertEqual(operation["status"], "succeeded")
+        self.assertEqual(operation["requested_by"], "system")
+        self.assertEqual(operation["source_ip"], "startup")
+        self.assertEqual(self.runner.calls[-1], ("默认服务.ps1", "start"))
+
+        cleared = self.manager.set_default_scene(scene["id"], False, "admin", "local")
+        self.assertEqual(cleared["is_default"], 0)
+        self.assertIsNone(self.manager.submit_default_scene_activation())
 
     async def test_scene_does_not_stop_unhealthy_or_unknown_services(self) -> None:
         target = await self.add_service("目标")
@@ -1164,6 +1244,28 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ApiRegistryTests(unittest.TestCase):
+    def test_application_startup_checks_for_a_default_scene_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = Settings(
+                database_path=root / "manager.db", manager_log_path=root / "manager.log",
+                sample_interval_seconds=60,
+            )
+            database = Database(settings.database_path)
+            registry = RegisteredServiceManager(database, FakeRunner(), FakeHealthProbe())
+            sampler = Sampler(settings, collector=lambda _: {
+                "sampled_at": "2099-01-01T00:00:00+00:00",
+                "host": {"cpu": {}, "memory": {}, "disks": []}, "gpus": [],
+                "docker": {"containers": []}, "ports": [], "collector_errors": [],
+            })
+
+            with patch.object(
+                registry, "submit_default_scene_activation",
+                wraps=registry.submit_default_scene_activation,
+            ) as trigger:
+                with TestClient(create_app(settings, sampler, database, registry)):
+                    trigger.assert_called_once_with()
+
     def test_authenticated_service_and_scene_crud(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1198,6 +1300,16 @@ class ApiRegistryTests(unittest.TestCase):
                     "/api/v1/scenes/reorder", headers=headers, json={"scene_ids": [scene.json()["id"]]}
                 )
                 self.assertEqual(reordered.status_code, 200, reordered.text)
+                defaulted = client.put(
+                    f"/api/v1/scenes/{scene.json()['id']}/default", headers=headers
+                )
+                self.assertEqual(defaulted.status_code, 200, defaulted.text)
+                self.assertEqual(defaulted.json()["is_default"], 1)
+                cleared = client.delete(
+                    f"/api/v1/scenes/{scene.json()['id']}/default", headers=headers
+                )
+                self.assertEqual(cleared.status_code, 200, cleared.text)
+                self.assertEqual(cleared.json()["is_default"], 0)
                 scene_service = client.get("/api/v1/scenes").json()["scenes"][0]["services"][0]
                 self.assertEqual(scene_service["name"], "API 服务")
                 self.assertEqual(scene_service["ui_url"], "http://127.0.0.1:8080")

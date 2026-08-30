@@ -239,6 +239,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .scene-panel-top i { min-height: 27px; display: inline-flex; align-items: center; padding: 0 9px; border: 1px solid rgba(231,184,106,.28); border-radius: 999px; background: rgba(231,184,106,.08); font-style: normal; color: var(--warning); }
 .scene-panel-top .scene-status { border-color: rgba(var(--accent-rgb),.32); background: rgba(var(--accent-rgb),.1); color: var(--accent); }
 .scene-panel-top .scene-inactive { border-color: var(--line); background: var(--surface-3); color: var(--muted); }
+.scene-panel-top .scene-default-badge { border-color: rgba(var(--accent-rgb),.55); background: rgba(var(--accent-rgb),.16); color: var(--accent); font-weight: 700; letter-spacing: .04em; }
 .scene-panel-meta { display: flex; align-items: center; gap: 10px; }
 .scene-drag-handle { width: 29px; height: 27px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--muted); cursor: grab; line-height: 1; }
 .scene-drag-handle:hover { color: var(--accent); border-color: rgba(var(--accent-rgb),.45); }

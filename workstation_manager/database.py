@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 
 class DatabaseError(RuntimeError):
@@ -101,6 +101,7 @@ class Database:
                         16: self._migrate_to_16,
                         17: self._migrate_to_17,
                         18: self._migrate_to_18,
+                        19: self._migrate_to_19,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -422,6 +423,25 @@ class Database:
                    observed_state=recorded_state,
                    observed_at=state_updated_at,
                    observed_error=state_error"""
+        )
+
+    @classmethod
+    def _migrate_to_19(cls, connection: sqlite3.Connection) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='scenes'"
+        ).fetchone()
+        if table is None:
+            return
+        cls._ensure_column(connection, "scenes", "is_default", "INTEGER NOT NULL DEFAULT 0")
+        connection.execute("UPDATE scenes SET is_default=0 WHERE is_default NOT IN (0, 1)")
+        default_rows = connection.execute(
+            "SELECT id FROM scenes WHERE is_default=1 ORDER BY updated_at DESC, id"
+        ).fetchall()
+        for row in default_rows[1:]:
+            connection.execute("UPDATE scenes SET is_default=0 WHERE id=?", (row["id"],))
+        connection.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_scenes_single_default
+               ON scenes(is_default) WHERE is_default=1"""
         )
 
     @staticmethod
@@ -1171,6 +1191,33 @@ class Database:
 
     def get_scene(self, scene_id: str) -> dict[str, Any] | None:
         return next((item for item in self.list_scenes() if item["id"] == scene_id), None)
+
+    def get_default_scene(self) -> dict[str, Any] | None:
+        return next((item for item in self.list_scenes() if item["is_default"] == 1), None)
+
+    def set_default_scene(self, scene_id: str, enabled: bool) -> bool:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    exists = connection.execute(
+                        "SELECT 1 FROM scenes WHERE id=?", (scene_id,)
+                    ).fetchone()
+                    if exists is None:
+                        return False
+                    if enabled:
+                        connection.execute("UPDATE scenes SET is_default=0 WHERE is_default=1")
+                        connection.execute(
+                            "UPDATE scenes SET is_default=1,updated_at=? WHERE id=?",
+                            (utc_now(), scene_id),
+                        )
+                    else:
+                        connection.execute(
+                            "UPDATE scenes SET is_default=0,updated_at=? WHERE id=?",
+                            (utc_now(), scene_id),
+                        )
+                    return True
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"保存默认场景失败: {exc}") from exc
 
     def create_scene(self, item: dict[str, Any]) -> None:
         now = utc_now()

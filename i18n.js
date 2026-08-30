@@ -37,6 +37,8 @@
     '服务组合': 'Service combinations',
     '新场景添加在末尾；拖动卡片或使用上移、下移调整顺序。': 'New scenes are added last. Drag cards or use Move up and Move down to reorder them.',
     '添加场景': 'Add Scene', '尚未添加场景。': 'No scenes have been added.', '切换规则': 'Switching rules',
+    '默认场景': 'Default Scene', '设为默认': 'Set as Default', '取消默认': 'Clear Default',
+    '已设置默认场景': 'Default scene set', '已取消默认场景': 'Default scene cleared',
     '不执行自动回滚，最终状态和失败原因写入操作日志。': 'There is no automatic rollback. Final states and failures are written to the operation log.',
     '停止未选服务': 'Stop unselected services', '逐个调用 stop': 'Run stop one by one',
     '记录停止结果': 'Record stop results', '任一失败则不启动': 'Do not start if any stop fails',
@@ -224,6 +226,7 @@
     [/^无法启动管理脚本: (.+)$/, 'Unable to start the management script: $1'],
     [/^删除服务“(.+)”的登记记录？原始脚本和服务不会被删除。$/, 'Delete the registration for “$1”? The original script and service will not be deleted.'],
     [/^删除场景“(.+)”？不会停止或删除任何服务。$/, 'Delete scene “$1”? No services will be stopped or deleted.'],
+    [/^将“(.+)”设为默认场景？AXIS 下次启动时会自动切换到该场景。$/, 'Set “$1” as the default scene? AXIS will switch to it automatically the next time it starts.'],
     [/^删除用户“(.+)”？该用户的登录会话将立即失效。$/, 'Delete user “$1”? All sessions for this user will be invalidated immediately.'],
   ];
   const reverseTranslations = Object.fromEntries(Object.entries(translations).map(([zh, en]) => [en, zh]));
