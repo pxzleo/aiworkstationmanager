@@ -63,6 +63,7 @@
     '正在加载用户。': 'Loading users.', '管理记录': 'Management records',
     '只记录服务启停与场景切换的时间和结果。': 'Only service lifecycle and scene switch times and results are recorded.',
     '记录服务启停与场景切换的时间、结果和操作账号。': 'Records service lifecycle and scene switch times, results, and operator accounts.',
+    '记录服务启停、场景切换与默认场景更改的时间、结果和操作账号。': 'Records service lifecycle, scene switches, and default-scene changes with their times, results, and operator accounts.',
     '刷新记录': 'Refresh Log', '服务与场景操作': 'Service and Scene Operations',
     '包含每个脚本步骤、耗时和失败摘要': 'Includes every script step, duration, and failure summary',
     '尚无服务或场景操作。': 'No service or scene operations.', '操作账号': 'Operator', '未知账号': 'Unknown account', '安全访问': 'Secure Access',
