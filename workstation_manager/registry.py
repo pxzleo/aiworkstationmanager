@@ -881,14 +881,16 @@ class RegisteredServiceManager:
     async def _run_stop_all_operation(self, operation_id: str, _: str, __: str) -> None:
         await self.refresh_all_health(immediate=True)
         before = {key: value.get("state", "unknown") for key, value in self.statuses.items()}
-        self.database.update_operation(operation_id, status="running", started_at=utc_now(),
-                                       before_state=str(before))
         services = self.database.list_registered_services()
-        success = True
         targets = [
             service for service in services
             if self.statuses.get(service["id"], {}).get("state") != "stopped"
         ]
+        self.database.update_operation(
+            operation_id, status="running", started_at=utc_now(),
+            before_state=str(before), total_steps=len(targets),
+        )
+        success = True
         for sequence, service in enumerate(targets, start=1):
             success = await self._run_script_action(
                 operation_id, sequence, "stop_all", service, "stop"

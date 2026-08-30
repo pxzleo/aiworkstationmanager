@@ -15,6 +15,7 @@ if (!monitorChart) throw new Error('Monitor chart helper is unavailable.');
 const requestGuard = new RequestGuard();
 const actionGuard = new ExclusiveActionGuard();
 let sceneProgressOperationId = null;
+let progressCancelLabel = '终止切换并返回';
 let draggedSceneId = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
@@ -440,35 +441,39 @@ function renderScenes() {
 
 async function runServiceAction(service, action) { const owner = actionGuard.acquire(); if (!owner) return showToast('已有操作正在执行'); try { const result = await api(`/registered-services/${service.id}/actions`, { method: 'POST', body: { action } }); showToast('服务操作已开始'); await pollOperation(result.operation_id); } catch (error) { showToast(error.message); } finally { actionGuard.release(owner); await refreshServicesAndScenes(); } }
 async function runServiceStatusCheck(service) { const owner = actionGuard.acquire(); if (!owner) return showToast('已有操作正在执行'); try { await api(`/registered-services/${service.id}/status`, { method: 'POST' }); showToast('状态检查完成'); } catch (error) { showToast(error.message); } finally { actionGuard.release(owner); await refreshServicesAndScenes(); } }
-async function stopAllServices() { if (!state.services.length || !confirmUi('停止所有已登记服务？管理器将依次调用每个服务脚本的 stop 动作。')) return; const owner = actionGuard.acquire(); if (!owner) return showToast('已有操作正在执行'); try { const result = await api('/registered-services/actions/stop-all', { method: 'POST' }); showToast('正在停止全部服务'); await pollOperation(result.operation_id); } catch (error) { showToast(error.message); } finally { actionGuard.release(owner); await refreshServicesAndScenes(); } }
+async function stopAllServices() { if (!state.services.length || !confirmUi('停止所有已登记服务？管理器将依次调用每个服务脚本的 stop 动作。')) return; const owner = actionGuard.acquire(); if (!owner) return showToast('已有操作正在执行'); try { const result = await api('/registered-services/actions/stop-all', { method: 'POST' }); openStopAllProgress(result.operation_id); showToast('正在停止全部服务'); await pollOperation(result.operation_id, (item) => renderStopAllProgress(item), null); } catch (error) { showToast(error.message); if (byId('sceneProgressDialog').open) byId('sceneProgressDialog').close(); } finally { sceneProgressOperationId = null; actionGuard.release(owner); await refreshServicesAndScenes(); } }
 async function activateScene(scene) { const owner = actionGuard.acquire(); if (!owner) return showToast('已有操作正在执行'); try { const result = await api(`/scenes/${scene.id}/activate`, { method: 'POST' }); openSceneProgress(scene, result.operation_id); await pollOperation(result.operation_id, (item) => renderSceneProgress(scene, item), null); } catch (error) { showToast(error.message); if (byId('sceneProgressDialog').open) byId('sceneProgressDialog').close(); } finally { sceneProgressOperationId = null; actionGuard.release(owner); await refreshServicesAndScenes(); } }
 async function setDefaultScene(scene) { if (!scene.is_default && !confirmUi(`将“${scene.name}”设为默认场景？AXIS 下次启动时会自动切换到该场景。`)) return; try { await api(`/scenes/${scene.id}/default`, { method: scene.is_default ? 'DELETE' : 'PUT' }); showToast(scene.is_default ? '已取消默认场景' : '已设置默认场景'); await refreshServicesAndScenes(); } catch (error) { showToast(error.message); } }
 async function pollOperation(id, onUpdate = null, maxAttempts = 240) { for (let i = 0; maxAttempts === null || i < maxAttempts; i += 1) { await new Promise((resolve) => setTimeout(resolve, 1000)); const item = await api(`/operations/${id}`, { timeout: ACTION_TIMEOUT_MS }); if (onUpdate) onUpdate(item); if (!['queued', 'running'].includes(item.status)) { showToast(item.status === 'succeeded' ? '操作成功' : item.status === 'interrupted' ? '操作已终止' : item.error_summary || '操作失败'); await refreshLogs(); return item; } } throw new ApiError(0, 'operation_timeout', '操作仍在后台执行，请到日志中心查看。'); }
 
-function openSceneProgress(scene, operationId) {
-  sceneProgressOperationId = operationId;
-  text('sceneProgressTitle', `正在切换到 ${scene.name}`); text('sceneProgressSummary', '管理器正在按顺序停止和启动服务。'); text('sceneProgressPercent', '0%'); text('sceneProgressCurrent', '等待第一项服务操作');
+function openOperationProgress(operationId, title, summary, waiting, cancelLabel, closeLabel) {
+  sceneProgressOperationId = operationId; progressCancelLabel = cancelLabel || '';
+  text('sceneProgressTitle', title); text('sceneProgressSummary', summary); text('sceneProgressPercent', '0%'); text('sceneProgressCurrent', waiting);
   byId('sceneProgressBar').style.width = '0%'; byId('sceneProgressLog').replaceChildren(element('li', '', '等待第一条服务操作记录。'));
-  byId('cancelSceneSwitchButton').hidden = false; byId('cancelSceneSwitchButton').disabled = false; text('cancelSceneSwitchButton', '终止切换并返回'); byId('closeSceneProgressButton').hidden = true;
+  byId('cancelSceneSwitchButton').hidden = !cancelLabel; byId('cancelSceneSwitchButton').disabled = false; if (cancelLabel) text('cancelSceneSwitchButton', cancelLabel); byId('closeSceneProgressButton').hidden = true; text('closeSceneProgressButton', closeLabel);
   const dialog = byId('sceneProgressDialog'); if (!dialog.open) dialog.showModal();
 }
-function renderSceneProgress(scene, operation) {
-  const steps = operation.steps || []; const total = Math.max(1, state.services.filter((service) => !scene.service_ids.includes(service.id) && service.status.state === 'running').length + scene.service_ids.length); const finished = steps.filter((step) => step.status !== 'running').length; const terminal = !['queued', 'running'].includes(operation.status); const progress = terminal ? 100 : Math.min(99, Math.round((finished / total) * 100));
+function openSceneProgress(scene, operationId) { openOperationProgress(operationId, `正在切换到 ${scene.name}`, '管理器正在按顺序停止和启动服务。', '等待第一项服务操作', '终止切换并返回', '返回工作场景'); }
+function openStopAllProgress(operationId) { openOperationProgress(operationId, '正在停止全部服务', '管理器正在确认需要停止的服务并按顺序执行。', '正在确认需要停止的服务', '', '返回服务列表'); }
+function renderOperationProgress(operation, total, terminalCopy) {
+  const steps = operation.steps || []; const finished = steps.filter((step) => step.status !== 'running').length; const terminal = !['queued', 'running'].includes(operation.status); const knownTotal = Number.isInteger(total) && total >= 0; const progress = terminal ? 100 : knownTotal && total > 0 ? Math.min(99, Math.round((finished / total) * 100)) : 0;
   text('sceneProgressPercent', `${progress}%`); byId('sceneProgressBar').style.width = `${progress}%`;
   const current = [...steps].reverse().find((step) => step.status === 'running');
   if (current) text('sceneProgressCurrent', `${current.action === 'start' ? '正在启动' : '正在停止'} · ${targetName('service', current.target_id)}`);
-  else if (terminal) text('sceneProgressCurrent', operation.status === 'succeeded' ? '场景切换完成' : operation.status === 'interrupted' ? '场景切换已终止' : operation.error_summary || '场景切换失败');
+  else if (terminal) text('sceneProgressCurrent', operation.status === 'succeeded' ? terminalCopy.successCurrent : operation.status === 'interrupted' ? terminalCopy.interruptedCurrent : operation.error_summary || terminalCopy.failureCurrent);
   const log = byId('sceneProgressLog'); log.replaceChildren();
-  if (!steps.length) log.append(element('li', '', terminal ? '没有需要执行的服务步骤。' : '等待第一条服务操作记录。'));
+  if (!steps.length) log.append(element('li', '', terminal ? '没有需要执行的服务步骤。' : knownTotal && total === 0 ? '无需执行服务步骤，正在确认最终状态。' : '等待第一条服务操作记录。'));
   steps.forEach((step) => { const item = element('li', step.status); item.append(element('time', '', formatDate(step.started_at)), element('span', '', `${ui(step.action === 'start' ? '启动' : '停止')} ${targetName('service', step.target_id)}`), element('em', '', step.status === 'running' ? '进行中' : step.status === 'succeeded' ? '成功' : step.status === 'interrupted' ? '已终止' : '失败')); log.append(item); });
   log.scrollTop = log.scrollHeight;
-  if (terminal) { text('sceneProgressTitle', operation.status === 'succeeded' ? `${scene.name} 已就绪` : operation.status === 'interrupted' ? '切换已终止' : '场景切换未完成'); text('sceneProgressSummary', operation.error_summary || (operation.status === 'succeeded' ? '所有服务均已达到目标状态。' : '请在日志中心查看失败步骤。')); byId('cancelSceneSwitchButton').hidden = true; byId('closeSceneProgressButton').hidden = false; }
+  if (terminal) { text('sceneProgressTitle', operation.status === 'succeeded' ? terminalCopy.successTitle : operation.status === 'interrupted' ? terminalCopy.interruptedTitle : terminalCopy.failureTitle); text('sceneProgressSummary', operation.error_summary || (operation.status === 'succeeded' ? terminalCopy.successSummary : terminalCopy.failureSummary)); byId('cancelSceneSwitchButton').hidden = true; byId('closeSceneProgressButton').hidden = false; }
 }
+function renderSceneProgress(scene, operation) { const total = state.services.filter((service) => !scene.service_ids.includes(service.id) && service.status.state === 'running').length + scene.service_ids.length; renderOperationProgress(operation, total, { successCurrent: '场景切换完成', interruptedCurrent: '场景切换已终止', failureCurrent: '场景切换失败', successTitle: `${scene.name} 已就绪`, interruptedTitle: '切换已终止', failureTitle: '场景切换未完成', successSummary: '所有服务均已达到目标状态。', failureSummary: '请在日志中心查看失败步骤。' }); }
+function renderStopAllProgress(operation) { renderOperationProgress(operation, operation.total_steps, { successCurrent: '全部服务已停止', interruptedCurrent: '停止操作已终止', failureCurrent: '停止全部服务失败', successTitle: '全部服务已停止', interruptedTitle: '停止操作已终止', failureTitle: '停止全部服务未完成', successSummary: '所有已登记服务均已停止。', failureSummary: '请在日志中心查看失败步骤。' }); }
 async function cancelSceneSwitch() {
   const operationId = sceneProgressOperationId; if (!operationId) return;
   const button = byId('cancelSceneSwitchButton'); button.disabled = true; text('cancelSceneSwitchButton', '正在提交终止请求…');
   try { await api(`/operations/${operationId}/cancel`, { method: 'POST' }); byId('sceneProgressDialog').close(); showToast('终止请求已提交，当前步骤结束后停止'); }
-  catch (error) { button.disabled = false; text('cancelSceneSwitchButton', '终止切换并返回'); showToast(error.message); }
+  catch (error) { button.disabled = false; text('cancelSceneSwitchButton', progressCancelLabel); showToast(error.message); }
 }
 
 function openServiceDialog(service = null) { byId('serviceForm').reset(); text('serviceFormError', ''); text('serviceDialogTitle', service ? '编辑服务' : '添加服务'); byId('serviceId').value = service?.id || ''; byId('serviceName').value = service?.name || ''; byId('serviceDescription').value = service?.description || ''; byId('serviceScriptPath').value = service?.script_path || ''; byId('serviceGpu').value = service?.gpu_label || ''; byId('servicePort').value = service?.port || ''; byId('serviceUiUrl').value = service?.ui_url || ''; byId('serviceHealthUrl').value = service?.health_url || ''; byId('serviceHealthExpect').value = service?.health_expect || ''; byId('serviceDialog').showModal(); }

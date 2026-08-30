@@ -44,6 +44,16 @@ test('registered service editor exposes the agreed fields and actions', () => {
   assert.ok(js.includes("health_url"));
   assert.ok(js.includes("health_expect"));
   assert.ok(html.includes('id="stopAllServicesButton"'));
+  assert.ok(js.includes('openStopAllProgress(result.operation_id)'));
+  assert.ok(js.includes('renderStopAllProgress(item)'));
+  assert.ok(js.includes('renderOperationProgress(operation, operation.total_steps'));
+  assert.ok(!js.includes('stopAllProgressTotal'));
+  assert.ok(!js.includes("state.services.filter((service) => service.status.state !== 'stopped').length"));
+  assert.ok(js.includes("全部服务已停止"));
+  assert.ok(js.includes("返回服务列表"));
+  for (const copy of ['管理器正在确认需要停止的服务并按顺序执行。', '正在确认需要停止的服务', '无需执行服务步骤，正在确认最终状态。']) {
+    assert.ok(i18n.includes(`'${copy}':`), `missing stop-all translation: ${copy}`);
+  }
   assert.ok(js.includes('/registered-services/actions/stop-all'));
   assert.ok(js.includes('filtered.forEach((service, index)'));
   assert.ok(js.includes("userElement('i', 'env-logo', String(index + 1))"));
@@ -285,8 +295,8 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
   assert.ok(html.includes('styles.css?v=20260830-11'));
-  assert.ok(html.includes('i18n.js?v=20260830-9'));
-  assert.ok(html.includes('app.js?v=20260830-10'));
+  assert.ok(html.includes('i18n.js?v=20260830-10'));
+  assert.ok(html.includes('app.js?v=20260830-11'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
