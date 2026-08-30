@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 
 class DatabaseError(RuntimeError):
@@ -103,6 +103,7 @@ class Database:
                         18: self._migrate_to_18,
                         19: self._migrate_to_19,
                         20: self._migrate_to_20,
+                        21: self._migrate_to_21,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -455,6 +456,15 @@ class Database:
         cls._ensure_column(
             connection, "scenes", "detailed_description", "TEXT NOT NULL DEFAULT ''"
         )
+
+    @classmethod
+    def _migrate_to_21(cls, connection: sqlite3.Connection) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='operations'"
+        ).fetchone()
+        if table is None:
+            return
+        cls._ensure_column(connection, "operations", "total_steps", "INTEGER")
 
     @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
@@ -905,7 +915,7 @@ class Database:
     def update_operation(self, operation_id: str, **fields: Any) -> None:
         allowed = {
             "status", "before_state", "after_state", "result", "error_summary",
-            "started_at", "finished_at", "audit_event_id",
+            "started_at", "finished_at", "audit_event_id", "total_steps",
         }
         if not fields or set(fields) - allowed:
             raise DatabaseError("操作更新字段不受支持")

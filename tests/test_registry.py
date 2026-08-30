@@ -99,6 +99,50 @@ class FakeHealthProbe:
 
 
 class DatabaseRegistryTests(unittest.TestCase):
+    def test_schema_twenty_adds_writable_operation_total_steps(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "manager.db"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute("CREATE TABLE schema_version(version INTEGER NOT NULL)")
+                connection.execute("INSERT INTO schema_version(version) VALUES (20)")
+                connection.execute(
+                    """CREATE TABLE operations (
+                           id TEXT PRIMARY KEY, kind TEXT NOT NULL, target_id TEXT NOT NULL,
+                           action TEXT NOT NULL, requested_by TEXT NOT NULL, source_ip TEXT NOT NULL,
+                           status TEXT NOT NULL, before_state TEXT, after_state TEXT,
+                           result TEXT, error_summary TEXT, created_at TEXT NOT NULL,
+                           started_at TEXT, finished_at TEXT, audit_event_id INTEGER
+                       )"""
+                )
+                connection.execute(
+                    """INSERT INTO operations(
+                           id,kind,target_id,action,requested_by,source_ip,status,created_at
+                       ) VALUES (?,?,?,?,?,?,?,?)""",
+                    ("a" * 32, "stop_all", "all", "stop", "admin", "local", "succeeded", "now"),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            database = Database(path)
+            with database.connect() as connection:
+                migrated = connection.execute(
+                    "SELECT total_steps FROM operations WHERE id=?", ("a" * 32,)
+                ).fetchone()
+                version = connection.execute(
+                    "SELECT version FROM schema_version"
+                ).fetchone()["version"]
+            self.assertEqual(version, 21)
+            self.assertIsNone(migrated["total_steps"])
+
+            database.update_operation("a" * 32, total_steps=3)
+            with database.connect() as connection:
+                stored = connection.execute(
+                    "SELECT total_steps FROM operations WHERE id=?", ("a" * 32,)
+                ).fetchone()
+            self.assertEqual(stored["total_steps"], 3)
+
     def test_schema_eighteen_upgrade_keeps_existing_scenes_non_default(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "manager.db"
@@ -134,7 +178,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                        WHERE type='index' AND name='idx_scenes_single_default'"""
                 ).fetchone()
 
-            self.assertEqual(version, 20)
+            self.assertEqual(version, 21)
             self.assertEqual(scene["is_default"], 0)
             self.assertEqual(scene["detailed_description"], "")
             self.assertIsNotNone(index)
@@ -175,7 +219,7 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 20)
+            self.assertEqual(SCHEMA_VERSION, 21)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -278,7 +322,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-                self.assertEqual(version, 20)
+                self.assertEqual(version, 21)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -321,7 +365,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 20)
+            self.assertEqual(SCHEMA_VERSION, 21)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -387,7 +431,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 60, bucket_seconds=15, now=now + timedelta(seconds=30)
             )
 
-            self.assertEqual(SCHEMA_VERSION, 20)
+            self.assertEqual(SCHEMA_VERSION, 21)
             self.assertEqual(result["stored_sample_count"], 3)
             self.assertEqual(len(result["samples"]), 2)
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
@@ -437,7 +481,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_gpu_samples WHERE sample_id=1"
                 ).fetchone()
 
-            self.assertEqual(version, 20)
+            self.assertEqual(version, 21)
             self.assertEqual(row["temperature_c"], 62)
             self.assertIsNone(row["power_w"])
             self.assertIsNone(row["graphics_clock_mhz"])
@@ -476,7 +520,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_samples"
                 ).fetchone()
 
-            self.assertEqual(version, 20)
+            self.assertEqual(version, 21)
             self.assertEqual(row["memory_percent"], 50)
             self.assertIsNone(row["memory_used_bytes"])
             self.assertIsNone(row["memory_total_bytes"])
@@ -899,10 +943,33 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "succeeded")
         self.assertEqual(result["after_state"], "stopped")
+        self.assertEqual(result["total_steps"], 2)
         self.assertEqual([call for call in self.runner.calls if call[1] == "stop"],
                          [("A.ps1", "stop"), ("B.ps1", "stop")])
         self.assertEqual([step["phase"] for step in result["steps"]],
                          ["stop_all", "stop_all"])
+
+    async def test_stop_all_total_uses_states_after_immediate_health_refresh(self) -> None:
+        first = await self.add_service("刷新后停止")
+        second = await self.add_service("刷新后运行")
+        self.manager.statuses[first["id"]]["state"] = "running"
+        self.manager.statuses[second["id"]]["state"] = "stopped"
+
+        async def refresh_after_state_change(*, immediate: bool = False) -> None:
+            self.assertTrue(immediate)
+            self.manager.statuses[first["id"]]["state"] = "stopped"
+            self.manager.statuses[second["id"]]["state"] = "running"
+
+        self.runner.calls.clear()
+        with patch.object(self.manager, "refresh_all_health", refresh_after_state_change):
+            operation = self.manager.submit_stop_all("admin", "local")
+            result = await self.wait_operation(operation)
+
+        self.assertEqual(result["total_steps"], 1)
+        self.assertEqual(
+            [call for call in self.runner.calls if call[1] == "stop"],
+            [("刷新后运行.ps1", "stop")],
+        )
 
     async def test_cancel_scene_stops_before_next_service(self) -> None:
         runner = BlockingActionRunner()
