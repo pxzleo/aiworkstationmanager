@@ -37,6 +37,12 @@ Initial setup, login, and user creation share one body. After trimming, `usernam
 {"username":"admin","password":"1234"}
 ```
 
+Only the login endpoint accepts the optional boolean field `remember`. When `true`, it creates a 30-day server session and a persistent cookie with the same lifetime; omitted or `false` continues to use `session_ttl_seconds`:
+
+```json
+{"username":"admin","password":"1234","remember":true}
+```
+
 Password updates use:
 
 ```json

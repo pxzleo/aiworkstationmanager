@@ -19,6 +19,14 @@ test('authentication UI accepts the configured four-character minimum', () => {
   }
   assert.ok(js.includes('密码至少 4 个字符'));
   assert.ok(!html.includes('minlength="12"'));
+  assert.ok(html.includes('id="rememberLoginInput"'));
+  assert.ok(html.includes('在该电脑自动登录'));
+  assert.ok(html.includes('仅用于私人设备，保持登录 30 天'));
+  assert.ok(js.includes("byId('rememberLoginLabel').hidden = setup"));
+  assert.ok(js.includes("body.remember = byId('rememberLoginInput').checked"));
+  assert.ok(css.includes('.auth-remember'));
+  assert.ok(i18n.includes("'在该电脑自动登录': 'Sign in automatically on this device'"));
+  assert.ok(i18n.includes("'仅用于私人设备，保持登录 30 天': 'Private devices only. Stay signed in for 30 days.'"));
 });
 
 test('registered service editor exposes the agreed fields and actions', () => {
@@ -218,9 +226,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260830-4'));
-  assert.ok(html.includes('i18n.js?v=20260830-3'));
-  assert.ok(html.includes('app.js?v=20260830-3'));
+  assert.ok(html.includes('styles.css?v=20260830-5'));
+  assert.ok(html.includes('i18n.js?v=20260830-4'));
+  assert.ok(html.includes('app.js?v=20260830-4'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

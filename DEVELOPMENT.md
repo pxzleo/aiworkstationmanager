@@ -37,6 +37,12 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 {"username":"admin","password":"1234"}
 ```
 
+只有登录接口可额外提交布尔字段 `remember`。为 `true` 时创建 30 天服务端会话并设置同期限的持久 Cookie；省略或为 `false` 时继续使用 `session_ttl_seconds`：
+
+```json
+{"username":"admin","password":"1234","remember":true}
+```
+
 修改密码使用：
 
 ```json

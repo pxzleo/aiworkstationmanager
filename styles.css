@@ -604,6 +604,12 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .auth-panel label { color: var(--muted); font-size: 9px; margin-top: 6px; }
 .auth-panel input { width: 100%; min-height: 44px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--bg); color: var(--text); padding: 0 12px; font: inherit; }
 .auth-panel input:hover { border-color: rgba(255,255,255,.22); }
+.auth-remember { display: flex; align-items: flex-start; gap: 10px; padding: 7px 0 2px; cursor: pointer; }
+.auth-remember[hidden] { display: none; }
+.auth-panel .auth-remember input { flex: 0 0 auto; width: 16px; min-height: 16px; margin: 2px 0 0; accent-color: var(--accent); cursor: pointer; }
+.auth-remember span, .auth-remember strong, .auth-remember small { display: block; }
+.auth-remember strong { color: var(--text); font-size: 10px; font-weight: 650; }
+.auth-remember small { margin-top: 3px; color: var(--muted); font-size: 9px; line-height: 1.45; }
 .auth-panel .button { width: 100%; justify-content: center; margin-top: 8px; }
 .auth-error { min-height: 18px; margin: 0 !important; color: #ff9c9c !important; font-size: 9px !important; }
 
