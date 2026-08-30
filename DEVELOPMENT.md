@@ -68,10 +68,10 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 
 `name` 最长 100 字符，`description` 最长 1000 字符，`script_path` 必须是现有 `.ps1`、`.cmd` 或 `.bat` 绝对路径，`gpu_label` 最长 100 字符，`port` 为 `1..65535`，`ui_url` 必须为空或完整 HTTP/HTTPS 地址。
 
-登记或修改场景使用有序且不包含未知服务的 `service_ids`；重复 ID 会按首次出现去重：
+登记或修改场景使用有序且不包含未知服务的 `service_ids`；重复 ID 会按首次出现去重。`description` 是最长 1000 字符的卡片简短介绍，`detailed_description` 是最长 8000 字符的独立详细使用说明：
 
 ```json
-{"name":"开发","description":"开发服务组","service_ids":["服务ID1","服务ID2"]}
+{"name":"开发","description":"开发服务组","detailed_description":"API Base：http://127.0.0.1:8080/v1","service_ids":["服务ID1","服务ID2"]}
 ```
 
 场景排序的 `scene_ids` 必须恰好包含全部现有场景 ID 且不得重复：
@@ -194,6 +194,6 @@ WM_TRUSTED_PROXY_IPS
 
 ## 数据与并发
 
-默认数据库是 `data/workstation-manager.db`，当前 schema 为 19，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记，旧数据库升级后默认均为未设置。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
+默认数据库是 `data/workstation-manager.db`，当前 schema 为 20，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段。旧客户端更新场景时若未提交该字段，已有详细说明会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
 
 服务控制面分别保存期望状态和实际观察状态。场景、总览及 GPU 服务摘要只使用实际观察状态；状态或错误变化时才写入 SQLite，连续成功检查不会每 5 秒写盘。资源监控定时采样和健康监控都不会调用服务脚本；只有显式深度检查才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留 24 小时；内存队列固定只保留最近 15 分钟。

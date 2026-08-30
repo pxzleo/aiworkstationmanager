@@ -277,7 +277,19 @@ def validate_scene_input(payload: dict[str, Any], database: Database) -> dict[st
     missing = [item for item in service_ids if item not in known]
     if missing:
         raise RegistryError(422, "service_not_found", "场景包含不存在的已登记服务")
-    return {"name": name, "description": description, "service_ids": service_ids}
+    result = {
+        "name": name,
+        "description": description,
+        "service_ids": service_ids,
+    }
+    if "detailed_description" in payload:
+        detailed_description = str(payload.get("detailed_description") or "").strip()
+        if len(detailed_description) > 8000:
+            raise RegistryError(
+                422, "invalid_detailed_description", "场景详细说明不能超过 8000 个字符"
+            )
+        result["detailed_description"] = detailed_description
+    return result
 
 
 class RegisteredServiceManager:

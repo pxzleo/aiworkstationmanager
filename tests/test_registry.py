@@ -114,7 +114,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 )
                 connection.execute(
                     "INSERT INTO scenes VALUES (?,?,?,?,?,?)",
-                    ("a" * 32, "旧场景", "", 0, "created", "updated"),
+                    ("a" * 32, "旧场景", "旧说明", 0, "created", "updated"),
                 )
                 connection.commit()
             finally:
@@ -126,15 +126,17 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "SELECT version FROM schema_version"
                 ).fetchone()["version"]
                 scene = connection.execute(
-                    "SELECT is_default FROM scenes WHERE id=?", ("a" * 32,)
+                    "SELECT is_default,detailed_description FROM scenes WHERE id=?",
+                    ("a" * 32,),
                 ).fetchone()
                 index = connection.execute(
                     """SELECT 1 FROM sqlite_master
                        WHERE type='index' AND name='idx_scenes_single_default'"""
                 ).fetchone()
 
-            self.assertEqual(version, 19)
+            self.assertEqual(version, 20)
             self.assertEqual(scene["is_default"], 0)
+            self.assertEqual(scene["detailed_description"], "")
             self.assertIsNotNone(index)
 
     def test_schema_seventeen_service_state_migrates_to_dual_state(self) -> None:
@@ -173,7 +175,7 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 19)
+            self.assertEqual(SCHEMA_VERSION, 20)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -276,7 +278,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-                self.assertEqual(version, 19)
+                self.assertEqual(version, 20)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -319,7 +321,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 19)
+            self.assertEqual(SCHEMA_VERSION, 20)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -385,7 +387,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 60, bucket_seconds=15, now=now + timedelta(seconds=30)
             )
 
-            self.assertEqual(SCHEMA_VERSION, 19)
+            self.assertEqual(SCHEMA_VERSION, 20)
             self.assertEqual(result["stored_sample_count"], 3)
             self.assertEqual(len(result["samples"]), 2)
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
@@ -435,7 +437,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_gpu_samples WHERE sample_id=1"
                 ).fetchone()
 
-            self.assertEqual(version, 19)
+            self.assertEqual(version, 20)
             self.assertEqual(row["temperature_c"], 62)
             self.assertIsNone(row["power_w"])
             self.assertIsNone(row["graphics_clock_mhz"])
@@ -474,7 +476,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_samples"
                 ).fetchone()
 
-            self.assertEqual(version, 19)
+            self.assertEqual(version, 20)
             self.assertEqual(row["memory_percent"], 50)
             self.assertIsNone(row["memory_used_bytes"])
             self.assertIsNone(row["memory_total_bytes"])
@@ -1320,9 +1322,28 @@ class ApiRegistryTests(unittest.TestCase):
                 self.assertEqual(created.status_code, 201, created.text)
                 service_id = created.json()["id"]
                 scene = client.post("/api/v1/scenes", headers=headers, json={
-                    "name": "API 场景", "description": "", "service_ids": [service_id],
+                    "name": "API 场景", "description": "简短介绍",
+                    "detailed_description": "API Base：http://127.0.0.1:8080/v1",
+                    "service_ids": [service_id],
                 })
                 self.assertEqual(scene.status_code, 201, scene.text)
+                self.assertEqual(scene.json()["description"], "简短介绍")
+                self.assertEqual(
+                    scene.json()["detailed_description"],
+                    "API Base：http://127.0.0.1:8080/v1",
+                )
+                legacy_update = client.put(
+                    f"/api/v1/scenes/{scene.json()['id']}", headers=headers, json={
+                        "name": "API 场景（旧客户端更新）",
+                        "description": "更新后的简短介绍",
+                        "service_ids": [service_id],
+                    },
+                )
+                self.assertEqual(legacy_update.status_code, 200, legacy_update.text)
+                self.assertEqual(
+                    legacy_update.json()["detailed_description"],
+                    "API Base：http://127.0.0.1:8080/v1",
+                )
                 reordered = client.post(
                     "/api/v1/scenes/reorder", headers=headers, json={"scene_ids": [scene.json()["id"]]}
                 )

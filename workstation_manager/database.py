@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 
 class DatabaseError(RuntimeError):
@@ -102,6 +102,7 @@ class Database:
                         17: self._migrate_to_17,
                         18: self._migrate_to_18,
                         19: self._migrate_to_19,
+                        20: self._migrate_to_20,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -442,6 +443,17 @@ class Database:
         connection.execute(
             """CREATE UNIQUE INDEX IF NOT EXISTS idx_scenes_single_default
                ON scenes(is_default) WHERE is_default=1"""
+        )
+
+    @classmethod
+    def _migrate_to_20(cls, connection: sqlite3.Connection) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='scenes'"
+        ).fetchone()
+        if table is None:
+            return
+        cls._ensure_column(
+            connection, "scenes", "detailed_description", "TEXT NOT NULL DEFAULT ''"
         )
 
     @staticmethod
@@ -1229,10 +1241,11 @@ class Database:
                     ).fetchone()
                     connection.execute(
                         """INSERT INTO scenes(
-                               id,name,description,display_order,created_at,updated_at
-                           ) VALUES (?,?,?,?,?,?)""",
+                               id,name,description,detailed_description,display_order,
+                               created_at,updated_at
+                           ) VALUES (?,?,?,?,?,?,?)""",
                         (item["id"], item["name"], item["description"],
-                         row["next_order"], now, now),
+                         item.get("detailed_description", ""), row["next_order"], now, now),
                     )
                     self._replace_scene_services(connection, item["id"], item["service_ids"])
         except sqlite3.IntegrityError as exc:
@@ -1244,10 +1257,19 @@ class Database:
         try:
             with self.connect() as connection:
                 with connection:
-                    cursor = connection.execute(
-                        "UPDATE scenes SET name=?,description=?,updated_at=? WHERE id=?",
-                        (item["name"], item["description"], utc_now(), scene_id),
-                    )
+                    if "detailed_description" in item:
+                        cursor = connection.execute(
+                            """UPDATE scenes
+                               SET name=?,description=?,detailed_description=?,updated_at=?
+                               WHERE id=?""",
+                            (item["name"], item["description"],
+                             item["detailed_description"], utc_now(), scene_id),
+                        )
+                    else:
+                        cursor = connection.execute(
+                            "UPDATE scenes SET name=?,description=?,updated_at=? WHERE id=?",
+                            (item["name"], item["description"], utc_now(), scene_id),
+                        )
                     if cursor.rowcount != 1:
                         return False
                     self._replace_scene_services(connection, scene_id, item["service_ids"])

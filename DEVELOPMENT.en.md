@@ -68,10 +68,10 @@ Creating or updating a service requires the complete object. `description`, `gpu
 
 `name` is at most 100 characters, `description` at most 1000, `script_path` is an existing absolute `.ps1`, `.cmd`, or `.bat` path, `gpu_label` is at most 100 characters, `port` is `1..65535`, and `ui_url` is empty or a complete HTTP/HTTPS URL.
 
-Creating or updating a scene uses ordered `service_ids` that contain no unknown service. Duplicate IDs are reduced to their first occurrence:
+Creating or updating a scene uses ordered `service_ids` that contain no unknown service. Duplicate IDs are reduced to their first occurrence. `description` is the card's short introduction with a 1,000-character limit; `detailed_description` is a separate detailed usage field with an 8,000-character limit:
 
 ```json
-{"name":"Development","description":"Development services","service_ids":["service-id-1","service-id-2"]}
+{"name":"Development","description":"Development services","detailed_description":"API Base: http://127.0.0.1:8080/v1","service_ids":["service-id-1","service-id-2"]}
 ```
 
 Scene reorder `scene_ids` must contain every existing scene ID exactly once:
@@ -194,6 +194,6 @@ This list follows `workstation_manager/config.py`. Boolean values use `true/fals
 
 ## Data and concurrency
 
-The default database is `data/workstation-manager.db`. The current schema is 19 and migrates automatically at startup. Schema 19 adds the unique scene `is_default` marker; all existing scenes remain non-default after migration. Only one manager instance may use a database at a time, preventing duplicate script execution.
+The default database is `data/workstation-manager.db`. The current schema is 20 and migrates automatically at startup. Schema 19 adds the unique scene `is_default` marker. Schema 20 adds the separate scene `detailed_description` field. Existing details remain unchanged when an older client updates a scene without sending that field. Only one manager instance may use a database at a time, preventing duplicate script execution.
 
 The service control plane stores desired and observed states separately. Scenes, the overview, and GPU service summaries use only observed state. SQLite is updated only when the state or error changes, so successful five-second checks do not write continuously. Neither scheduled resource sampling nor health monitoring runs service scripts; only an explicit deep check invokes `status`. Resource sampling writes CPU, memory, and per-GPU load, VRAM, temperature, power, and graphics-clock metrics to SQLite and retains 24 hours by default; the in-memory queue remains limited to the latest 15 minutes.

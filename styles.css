@@ -760,6 +760,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .control-dialog label { display: grid; gap: 8px; font-size: 13px; }
 .control-dialog input, .control-dialog textarea { width: 100%; border: 1px solid var(--line, #d9dde5); border-radius: 10px; padding: 11px 12px; background: transparent; color: inherit; }
 .control-dialog textarea { min-height: 82px; resize: vertical; font: inherit; }
+.control-dialog .scene-detailed-description { min-height: 150px; }
 .editor-dialog { max-height: calc(100vh - 32px); overflow: auto; }
 .scene-service-editor { display: grid; gap: 7px; }
 .scene-service-editor > small { color: var(--muted); }
@@ -770,6 +771,11 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .scene-service-choice span { display: flex; gap: 4px; }
 .scene-service-choice button { width: 28px; height: 26px; border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 5px; cursor: pointer; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.scene-detail-dialog { width: min(760px, calc(100vw - 32px)); }
+.scene-detail-dialog > section { display: grid; gap: 16px; padding: 30px; }
+.scene-detail-dialog h2 { font-size: 25px; }
+.scene-detail-intro { color: var(--muted); line-height: 1.6; }
+.scene-detail-body { max-height: min(58vh, 520px); overflow: auto; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.75; font-size: 13px; }
 .scene-progress-dialog { width: min(720px, calc(100vw - 32px)); }
 .scene-progress-dialog > section { display: grid; gap: 18px; padding: 30px; }
 .scene-progress-dialog h2, .scene-progress-dialog p { margin: 0; }
