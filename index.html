@@ -8,7 +8,7 @@
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
   <script src="theme.js?v=20260828-1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260830-7">
+  <link rel="stylesheet" href="styles.css?v=20260830-8">
 </head>
 <body class="auth-pending">
   <svg class="svg-sprite" aria-hidden="true">
@@ -30,6 +30,14 @@
     <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5M12 17h.01"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="m6 10 6-6 6 6M12 4v16"/></symbol>
+    <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="m6 14 6 6 6-6M12 20V4"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4l11-11-4-4L4 16v4ZM13.5 6.5l4 4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z"/></symbol>
+    <symbol id="i-switch" viewBox="0 0 24 24"><path d="M7 7h12l-3-3M17 17H5l3 3M19 7l-3 3M5 17l3-3"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Zm3 0v6h8V4M8 20v-6h8v6"/></symbol>
     <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
   </svg>
 
@@ -236,25 +244,24 @@
       <div class="dialog-actions"><button class="button secondary" type="button" data-close="serviceDialog">取消</button><button class="button primary" type="submit">保存服务</button></div>
     </form>
   </dialog>
-  <dialog class="control-dialog editor-dialog" id="sceneDialog">
-    <form id="sceneForm">
-      <p class="eyebrow">场景编辑器</p><h2 id="sceneDialogTitle">添加场景</h2>
-      <input id="sceneId" type="hidden">
-      <label>场景名称<input id="sceneName" maxlength="100" required></label>
-      <label>简短介绍<textarea id="sceneDescription" maxlength="1000"></textarea></label>
-      <label>详细使用说明<textarea id="sceneDetailedDescription" class="scene-detailed-description" maxlength="8000" placeholder="填写外部 URL、协议、模型名和调用注意事项"></textarea></label>
-      <div class="scene-service-editor"><strong>需要启动的服务</strong><small>使用箭头调整启动顺序</small><div id="sceneServiceChoices"></div></div>
-      <p class="auth-error" id="sceneFormError" role="alert"></p>
-      <div class="dialog-actions"><button class="button secondary" type="button" data-close="sceneDialog">取消</button><button class="button primary" type="submit">保存场景</button></div>
+  <dialog class="control-dialog editor-dialog scene-editor-dialog" id="sceneDialog">
+    <form class="dialog-shell" id="sceneForm">
+      <header class="dialog-header"><div><p class="eyebrow">场景编辑器</p><h2 id="sceneDialogTitle">添加场景</h2></div><button class="dialog-close" type="button" data-close="sceneDialog" aria-label="关闭"><svg><use href="#i-x"/></svg></button></header>
+      <div class="dialog-scroll scene-editor-scroll">
+        <input id="sceneId" type="hidden">
+        <label>场景名称<input id="sceneName" maxlength="100" required></label>
+        <label>简短介绍<textarea id="sceneDescription" maxlength="1000"></textarea></label>
+        <label>详细使用说明<textarea id="sceneDetailedDescription" class="scene-detailed-description" maxlength="8000" placeholder="填写外部 URL、协议、模型名和调用注意事项"></textarea></label>
+        <div class="scene-service-editor"><strong>需要启动的服务</strong><small>使用箭头调整启动顺序</small><div id="sceneServiceChoices"></div></div>
+      </div>
+      <footer class="dialog-footer"><p class="auth-error" id="sceneFormError" role="alert"></p><div class="dialog-footer-actions"><button class="button secondary" type="button" data-close="sceneDialog">取消</button><button class="button primary dialog-save" type="submit"><svg><use href="#i-save"/></svg><span>保存场景</span></button></div></footer>
     </form>
   </dialog>
   <dialog class="control-dialog scene-detail-dialog" id="sceneDetailDialog">
-    <section>
-      <p class="eyebrow">场景详细说明</p>
-      <h2 id="sceneDetailTitle">场景名称</h2>
-      <p class="scene-detail-intro" id="sceneDetailIntro"></p>
-      <div class="scene-detail-body" id="sceneDetailBody"></div>
-      <div class="dialog-actions"><button class="button primary" type="button" data-close="sceneDetailDialog">关闭</button></div>
+    <section class="dialog-shell">
+      <header class="dialog-header"><div><p class="eyebrow">场景详细说明</p><h2 id="sceneDetailTitle">场景名称</h2></div><button class="dialog-close" type="button" data-close="sceneDetailDialog" aria-label="关闭"><svg><use href="#i-x"/></svg></button></header>
+      <div class="dialog-scroll scene-detail-scroll"><p class="scene-detail-intro" id="sceneDetailIntro"></p><div class="scene-detail-body" id="sceneDetailBody"></div></div>
+      <footer class="dialog-actions dialog-footer"><button class="button primary" type="button" data-close="sceneDetailDialog"><svg><use href="#i-check"/></svg><span>关闭</span></button></footer>
     </section>
   </dialog>
   <dialog class="control-dialog editor-dialog" id="userDialog">
@@ -289,10 +296,10 @@
       <div class="dialog-actions"><button class="button secondary" id="cancelSceneSwitchButton" type="button">终止切换并返回</button><button class="button primary" id="closeSceneProgressButton" type="button" hidden>返回工作场景</button></div>
     </section>
   </dialog>
-  <script src="i18n.js?v=20260830-6"></script>
+  <script src="i18n.js?v=20260830-7"></script>
   <script src="request-guard.js?v=20260827-5"></script>
   <script src="gpu-layout.js?v=20260828-1"></script>
   <script src="monitor-chart.js?v=20260828-6"></script>
-  <script src="app.js?v=20260830-6"></script>
+  <script src="app.js?v=20260830-7"></script>
 </body>
 </html>

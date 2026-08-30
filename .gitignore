@@ -1,6 +1,7 @@
 data/*.db
 data/*.db-*
 data/*.lock
+data/backups/
 *.pyc
 __pycache__/
 logs/
