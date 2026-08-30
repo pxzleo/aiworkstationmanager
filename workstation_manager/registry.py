@@ -313,6 +313,9 @@ class RegisteredServiceManager:
         self._health_authorities = {
             item["id"]: self._health_authority(item) for item in initial_services
         }
+        self._registered_ports = {
+            item["id"]: item.get("port") for item in initial_services
+        }
         self._health_failures: dict[str, int] = {}
         self._health_task: asyncio.Task[None] | None = None
         self._health_semaphore = asyncio.Semaphore(HEALTH_CONCURRENCY)
@@ -402,18 +405,25 @@ class RegisteredServiceManager:
         authority = self._health_authority(service)
         if authority is None:
             return False
+        registered_port = service.get("port")
         for peer_id, peer_authority in self._health_authorities.items():
-            if peer_id == service["id"] or peer_authority != authority:
+            if peer_id == service["id"]:
+                continue
+            shares_health_authority = peer_authority == authority
+            shares_registered_port = registered_port is not None \
+                and self._registered_ports.get(peer_id) == registered_port
+            if not shares_health_authority and not shares_registered_port:
                 continue
             if self.statuses.get(peer_id, {}).get("state") == "running":
                 return True
         return False
 
     def _reload_health_authorities(self) -> None:
+        services = self.database.list_registered_services()
         self._health_authorities = {
-            item["id"]: self._health_authority(item)
-            for item in self.database.list_registered_services()
+            item["id"]: self._health_authority(item) for item in services
         }
+        self._registered_ports = {item["id"]: item.get("port") for item in services}
 
     async def _probe_health(self, service: dict[str, Any]) -> HealthProbeResult:
         async with self._health_semaphore:
@@ -596,6 +606,7 @@ class RegisteredServiceManager:
         self.statuses.pop(service_id, None)
         self._health_failures.pop(service_id, None)
         self._health_authorities.pop(service_id, None)
+        self._registered_ports.pop(service_id, None)
         self._service_locks.pop(service_id, None)
         self.database.append_audit(source_ip, "management.service.delete", "success",
                                    {"service_id": service_id, "name": service["name"],
