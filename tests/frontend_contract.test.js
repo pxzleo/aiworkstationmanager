@@ -180,6 +180,8 @@ test('scene editor and management log remain wired', () => {
   assert.ok(css.includes('grid-column: 3; grid-row: 1 / span 2'));
   assert.ok(css.includes('.scene-ui-link:hover'));
   assert.ok(css.includes('.scene-selector { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }'));
+  assert.ok(css.includes('.scene-panel { min-height: 405px; padding: 28px; display: flex; flex-direction: column;'));
+  assert.ok(css.includes('.scene-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 24px; }'));
   assert.ok(css.includes('border-radius: 12px'));
   assert.ok(css.includes('.scene-panel.selected:hover'));
   assert.ok(css.includes('transform: translateY(-2px)'));
@@ -216,7 +218,7 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260830-3'));
+  assert.ok(html.includes('styles.css?v=20260830-4'));
   assert.ok(html.includes('i18n.js?v=20260830-3'));
   assert.ok(html.includes('app.js?v=20260830-3'));
   assert.ok(i18n.includes("navigator.languages"));

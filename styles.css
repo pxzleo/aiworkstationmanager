@@ -221,7 +221,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .timeline small { color: var(--muted); font-size: 9px; margin-top: 3px; }
 
 .scene-selector { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
-.scene-panel { min-height: 405px; padding: 28px; border: 1px solid var(--line-strong); border-radius: 12px; background: linear-gradient(180deg, rgba(255,255,255,.025), transparent 38%), var(--surface); box-shadow: 0 12px 28px rgba(0,0,0,.18); position: relative; transition: background .2s, border-color .2s, box-shadow .2s, opacity .16s, transform .16s; }
+.scene-panel { min-height: 405px; padding: 28px; display: flex; flex-direction: column; border: 1px solid var(--line-strong); border-radius: 12px; background: linear-gradient(180deg, rgba(255,255,255,.025), transparent 38%), var(--surface); box-shadow: 0 12px 28px rgba(0,0,0,.18); position: relative; transition: background .2s, border-color .2s, box-shadow .2s, opacity .16s, transform .16s; }
 .scene-panel:hover { transform: translateY(-2px); border-color: rgba(255,255,255,.23); background: linear-gradient(180deg, rgba(255,255,255,.04), transparent 42%), var(--surface-2); box-shadow: 0 18px 38px rgba(0,0,0,.28); }
 .scene-panel[draggable="true"] { cursor: grab; }
 .scene-panel.dragging { opacity: .45; transform: scale(.985); cursor: grabbing; }
@@ -346,7 +346,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .theme-obsidian { --preview-bg: #100e0b; --preview-surface: #292219; --preview-muted: #8d7a5d; --preview-accent: #d7b66f; --preview-glow: #d7b66f; }
 @keyframes themeTrace { from { transform: scaleX(.45); opacity: .65; } to { transform: scaleX(1); opacity: 1; } }
 .dialog-note { color: var(--muted); font-size: 11px; line-height: 1.6; }
-.scene-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.scene-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 24px; }
 .scene-card-actions .button { width: auto; }
 .scene-reorder-controls { display: flex; gap: 5px; margin-right: auto; }
 .scene-reorder-controls .button { padding-inline: 10px; color: var(--muted); }
