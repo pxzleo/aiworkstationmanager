@@ -144,7 +144,17 @@ test('scene editor and management log remain wired', () => {
   assert.ok(html.includes('maxlength="8000"'));
   assert.ok(html.includes('id="sceneDetailDialog"'));
   assert.ok(html.includes('id="sceneDetailBody"'));
-  assert.ok(js.includes("'详细说明'"));
+  assert.ok(js.includes("iconButton('查看详细说明', 'info')"));
+  assert.ok(js.includes("iconButton('上移场景', 'arrow-up')"));
+  assert.ok(js.includes("iconButton('下移场景', 'arrow-down')"));
+  assert.ok(js.includes("iconButton('编辑场景', 'edit')"));
+  assert.ok(js.includes("iconButton('删除场景', 'trash', 'danger')"));
+  assert.ok(js.includes("labeledIconButton(activateLabel, 'switch'"));
+  assert.ok(js.includes("iconButton('上移服务', 'arrow-up')"));
+  assert.ok(js.includes("button.setAttribute('aria-label', ui(label))"));
+  for (const icon of ['arrow-up', 'arrow-down', 'info', 'edit', 'trash', 'star', 'switch', 'save']) {
+    assert.ok(html.includes(`id="i-${icon}"`), `missing ${icon} icon`);
+  }
   assert.ok(js.includes('openSceneDetails(scene)'));
   assert.ok(js.includes('scene.detailed_description'));
   assert.ok(js.includes("detailed_description: byId('sceneDetailedDescription').value.trim()"));
@@ -157,8 +167,7 @@ test('scene editor and management log remain wired', () => {
   assert.ok(js.includes('/scenes/reorder'));
   assert.ok(js.includes("panel.draggable"));
   assert.ok(js.includes("dragstart"));
-  assert.ok(js.includes("上移"));
-  assert.ok(js.includes("scene.is_default ? '取消默认' : '设为默认'"));
+  assert.ok(js.includes("scene.is_default ? '取消默认场景' : '设为默认场景'"));
   assert.ok(js.includes("`/scenes/${scene.id}/default`"));
   assert.ok(js.includes("AXIS 下次启动时会自动切换到该场景"));
   assert.ok(js.includes("scene.is_default ? ' scene-default' : ''"));
@@ -203,9 +212,18 @@ test('scene editor and management log remain wired', () => {
   assert.ok(css.includes('.scene-panel-top .scene-inactive'));
   assert.ok(css.includes('grid-column: 3; grid-row: 1 / span 2'));
   assert.ok(css.includes('.scene-ui-link:hover'));
-  assert.ok(css.includes('.scene-selector { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }'));
+  assert.ok(css.includes('.scene-selector { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr)); gap: 16px; }'));
   assert.ok(css.includes('.scene-panel { min-height: 405px; padding: 28px; display: flex; flex-direction: column;'));
-  assert.ok(css.includes('.scene-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 24px; }'));
+  assert.ok(css.includes('.scene-card-actions { display: flex; align-items: center; justify-content: space-between;'));
+  assert.ok(css.includes('.icon-button.danger:hover:not(:disabled)'));
+  assert.ok(css.includes('.scene-activate-button { min-width: 154px;'));
+  assert.ok(html.includes('class="dialog-shell" id="sceneForm"'));
+  assert.ok(html.includes('<footer class="dialog-footer"><p class="auth-error" id="sceneFormError" role="alert"></p><div class="dialog-footer-actions">'));
+  assert.ok(css.includes('grid-template-rows: auto minmax(0, 1fr) auto'));
+  assert.ok(css.includes('.dialog-scroll { min-height: 0; overflow-y: auto;'));
+  assert.ok(css.includes('.dialog-footer { min-height: 76px;'));
+  assert.ok(css.includes('.dialog-footer > .auth-error'));
+  assert.ok(css.includes('.scene-editor-dialog { width: min(720px'));
   assert.ok(css.includes('border-radius: 12px'));
   assert.ok(css.includes('.scene-panel.selected:hover'));
   assert.ok(css.includes('transform: translateY(-2px)'));
@@ -242,9 +260,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260830-7'));
-  assert.ok(html.includes('i18n.js?v=20260830-6'));
-  assert.ok(html.includes('app.js?v=20260830-6'));
+  assert.ok(html.includes('styles.css?v=20260830-8'));
+  assert.ok(html.includes('i18n.js?v=20260830-7'));
+  assert.ok(html.includes('app.js?v=20260830-7'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
