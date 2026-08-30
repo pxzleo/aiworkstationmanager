@@ -141,7 +141,14 @@ test('scene editor and management log remain wired', () => {
   assert.ok(js.includes("scene.is_default ? '取消默认' : '设为默认'"));
   assert.ok(js.includes("`/scenes/${scene.id}/default`"));
   assert.ok(js.includes("AXIS 下次启动时会自动切换到该场景"));
-  assert.ok(css.includes('.scene-default-badge'));
+  assert.ok(js.includes("scene.is_default ? ' scene-default' : ''"));
+  assert.ok(js.includes("'scene-default-banner'"));
+  assert.ok(js.includes("'默认启动场景'"));
+  assert.ok(js.includes("'AXIS 启动时自动切换'"));
+  assert.ok(css.includes('.scene-panel.scene-default'));
+  assert.ok(css.includes('.scene-default-banner'));
+  assert.ok(i18n.includes("'默认启动场景': 'Default Startup Scene'"));
+  assert.ok(i18n.includes("'AXIS 启动时自动切换': 'AXIS switches here on startup'"));
   assert.ok(html.includes('id="sceneProgressDialog"'));
   assert.ok(html.includes('id="cancelSceneSwitchButton"'));
   assert.ok(js.includes('/cancel'));
