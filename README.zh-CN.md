@@ -122,7 +122,7 @@ Copy-Item .\config\settings.example.json .\config\settings.json
 .\Install-ManagerTask.ps1 -Trigger Startup -ConfigFile .\config\settings.json
 ```
 
-卸载任务使用 `.\Uninstall-ManagerTask.ps1`。未设置默认场景时，计划任务只启动管理器；设置默认场景后，AXIS 启动时会按现有场景切换规则自动启停对应服务。
+安装命令需要管理员确认，计划任务以当前管理员用户的最高可用权限运行，使已登记脚本可以管理其固定负责的 Windows 服务和端口转发。卸载任务使用 `.\Uninstall-ManagerTask.ps1`。未设置默认场景时，计划任务只启动管理器；设置默认场景后，AXIS 启动时会按现有场景切换规则自动启停对应服务。
 
 ## 更多文档
 

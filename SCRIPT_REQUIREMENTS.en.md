@@ -79,6 +79,7 @@ When a local health-check URL is registered, AXIS accesses that URL directly ins
 
 ## 4. `start`, `stop`, and `restart`
 
+- The AXIS scheduled task runs as the current administrator with the highest available privileges, allowing scripts to manage the fixed Windows services, port proxies, and background processes they own. Privileged operations must remain limited to the registered service's fixed resources. Unknown mappings, processes, or ownership mismatches must fail explicitly and must never be overwritten, deleted, or terminated.
 - Return exit code `0` only on success.
 - Return a non-zero exit code on failure and preferably write a short, specific cause to standard error.
 - The default lifecycle-action timeout is 600 seconds.

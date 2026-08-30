@@ -122,7 +122,7 @@ Install a system-start task with an explicit configuration file:
 .\Install-ManagerTask.ps1 -Trigger Startup -ConfigFile .\config\settings.json
 ```
 
-Remove it with `.\Uninstall-ManagerTask.ps1`. With no default scene, the task starts AXIS only. When a default scene is configured, AXIS applies the normal scene-switch rules at startup and controls the corresponding services.
+Installation requires administrator confirmation. The task runs as the current administrator with the highest available privileges so registered scripts can manage their fixed Windows services and port proxies. Remove it with `.\Uninstall-ManagerTask.ps1`. With no default scene, the task starts AXIS only. When a default scene is configured, AXIS applies the normal scene-switch rules at startup and controls the corresponding services.
 
 ## More documentation
 
