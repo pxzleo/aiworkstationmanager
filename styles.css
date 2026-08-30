@@ -663,7 +663,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
 
 @media (max-width: 720px) {
   .top-actions .language-select span { display: none; }
-  .top-actions { gap: 6px; }
+  .top-actions { gap: 4px; }
   :root { --sidebar: 250px; --topbar: 58px; }
   .sidebar { transform: translateX(-100%); transition: transform .22s; box-shadow: 20px 0 50px rgba(0,0,0,.45); }
   .sidebar.open { transform: translateX(0); }
@@ -679,7 +679,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .breadcrumb > span, .breadcrumb > svg { display: none; }
   .breadcrumb strong { white-space: nowrap; }
   .freshness time { display: none; }
-  .freshness { padding: 0 8px; }
+  .freshness { padding: 0 6px; }
   .workspace { padding: 26px 17px 60px; }
   .page-heading { align-items: flex-start; flex-direction: column; }
   .page-heading .heading-actions { width: 100%; }
