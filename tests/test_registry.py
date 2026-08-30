@@ -802,17 +802,69 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         for service in (first, second, third, stopped):
             await self.manager.refresh_status(service)
         scene = self.manager.create_scene(
-            {"name": "目标", "description": "", "service_ids": [third["id"], second["id"]]},
+            {"name": "目标", "description": "",
+             "service_ids": [third["id"], second["id"], stopped["id"]]},
             "admin", "local",
         )
         self.runner.calls.clear()
         operation = self.manager.submit_scene_activation(scene["id"], "admin", "local")
         result = await self.wait_operation(operation)
         self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(result["total_steps"], 2)
+        self.assertEqual(len(result["steps"]), result["total_steps"])
         action_calls = [call for call in self.runner.calls if call[1] in {"start", "stop"}]
-        self.assertEqual(action_calls, [("A.ps1", "stop")])
-        self.assertNotIn(("D.ps1", "stop"), action_calls)
+        self.assertEqual(action_calls, [("A.ps1", "stop"), ("D.ps1", "start")])
         self.assertEqual(self.manager.list_scenes()[0]["state"], "active")
+
+    async def test_scene_rechecks_target_state_after_stop_phase(self) -> None:
+        runner = BlockingActionRunner()
+        manager = RegisteredServiceManager(self.database, runner)
+        outside = await manager.create_service(
+            {"name": "外部服务", "description": "",
+             "script_path": str(self.make_script("外部服务")),
+             "gpu_label": "", "port": None, "ui_url": ""}, "admin", "local",
+        )
+        initially_running = await manager.create_service(
+            {"name": "初始运行目标", "description": "",
+             "script_path": str(self.make_script("初始运行目标")),
+             "gpu_label": "", "port": None, "ui_url": ""}, "admin", "local",
+        )
+        initially_stopped = await manager.create_service(
+            {"name": "初始停止目标", "description": "",
+             "script_path": str(self.make_script("初始停止目标")),
+             "gpu_label": "", "port": None, "ui_url": ""}, "admin", "local",
+        )
+        for service in (outside, initially_running):
+            runner.states[service["script_path"]] = "running"
+        runner.states[initially_stopped["script_path"]] = "stopped"
+        for service in (outside, initially_running, initially_stopped):
+            await manager.refresh_status(service)
+        scene = manager.create_scene(
+            {"name": "状态变化场景", "description": "",
+             "service_ids": [initially_running["id"], initially_stopped["id"]]},
+            "admin", "local",
+        )
+        runner.calls.clear()
+        operation_id = manager.submit_scene_activation(scene["id"], "admin", "local")
+        self.assertTrue(await asyncio.to_thread(runner.action_started.wait, 1))
+
+        runner.states[initially_running["script_path"]] = "stopped"
+        runner.states[initially_stopped["script_path"]] = "running"
+        manager.statuses[initially_running["id"]]["state"] = "stopped"
+        manager.statuses[initially_stopped["id"]]["state"] = "running"
+        runner.release_action.set()
+        result = await self.wait_operation(operation_id)
+
+        action_calls = [call for call in runner.calls if call[1] in {"start", "stop"}]
+        self.assertEqual(
+            action_calls,
+            [("外部服务.ps1", "stop"), ("初始运行目标.ps1", "start")],
+        )
+        self.assertNotIn(("初始停止目标.ps1", "start"), action_calls)
+        self.assertEqual(result["total_steps"], 2)
+        self.assertEqual(len(result["steps"]), 2)
+        self.assertEqual(result["status"], "succeeded")
+        await manager.shutdown()
 
     async def test_default_scene_uses_the_normal_scene_activation_operation(self) -> None:
         service = await self.add_service("默认服务")

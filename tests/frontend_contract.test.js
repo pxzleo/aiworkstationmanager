@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
@@ -221,6 +222,10 @@ test('scene editor and management log remain wired', () => {
   assert.ok(html.includes('id="cancelSceneSwitchButton"'));
   assert.ok(js.includes('/cancel'));
   assert.ok(js.includes("const progress = terminal ? 100"));
+  assert.ok(js.includes('let sceneProgressExpectedTotal = null'));
+  assert.ok(js.includes('function renderSceneProgress(scene, operation) { const total = Number.isInteger(operation.total_steps) ? operation.total_steps : sceneProgressExpectedTotal'));
+  assert.ok(js.includes('function openSceneProgress(scene, operationId) { sceneProgressExpectedTotal = state.services.filter'));
+  assert.ok(js.includes('finally { sceneProgressOperationId = null; sceneProgressExpectedTotal = null'));
   assert.ok(js.includes("terminal ? '没有需要执行的服务步骤。'"));
   assert.ok(js.includes("interrupted: '已终止'"));
   assert.ok(js.includes("queued: '等待执行', running: '执行中'"));
@@ -270,6 +275,75 @@ test('scene editor and management log remain wired', () => {
   assert.ok(css.includes('.operation-row > div { min-width: 0; }'));
   assert.ok(css.includes('.timeline li > div { min-width: 0; }'));
   assert.ok(css.includes('overflow-wrap: anywhere'));
+});
+
+test('scene operation progress keeps the fixed backend denominator', () => {
+  const start = js.indexOf('function renderOperationProgress');
+  const end = js.indexOf('\nfunction renderSceneProgress', start);
+  assert.ok(start >= 0 && end > start);
+  const values = {};
+  const bar = { style: {} };
+  const log = { replaceChildren() {}, append() {}, scrollTop: 0, scrollHeight: 0 };
+  const sandbox = {
+    text: (id, value) => { values[id] = value; },
+    byId: (id) => id === 'sceneProgressBar' ? bar : log,
+    targetName: () => '测试服务',
+    element: () => ({ append() {} }),
+    formatDate: () => 'now',
+    ui: (value) => value,
+  };
+  vm.runInNewContext(js.slice(start, end), sandbox);
+  const operation = {
+    status: 'running',
+    steps: [
+      { status: 'succeeded', action: 'stop' },
+      { status: 'succeeded', action: 'stop' },
+      { status: 'succeeded', action: 'stop' },
+      { status: 'succeeded', action: 'stop' },
+      { status: 'running', action: 'start' },
+    ],
+  };
+  sandbox.renderOperationProgress(operation, 5, {});
+  assert.equal(values.sceneProgressPercent, '80%');
+  assert.equal(bar.style.width, '80%');
+  operation.steps = [
+    { status: 'succeeded', action: 'stop' },
+    { status: 'running', action: 'start' },
+  ];
+  sandbox.renderOperationProgress(operation, 1, {});
+  assert.equal(values.sceneProgressPercent, '50%');
+  assert.equal(bar.style.width, '50%');
+});
+
+test('scene progress freezes the legacy fallback and prefers backend total steps', () => {
+  const openStart = js.indexOf('function openSceneProgress');
+  const openEnd = js.indexOf('\nfunction renderOperationProgress', openStart);
+  const renderStart = js.indexOf('function renderSceneProgress');
+  const renderEnd = js.indexOf('\nfunction renderStopAllProgress', renderStart);
+  assert.ok(openStart >= 0 && openEnd > openStart);
+  assert.ok(renderStart >= 0 && renderEnd > renderStart);
+  const totals = [];
+  const sandbox = {
+    state: {
+      services: [
+        { id: 'target-running', status: { state: 'running' } },
+        { id: 'target-stopped', status: { state: 'stopped' } },
+        { id: 'target-unknown', status: { state: 'unknown' } },
+        { id: 'outside-running', status: { state: 'running' } },
+        { id: 'outside-stopped', status: { state: 'stopped' } },
+      ],
+    },
+    openOperationProgress: () => {},
+    renderOperationProgress: (_operation, total) => totals.push(total),
+  };
+  const source = `let sceneProgressExpectedTotal = null;\n${js.slice(openStart, openEnd)}\n${js.slice(renderStart, renderEnd)}`;
+  vm.runInNewContext(source, sandbox);
+  const scene = { name: '测试场景', service_ids: ['target-running', 'target-stopped', 'target-unknown'] };
+  sandbox.openSceneProgress(scene, 'operation-id');
+  sandbox.state.services.forEach((service) => { service.status.state = 'stopped'; });
+  sandbox.renderSceneProgress(scene, { status: 'running', steps: [] });
+  sandbox.renderSceneProgress(scene, { status: 'running', steps: [], total_steps: 7 });
+  assert.deepEqual(totals, [3, 7]);
 });
 
 test('user management lists accounts and wires account actions', () => {
