@@ -261,7 +261,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .scene-drag-handle { width: 29px; height: 27px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--muted); cursor: grab; line-height: 1; }
 .scene-drag-handle:hover { color: var(--accent); border-color: rgba(var(--accent-rgb),.45); }
 .scene-panel h2 { font-size: 32px; font-weight: 540; margin: 38px 0 8px; }
-.scene-panel > p { color: var(--muted); min-height: 42px; max-width: 480px; }
+.scene-panel > p { height: 3.1em; min-height: 3.1em; max-height: 3.1em; max-width: 480px; margin: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .scene-map { margin: 30px 0; border-top: 1px solid var(--line); }
 .scene-map > div { padding: 14px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 90px minmax(0, 1fr) auto; column-gap: 14px; align-items: center; }
 .scene-map span { color: var(--accent); font-size: 9px; letter-spacing: .08em; }
