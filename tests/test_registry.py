@@ -1113,6 +1113,33 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runner.calls, [("健康动作.ps1", "start")])
         self.assertEqual(self.health_probe.calls, [(health_url, "expected-model")])
 
+    async def test_stop_action_uses_new_desired_state_for_health_timeout(self) -> None:
+        health_url = "http://127.0.0.1:8189/health"
+        service = await self.add_service("停止后超时", health_url=health_url)
+        self.health_probe.results[health_url] = HealthProbeResult("running", None, True)
+
+        start_operation_id = self.manager.submit_service_action(
+            service["id"], "start", "admin", "local"
+        )
+        self.assertEqual(
+            (await self.wait_operation(start_operation_id))["status"], "succeeded"
+        )
+
+        self.health_probe.results[health_url] = HealthProbeResult(
+            "unknown", "健康接口响应超时", False
+        )
+        stop_operation_id = self.manager.submit_service_action(
+            service["id"], "stop", "admin", "local"
+        )
+
+        operation = await self.wait_operation(stop_operation_id)
+        self.assertEqual(operation["status"], "succeeded")
+        self.assertEqual(operation["steps"][0]["after_state"], "stopped")
+        item = self.manager.list_services()[0]
+        self.assertEqual(item["desired_state"], "stopped")
+        self.assertEqual(item["status"]["state"], "stopped")
+        self.assertIsNone(item["status"]["error"])
+
     async def test_unreachable_timeout_uses_desired_state_without_false_alarm(self) -> None:
         health_url = "http://127.0.0.1:18090/health"
         service = await self.add_service("转发超时", health_url=health_url)

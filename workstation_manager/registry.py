@@ -809,9 +809,10 @@ class RegisteredServiceManager:
                 else:
                     error = None
                 if service.get("health_url"):
-                    health_result = await self._probe_health(service)
+                    verification_service = {**service, "desired_state": expected}
+                    health_result = await self._probe_health(verification_service)
                     status = self._record_health_result(
-                        service, health_result, immediate=True
+                        verification_service, health_result, immediate=True
                     )
                     health_ok = status["state"] == expected
                     if result.returncode == 0 and not health_ok:
