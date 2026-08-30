@@ -19,6 +19,7 @@ LOGIN_FAILURE_WINDOW_MINUTES = 5
 SESSION_COOKIE = "wm_session"
 CSRF_HEADER = "X-CSRF-Token"
 CSRF_TOKENS_PER_SESSION = 8
+REMEMBER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
 class AuthError(RuntimeError):
@@ -253,7 +254,9 @@ class AuthService:
             raise DatabaseError(f"删除用户失败: {exc}") from exc
         return {"id": user_id, "username": row["username"]}
 
-    def login(self, username: str, password: str, source_ip: str) -> tuple[str, str, str]:
+    def login(
+        self, username: str, password: str, source_ip: str, remember: bool = False
+    ) -> tuple[str, str, str]:
         since = (datetime.now(timezone.utc) - timedelta(minutes=LOGIN_FAILURE_WINDOW_MINUTES)).isoformat()
         if self.database.is_login_rate_limited(source_ip, since, LOGIN_FAILURE_LIMIT):
             self.database.record_login_failure_atomic(source_ip, since, LOGIN_FAILURE_LIMIT)
@@ -274,7 +277,9 @@ class AuthService:
         actual = password_digest(password, salt, iterations)
         if row is None or not hmac.compare_digest(actual, expected):
             self._reject_login(source_ip, since)
-        token, csrf, expires_at = self._new_session_values()
+        token, csrf, expires_at = self._new_session_values(
+            REMEMBER_SESSION_TTL_SECONDS if remember else None
+        )
         try:
             with self.database.connect() as connection:
                 with connection:
@@ -310,10 +315,13 @@ class AuthService:
             raise AuthError(429, "rate_limited", "登录失败次数过多，请稍后重试")
         raise AuthError(401, "invalid_credentials", "用户名或密码错误")
 
-    def _new_session_values(self) -> tuple[str, str, str]:
+    def _new_session_values(self, ttl_seconds: int | None = None) -> tuple[str, str, str]:
         token = secrets.token_urlsafe(48)
         csrf = secrets.token_urlsafe(32)
-        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=self.session_ttl_seconds)).isoformat()
+        expires_at = (
+            datetime.now(timezone.utc)
+            + timedelta(seconds=ttl_seconds or self.session_ttl_seconds)
+        ).isoformat()
         return token, csrf, expires_at
 
     def _insert_session(

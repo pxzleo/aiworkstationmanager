@@ -14,6 +14,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from workstation_manager.app import create_app
+from workstation_manager.auth import REMEMBER_SESSION_TTL_SECONDS
 from workstation_manager.collectors import (
     _cached, _slow_cache, collect_docker, collect_docker_resources,
     collect_gpu_processes, collect_gpus, collect_snapshot, collect_wsl_resources,
@@ -583,6 +584,42 @@ class ApiTests(unittest.TestCase):
             "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
         )
         self.assertEqual(response.status_code, 201, response.text)
+
+    def test_remember_login_extends_server_session_and_cookie_to_thirty_days(self) -> None:
+        setup = self.client.post(
+            "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+        )
+        self.assertEqual(setup.status_code, 201, setup.text)
+        self.client.cookies.clear()
+
+        regular = self.client.post(
+            "/api/v1/auth/login", json={"username": "admin", "password": "1234"}
+        )
+        self.assertEqual(regular.status_code, 200, regular.text)
+        self.assertIn(f"Max-Age={self.settings.session_ttl_seconds}", regular.headers["set-cookie"])
+        regular_expiry = datetime.fromisoformat(regular.json()["expires_at"])
+        self.client.cookies.clear()
+
+        remembered = self.client.post(
+            "/api/v1/auth/login",
+            json={"username": "admin", "password": "1234", "remember": True},
+        )
+        self.assertEqual(remembered.status_code, 200, remembered.text)
+        self.assertIn(
+            f"Max-Age={REMEMBER_SESSION_TTL_SECONDS}", remembered.headers["set-cookie"]
+        )
+        remembered_expiry = datetime.fromisoformat(remembered.json()["expires_at"])
+        self.assertGreater(
+            remembered_expiry - regular_expiry,
+            timedelta(days=29),
+        )
+        logout = self.client.post(
+            "/api/v1/auth/logout",
+            headers={"X-CSRF-Token": remembered.json()["csrf_token"]},
+        )
+        self.assertEqual(logout.status_code, 200, logout.text)
+        self.assertIn("Max-Age=0", logout.headers["set-cookie"])
+        self.assertFalse(self.client.get("/api/v1/auth/status").json()["authenticated"])
 
     def test_health_is_degraded_when_snapshot_has_collector_errors(self) -> None:
         self.client.app.state.sampler.current["collector_errors"] = [

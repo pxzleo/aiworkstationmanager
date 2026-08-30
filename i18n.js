@@ -65,6 +65,7 @@
     '尚无服务或场景操作。': 'No service or scene operations.', '安全访问': 'Secure Access',
     '正在检查管理器': 'Checking Manager', '正在确认首次设置与登录状态。': 'Checking setup and sign-in status.',
     '管理员用户名': 'Administrator username', '密码': 'Password', '确认密码': 'Confirm password',
+    '在该电脑自动登录': 'Sign in automatically on this device', '仅用于私人设备，保持登录 30 天': 'Private devices only. Stay signed in for 30 days.',
     '继续': 'Continue', '数据已刷新': 'Data refreshed', '管理脚本绝对路径': 'Absolute management script path',
     'GPU 展示标签': 'GPU display label', '服务端口': 'Service port', 'UI 地址': 'UI address',
     '健康检查地址': 'Health check URL', '响应必须包含': 'Response must contain',

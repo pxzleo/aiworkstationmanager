@@ -14,7 +14,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__
-from .auth import CSRF_HEADER, SESSION_COOKIE, AuthenticatedSession, AuthError, AuthService, is_loopback
+from .auth import (
+    CSRF_HEADER,
+    REMEMBER_SESSION_TTL_SECONDS,
+    SESSION_COOKIE,
+    AuthenticatedSession,
+    AuthError,
+    AuthService,
+    is_loopback,
+)
 from .config import ConfigError, Settings, load_settings
 from .database import SCHEMA_VERSION as DATABASE_SCHEMA_VERSION, Database, DatabaseError
 from .history import Sampler, parse_window
@@ -30,6 +38,10 @@ class Credentials(BaseModel):
     model_config = ConfigDict(extra="forbid")
     username: str = Field(max_length=64)
     password: str = Field(max_length=1024)
+
+
+class LoginCredentials(Credentials):
+    remember: bool = False
 
 
 class PasswordPayload(BaseModel):
@@ -294,8 +306,9 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         resolved_auth.verify_csrf(session, csrf_token)
         return session
 
-    def set_session_cookie(response: Response, token: str) -> None:
-        response.set_cookie(SESSION_COOKIE, token, max_age=resolved_settings.session_ttl_seconds,
+    def set_session_cookie(response: Response, token: str, remember: bool = False) -> None:
+        max_age = REMEMBER_SESSION_TTL_SECONDS if remember else resolved_settings.session_ttl_seconds
+        response.set_cookie(SESSION_COOKIE, token, max_age=max_age,
                             httponly=True, secure=resolved_settings.cookie_secure,
                             samesite="strict", path="/")
 
@@ -357,12 +370,14 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         return {"authenticated": True, "csrf_token": csrf, "expires_at": expires_at}
 
     @app.post("/api/v1/auth/login")
-    async def auth_login(credentials: Credentials, request: Request, response: Response) -> dict[str, Any]:
+    async def auth_login(credentials: LoginCredentials, request: Request,
+                         response: Response) -> dict[str, Any]:
         async with auth_concurrency:
             token, csrf, expires_at = await asyncio.to_thread(
-                resolved_auth.login, credentials.username, credentials.password, _client_ip(request)
+                resolved_auth.login, credentials.username, credentials.password,
+                _client_ip(request), credentials.remember,
             )
-        set_session_cookie(response, token)
+        set_session_cookie(response, token, credentials.remember)
         return {"authenticated": True, "csrf_token": csrf, "expires_at": expires_at}
 
     @app.post("/api/v1/auth/logout")

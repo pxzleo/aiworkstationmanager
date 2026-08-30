@@ -105,13 +105,14 @@ function startPolling(name, operation, interval) { const generation = requestGua
 function showAuth(mode, message = '') {
   clearTimers(); state.authMode = mode; state.csrfToken = null; document.body.classList.add('auth-pending');
   const setup = mode === 'setup'; text('authEyebrow', setup ? '首次设置' : '安全访问'); text('authTitle', setup ? '创建本机管理员' : '登录工作站'); text('authDescription', setup ? '首次设置仅允许在本机完成。密码至少 4 个字符。' : '使用管理员账户继续。'); text('authSubmit', setup ? '创建管理员并进入' : '登录'); text('authError', message);
-  byId('authForm').hidden = false; byId('confirmPasswordLabel').hidden = !setup; byId('confirmPasswordInput').hidden = !setup; byId('confirmPasswordInput').required = setup;
+  byId('authForm').hidden = false; byId('confirmPasswordLabel').hidden = !setup; byId('confirmPasswordInput').hidden = !setup; byId('confirmPasswordInput').required = setup; byId('rememberLoginLabel').hidden = setup; byId('rememberLoginInput').disabled = setup;
 }
 async function submitAuth(event) {
   event.preventDefault(); const form = event.currentTarget; if (!form.reportValidity()) return;
   const username = byId('usernameInput').value.trim(); const password = byId('passwordInput').value; const setup = state.authMode === 'setup';
   if (setup && password !== byId('confirmPasswordInput').value) { text('authError', '两次输入的密码不一致。'); return; }
-  try { const result = await api(setup ? '/auth/setup' : '/auth/login', { method: 'POST', body: { username, password }, skipCsrf: true, authRequest: true }); state.csrfToken = result.csrf_token; state.username = username; enterApplication(); }
+  const body = { username, password }; if (!setup) body.remember = byId('rememberLoginInput').checked;
+  try { const result = await api(setup ? '/auth/setup' : '/auth/login', { method: 'POST', body, skipCsrf: true, authRequest: true }); state.csrfToken = result.csrf_token; state.username = username; enterApplication(); }
   catch (error) { text('authError', error.message); }
 }
 async function bootstrap() {

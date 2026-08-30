@@ -80,6 +80,8 @@ The progress window shows every step and can cancel steps that have not started.
 
 A project can have one optional default scene. Setting it does not switch immediately; AXIS activates it the next time the manager starts. Clearing the default only removes this startup behavior and does not stop current services.
 
+On a private computer or phone, select **Sign in automatically on this device** to stay signed in for 30 days. AXIS never stores the password in the browser; signing out or changing the password still revokes the session immediately.
+
 ## Common configuration
 
 Copy the example before changing settings:
