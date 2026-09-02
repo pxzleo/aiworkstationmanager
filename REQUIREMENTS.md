@@ -87,7 +87,7 @@
 | ComfyUI 视频服务 | Windows 原生 ComfyUI | 已配置，当前未运行 | 计划 `0.0.0.0:8000` | 视频场景绑定 RTX 4090，运行 MiniMax H3；仅向专用网络开放 |
 | ComfyUI 音频服务 | Windows PowerShell 启动的独立 ComfyUI | 已配置，当前未运行 | 计划 `0.0.0.0:8001` | 视频场景绑定 RTX 3090，运行 Qwen TTS、ACE-Step 1.5 等辅助模型；仅向专用网络开放 |
 
-此外，WSL 当前监听 `127.0.0.1:3000` 的 Node 进程已确认是 `/home/xu/ai_stud/xz_server/netease-cloud-music-api/app.js`，与模型监控无关。系统应能显示其归属，但在没有对应环境定义时不得自动接管或停止。
+小智核心、管理后台、专用 Nginx 前端和网易云音乐 API 不得通过 WSL systemd 独立自启动；对应 unit 必须保持 `disabled`，当前实例由用户通过 AXIS 已登记服务或场景统一启动、停止。管理脚本仍须按固定 `start`、`stop`、`restart`、`status` 契约管理各自明确拥有的 unit，不得修改 WSL linger 或无关服务。
 
 ### 3.5 当前 NInfer 4090 参数快照
 
@@ -428,6 +428,7 @@ MVP 预置“开发/agent场景”和“视频制作场景”，但数据模型�
 | FR-LIFE-007 | 修改 restart policy 前展示旧值、新值和影响；同时检查运行与已停止容器。 | P0 |
 | FR-LIFE-008 | 管理器启动后以真实外部状态为准进行状态协调，不根据上次数据库状态盲目重启服务。 | P0 |
 | FR-LIFE-009 | 失败回滚仅恢复本次操作直接改变的状态，不影响无关服务。 | P0 |
+| FR-LIFE-010 | 未配置默认场景时，管理器启动必须串行执行每个服务的一次只读 `status`，校准实际状态与期望状态；生命周期动作失败后也必须用一次只读 `status` 清除失败动作遗留的错误期望状态。 | P0 |
 
 ### 8.7 状态模型
 

@@ -671,8 +671,10 @@ class ScriptRunnerTests(unittest.TestCase):
 
             with patch("workstation_manager.registry.shutil.which", return_value="powershell.exe"), \
                     patch("workstation_manager.registry.subprocess.run",
-                          side_effect=complete_with_output) as run:
+                          side_effect=complete_with_output) as run, \
+                    patch.dict(os.environ, {"PsModulePath": "inherited"}, clear=False):
                 result = ScriptRunner().run(str(script), "status")
+                self.assertEqual(os.environ["PsModulePath"], "inherited")
             self.assertEqual(result.stdout, "running")
             args, kwargs = run.call_args
             self.assertEqual(args[0][-2:], [str(script.resolve()), "status"])
@@ -680,6 +682,15 @@ class ScriptRunnerTests(unittest.TestCase):
             self.assertFalse(kwargs["shell"])
             self.assertEqual(kwargs["timeout"], 3.0)
             self.assertNotIn("capture_output", kwargs)
+            self.assertFalse(any(
+                key.lower() == "psmodulepath" for key in kwargs["env"]
+            ))
+
+    def test_cmd_script_keeps_inherited_powershell_module_path(self) -> None:
+        path = Path("C:/manage.cmd")
+        with patch.dict(os.environ, {"PSMODULEPATH": "inherited"}, clear=False):
+            environment = ScriptRunner._environment(path)
+        self.assertEqual(environment["PSMODULEPATH"], "inherited")
 
     def test_output_tail_read_is_bounded(self) -> None:
         class BoundedStream:
@@ -1234,6 +1245,106 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runner.calls, [("健康动作.ps1", "start")])
         self.assertEqual(self.health_probe.calls, [(health_url, "expected-model")])
 
+    async def test_failed_start_reconciles_desired_state_from_status_script(self) -> None:
+        health_url = "http://127.0.0.1:8080/health"
+        service = await self.add_service("启动失败", health_url=health_url)
+        self.runner.failures.add(("启动失败.ps1", "start"))
+        self.health_probe.results[health_url] = HealthProbeResult(
+            "unknown", "健康接口响应超时", False
+        )
+
+        operation_id = self.manager.submit_service_action(
+            service["id"], "start", "admin", "local"
+        )
+
+        operation = await self.wait_operation(operation_id)
+        item = self.manager.list_services()[0]
+        self.assertEqual(operation["status"], "failed")
+        self.assertEqual(item["desired_state"], "stopped")
+        self.assertEqual(item["status"]["state"], "stopped")
+        self.assertEqual(
+            self.runner.calls,
+            [("启动失败.ps1", "start"), ("启动失败.ps1", "status")],
+        )
+
+    async def test_start_exception_still_reconciles_desired_state(self) -> None:
+        service = await self.add_service("启动异常")
+        original_run = self.runner.run
+
+        def run_with_start_exception(script_path: str, action: str) -> ScriptResult:
+            if action == "start":
+                self.runner.calls.append((Path(script_path).name, action))
+                raise RegistryError(500, "script_timeout", "管理脚本执行超时")
+            return original_run(script_path, action)
+
+        with patch.object(self.runner, "run", side_effect=run_with_start_exception):
+            operation_id = self.manager.submit_service_action(
+                service["id"], "start", "admin", "local"
+            )
+            operation = await self.wait_operation(operation_id)
+
+        item = self.manager.list_services()[0]
+        self.assertEqual(operation["status"], "failed")
+        self.assertEqual(item["desired_state"], "stopped")
+        self.assertEqual(item["status"]["state"], "stopped")
+        self.assertEqual(
+            self.runner.calls,
+            [("启动异常.ps1", "start"), ("启动异常.ps1", "status")],
+        )
+
+    async def test_health_probe_exception_still_reconciles_actual_running_state(self) -> None:
+        service = await self.add_service(
+            "健康异常", health_url="http://127.0.0.1:8080/health"
+        )
+
+        with patch.object(
+            self.health_probe, "probe", side_effect=RuntimeError("健康探针崩溃")
+        ):
+            operation_id = self.manager.submit_service_action(
+                service["id"], "start", "admin", "local"
+            )
+            operation = await self.wait_operation(operation_id)
+
+        item = self.manager.list_services()[0]
+        self.assertEqual(operation["status"], "failed")
+        self.assertEqual(item["desired_state"], "running")
+        self.assertEqual(item["status"]["state"], "running")
+        self.assertEqual(
+            self.runner.calls,
+            [("健康异常.ps1", "start"), ("健康异常.ps1", "status")],
+        )
+
+    async def test_failed_action_reports_reconciliation_persistence_errors(self) -> None:
+        service = await self.add_service("校准写入失败")
+        self.runner.failures.add(("校准写入失败.ps1", "start"))
+        original_update = self.database.update_registered_service_desired_state
+        calls = 0
+
+        def fail_reconciliation_writes(service_id: str, state: str) -> bool:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return original_update(service_id, state)
+            raise DatabaseError(f"第 {calls} 次期望状态写入失败")
+
+        with patch.object(
+            self.database, "update_registered_service_desired_state",
+            side_effect=fail_reconciliation_writes,
+        ):
+            operation_id = self.manager.submit_service_action(
+                service["id"], "start", "admin", "local"
+            )
+            operation = await self.wait_operation(operation_id)
+
+        item = self.manager.list_services()[0]
+        stored = self.database.get_registered_service(service["id"])
+        step_error = operation["steps"][0]["error_summary"]
+        self.assertEqual(operation["status"], "failed")
+        self.assertEqual(item["status"]["state"], "unknown")
+        self.assertEqual(stored["desired_state"], "running")
+        self.assertIn("失败后状态校准失败 (DatabaseError)", step_error)
+        self.assertIn("无法持久化 unknown 回退状态 (DatabaseError)", step_error)
+
     async def test_stop_action_uses_new_desired_state_for_health_timeout(self) -> None:
         health_url = "http://127.0.0.1:8189/health"
         service = await self.add_service("停止后超时", health_url=health_url)
@@ -1371,21 +1482,35 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
             await second.start()
         self.assertEqual(self.database.get_operation(operation_id)["status"], "queued")
 
-    async def test_manager_start_does_not_probe_service_status(self) -> None:
-        runner = BlockingStatusRunner()
-        manager = RegisteredServiceManager(self.database, runner)
-        script = self.make_script("关闭等待")
-        await manager.create_service(
-            {"name": "关闭等待", "description": "", "script_path": str(script),
-             "gpu_label": "", "port": None, "ui_url": ""}, "admin", "local"
+    async def test_manager_start_without_default_scene_reconciles_actual_status_once(self) -> None:
+        service = await self.add_service("启动校准")
+        self.runner.states[service["script_path"]] = "stopped"
+        self.database.update_registered_service_desired_state(service["id"], "running")
+        self.database.update_registered_service_status(
+            service["id"], "unhealthy", "健康接口响应超时"
         )
-        runner.calls.clear()
-        await manager.start()
-        runner.block_status = True
-        await asyncio.sleep(0.05)
-        self.assertFalse(runner.status_started.is_set())
-        self.assertEqual(runner.calls, [])
-        await manager.shutdown()
+        self.runner.calls.clear()
+
+        await self.manager.start()
+
+        item = self.manager.list_services()[0]
+        self.assertEqual(item["desired_state"], "stopped")
+        self.assertEqual(item["status"]["state"], "stopped")
+        self.assertEqual(item["status"]["source"], "startup")
+        self.assertEqual(self.runner.calls, [("启动校准.ps1", "status")])
+
+    async def test_manager_start_with_default_scene_skips_status_reconciliation(self) -> None:
+        service = await self.add_service("默认目标")
+        scene = self.manager.create_scene(
+            {"name": "默认场景", "description": "", "service_ids": [service["id"]]},
+            "admin", "local",
+        )
+        self.manager.set_default_scene(scene["id"], True, "admin", "local")
+        self.runner.calls.clear()
+
+        await self.manager.start()
+
+        self.assertEqual(self.runner.calls, [])
 
     async def test_manager_background_health_check_never_runs_status_script(self) -> None:
         runner = BlockingStatusRunner()
@@ -1402,6 +1527,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
              "health_url": health_url, "health_expect": ""}, "admin", "local"
         )
         await manager.start()
+        runner.calls.clear()
         for _ in range(100):
             if probe.calls:
                 break

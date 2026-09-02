@@ -176,6 +176,17 @@ class ScriptRunner:
         invocation = f'call "{path}" {action}'
         return [executable, "/d", "/s", "/c", invocation]
 
+    @staticmethod
+    def _environment(path: Path) -> dict[str, str]:
+        environment = dict(os.environ)
+        if os.name == "nt" and path.suffix.lower() == ".ps1":
+            environment = {
+                key: value
+                for key, value in environment.items()
+                if key.lower() != "psmodulepath"
+            }
+        return environment
+
     @classmethod
     def _read_output_tail(cls, stream: Any) -> str:
         stream.flush()
@@ -197,6 +208,7 @@ class ScriptRunner:
                     self._command(path, action), cwd=path.parent, shell=False,
                     stdout=stdout_file, stderr=stderr_file,
                     timeout=timeout, check=False,
+                    env=self._environment(path),
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 stdout = self._read_output_tail(stdout_file)
@@ -362,6 +374,51 @@ class RegisteredServiceManager:
         if not self.database.update_registered_service_desired_state(service_id, state):
             raise RegistryError(404, "service_not_found", "已登记服务不存在")
 
+    async def _reconcile_service_status(
+        self, service: dict[str, Any], source: str,
+    ) -> dict[str, Any]:
+        status = await self._probe_status(service)
+        state = status["state"]
+        self._set_desired_state(
+            service["id"], state if state in {"running", "stopped"} else "unknown"
+        )
+        self._health_failures.pop(service["id"], None)
+        return self._set_status(service["id"], state, status["error"], source)
+
+    async def _reconcile_failed_action_status(
+        self, service: dict[str, Any], action_error: str,
+    ) -> tuple[dict[str, Any], str | None]:
+        try:
+            return await self._reconcile_service_status(service, "script"), None
+        except (DatabaseError, RegistryError) as exc:
+            detail = exc.message if isinstance(exc, RegistryError) else str(exc)
+            reconciliation_error = (
+                f"失败后状态校准失败 ({type(exc).__name__}): {detail}"
+            )
+            try:
+                self._set_desired_state(service["id"], "unknown")
+                status = self._set_status(
+                    service["id"], "unknown",
+                    f"{action_error}; {reconciliation_error}", "action",
+                )
+                return status, reconciliation_error
+            except (DatabaseError, RegistryError) as fallback_exc:
+                fallback_detail = (
+                    fallback_exc.message
+                    if isinstance(fallback_exc, RegistryError) else str(fallback_exc)
+                )
+                fallback_error = (
+                    f"{reconciliation_error}; 无法持久化 unknown 回退状态 "
+                    f"({type(fallback_exc).__name__}): {fallback_detail}"
+                )
+                status = {
+                    "state": "unknown", "checked_at": utc_now(),
+                    "error": redact_value(f"{action_error}; {fallback_error}"),
+                    "source": "action",
+                }
+                self.statuses[service["id"]] = status
+                return status, fallback_error
+
     async def start(self) -> None:
         if self._health_task is not None:
             raise RuntimeError("服务健康监控已经启动")
@@ -373,6 +430,9 @@ class RegisteredServiceManager:
                 for item in self.database.list_registered_services()
             }
             self._reload_health_authorities()
+            if self.database.get_default_scene() is None:
+                for service in self.database.list_registered_services():
+                    await self._reconcile_service_status(service, "startup")
             self._health_task = asyncio.create_task(self._health_loop())
         except Exception:
             self._instance_lock.release()
@@ -849,29 +909,38 @@ class RegisteredServiceManager:
                     )
                     health_ok = status["state"] == expected
                 success = result.returncode == 0 and health_ok
+                if not success:
+                    status, reconciliation_error = await self._reconcile_failed_action_status(
+                        service, error or "服务未达到目标状态"
+                    )
+                    if reconciliation_error:
+                        error = f"{error or '服务未达到目标状态'}; {reconciliation_error}"
                 self.database.finish_operation_step(
                     operation_id, sequence, "succeeded" if success else "failed",
                     status["state"], "success" if success else "failure", error,
                 )
                 return success
             except RegistryError as exc:
-                try:
-                    self._set_status(service_id, "unknown", exc.message, "action")
-                except (DatabaseError, RegistryError):
-                    self.statuses[service_id] = {"state": "unknown", "checked_at": utc_now(),
-                                                 "error": exc.message, "source": "action"}
-                self.database.finish_operation_step(operation_id, sequence, "failed", "unknown",
-                                                    "failure", exc.message)
+                status, reconciliation_error = await self._reconcile_failed_action_status(
+                    service, exc.message
+                )
+                error = exc.message
+                if reconciliation_error:
+                    error = f"{error}; {reconciliation_error}"
+                self.database.finish_operation_step(
+                    operation_id, sequence, "failed", status["state"], "failure", error
+                )
                 return False
             except Exception as exc:
                 message = f"{type(exc).__name__}: {exc}"
-                try:
-                    self._set_status(service_id, "unknown", message, "action")
-                except (DatabaseError, RegistryError):
-                    self.statuses[service_id] = {"state": "unknown", "checked_at": utc_now(),
-                                                 "error": message, "source": "action"}
-                self.database.finish_operation_step(operation_id, sequence, "failed", "unknown",
-                                                    "failure", message)
+                status, reconciliation_error = await self._reconcile_failed_action_status(
+                    service, message
+                )
+                if reconciliation_error:
+                    message = f"{message}; {reconciliation_error}"
+                self.database.finish_operation_step(
+                    operation_id, sequence, "failed", status["state"], "failure", message
+                )
                 return False
             finally:
                 self._busy_services.discard(service_id)

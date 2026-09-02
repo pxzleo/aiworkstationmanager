@@ -69,7 +69,7 @@ D:\AIWork\example\manage.ps1 restart
 D:\AIWork\example\manage.ps1 status
 ```
 
-管理器不会持续轮询脚本，也不会为后台状态监控启动 PowerShell、WSL 或 Docker 命令。它每 5 秒在自身进程内直接检查已登记的本机健康地址；连续两次失败才改变状态。`status` 只在用户点击“深度检查”时调用一次。
+管理器不会持续轮询脚本，也不会为后台状态监控启动 PowerShell、WSL 或 Docker 命令。它每 5 秒在自身进程内直接检查已登记的本机健康地址；连续两次失败才改变状态。用户点击“深度检查”时会调用一次 `status`；未配置默认场景的管理器启动以及失败的生命周期动作也会各调用一次，用于校准实际状态并清除遗留的错误期望状态。
 
 完整脚本规范与示例见 [scriptspec.md](scriptspec.md)。
 
@@ -79,7 +79,7 @@ D:\AIWork\example\manage.ps1 status
 
 切换窗口会显示每一步的进度，可以终止尚未执行的后续步骤。已经完成的启停操作不会自动回滚。
 
-每个项目可以选择一个“默认场景”。设置后不会立即切换；AXIS 下次启动时会自动执行该场景。取消默认只清除启动设置，不会停止当前服务。
+每个项目可以选择一个“默认场景”。设置后不会立即切换；AXIS 下次启动时会自动执行该场景。取消默认只清除启动设置，不会停止当前服务；下次启动时 AXIS 只读校准全部已登记服务，不会自动启停它们。
 
 在私人电脑或手机登录时，可以勾选“在该电脑自动登录”保持登录 30 天。AXIS 不会在浏览器中保存密码；主动退出或修改密码仍会立即撤销会话。
 
@@ -101,7 +101,7 @@ Copy-Item .\config\settings.example.json .\config\settings.json
 | `database_path` | `data/workstation-manager.db` | 用户、服务、场景和操作记录数据库 |
 | `sample_interval_seconds` | `5` | 资源监控采样间隔，不会调用服务脚本 |
 | `history_minutes` | `1440` | 资源历史的 SQLite 保留时长（分钟） |
-| `script_status_timeout_seconds` | `3` | 手动深度检查单个服务状态的超时 |
+| `script_status_timeout_seconds` | `3` | 深度检查、启动校准及失败动作校准中单个 `status` 的超时 |
 | `script_action_timeout_seconds` | `600` | 启停服务的超时 |
 
 资源监控默认每 5 秒写入一次 SQLite，保留最近 24 小时；页面可切换 `15m`/`1h`/`24h`，其中长时间范围由服务端聚合后返回。每张 GPU 的核心负载、频率、功率和温度使用对齐曲线与联动指针显示，显存容量单独展示。内存中只保留最近 15 分钟，不会因 24 小时历史持续占用大量内存。

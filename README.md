@@ -69,7 +69,7 @@ D:\AIWork\example\manage.ps1 restart
 D:\AIWork\example\manage.ps1 status
 ```
 
-AXIS never polls management scripts and never launches PowerShell, WSL, or Docker commands for background status monitoring. Every five seconds it checks registered local health URLs inside the manager process and changes a stable state only after two consecutive failures. The `status` action runs only when a user clicks Deep Check.
+AXIS never polls management scripts and never launches PowerShell, WSL, or Docker commands for background status monitoring. Every five seconds it checks registered local health URLs inside the manager process and changes a stable state only after two consecutive failures. AXIS runs `status` once for a user-requested Deep Check, once per service when it starts without a default scene, and once after a failed lifecycle action so stale desired state cannot survive the failure.
 
 See [Script Requirements](SCRIPT_REQUIREMENTS.en.md) for the full contract and examples.
 
@@ -79,7 +79,7 @@ Create a scene in Work Scenes and select its registered services. Before switchi
 
 The progress window shows every step and can cancel steps that have not started. Completed service actions are not rolled back automatically.
 
-A project can have one optional default scene. Setting it does not switch immediately; AXIS activates it the next time the manager starts. Clearing the default only removes this startup behavior and does not stop current services.
+A project can have one optional default scene. Setting it does not switch immediately; AXIS activates it the next time the manager starts. Clearing the default only removes this startup behavior and does not stop current services; on the next startup AXIS performs read-only reconciliation for every registered service without starting or stopping it.
 
 On a private computer or phone, select **Sign in automatically on this device** to stay signed in for 30 days. AXIS never stores the password in the browser; signing out or changing the password still revokes the session immediately.
 
@@ -101,7 +101,7 @@ Most installations need only these fields:
 | `database_path` | `data/workstation-manager.db` | Users, services, scenes, and operation records |
 | `sample_interval_seconds` | `5` | Resource sampling interval; it never calls service scripts |
 | `history_minutes` | `1440` | SQLite resource-history retention in minutes |
-| `script_status_timeout_seconds` | `3` | Timeout for a manual single-service deep check |
+| `script_status_timeout_seconds` | `3` | Per-`status` timeout for Deep Check, startup reconciliation, and failed-action reconciliation |
 | `script_action_timeout_seconds` | `600` | Service-action timeout |
 
 Resource monitoring writes one SQLite sample every 5 seconds by default and retains the latest 24 hours. The UI supports `15m`, `1h`, and `24h`; longer windows are aggregated by the server before they are returned. For each GPU, aligned charts and a linked pointer compare core load, clock, power, and temperature, while VRAM capacity remains separate. Only the latest 15 minutes remain in memory, so 24-hour history does not create a large in-memory buffer.
