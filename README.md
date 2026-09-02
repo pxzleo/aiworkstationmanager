@@ -69,7 +69,7 @@ D:\AIWork\example\manage.ps1 restart
 D:\AIWork\example\manage.ps1 status
 ```
 
-AXIS never polls management scripts and never launches PowerShell, WSL, or Docker commands for background status monitoring. Every five seconds it checks registered local health URLs inside the manager process and changes a stable state only after two consecutive failures. AXIS runs `status` once for a user-requested Deep Check, once per service when it starts without a default scene, and once after a failed lifecycle action so stale desired state cannot survive the failure.
+AXIS never polls management scripts and never launches PowerShell, WSL, or Docker commands for background status monitoring. Every five seconds it checks registered local health URLs inside the manager process and changes a stable state only after two consecutive failures. AXIS runs `status` for a user-requested Deep Check, when it starts without a default scene, and after a failed lifecycle action so stale desired state cannot survive the failure. A service that remains `unknown` after the first startup pass receives one read-only retry after the full pass, allowing cold runtime environments such as WSL to become ready.
 
 See [Script Requirements](SCRIPT_REQUIREMENTS.en.md) for the full contract and examples.
 

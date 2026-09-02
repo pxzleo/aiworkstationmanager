@@ -431,7 +431,12 @@ class RegisteredServiceManager:
             }
             self._reload_health_authorities()
             if self.database.get_default_scene() is None:
+                unknown_services = []
                 for service in self.database.list_registered_services():
+                    status = await self._reconcile_service_status(service, "startup")
+                    if status["state"] == "unknown":
+                        unknown_services.append(service)
+                for service in unknown_services:
                     await self._reconcile_service_status(service, "startup")
             self._health_task = asyncio.create_task(self._health_loop())
         except Exception:
@@ -500,11 +505,20 @@ class RegisteredServiceManager:
         state = result.state
         error = result.error
         desired_state = service.get("desired_state", "unknown")
+        previous = self.statuses.get(
+            service_id, {"state": "unknown", "checked_at": None, "error": None}
+        )
         if state == "unknown" and not result.reachable:
             if desired_state == "stopped":
                 state, error = "stopped", None
             elif desired_state == "running":
                 state = "unhealthy"
+            elif previous.get("state") == "unhealthy":
+                self._health_failures.pop(service_id, None)
+                preserved = dict(previous)
+                preserved["checked_at"] = utc_now()
+                self.statuses[service_id] = preserved
+                return preserved
         if state == "unhealthy" and result.reachable and self._peer_is_running(service):
             state, error = "stopped", None
         if state == "running" or immediate:
@@ -514,9 +528,6 @@ class RegisteredServiceManager:
         self._health_failures[service_id] = failures
         if failures >= self.health_failure_threshold:
             return self._set_status(service_id, state, error, "health")
-        previous = self.statuses.get(
-            service_id, {"state": "unknown", "checked_at": None, "error": None}
-        )
         pending = dict(previous)
         pending["checked_at"] = utc_now()
         pending["source"] = "health"

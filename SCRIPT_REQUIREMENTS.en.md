@@ -73,9 +73,9 @@ Do not add prefixes, explanations, JSON, logs, or other text. `status: running`,
 
 A non-zero exit code, timeout, or invalid output is stored as `unknown`.
 
-AXIS never polls `status`. Opening or reloading the page and reading the service list do not execute scripts. AXIS invokes `status` once for a user-requested Deep Check, once per registered service when startup has no default scene, and once after a failed lifecycle action. Startup reconciliation runs sequentially, and a service's checks and lifecycle actions execute serially.
+AXIS never polls `status`. Opening or reloading the page and reading the service list do not execute scripts. AXIS invokes `status` for a user-requested Deep Check, startup without a default scene, and after a failed lifecycle action. Startup reconciliation runs sequentially and retries each first-pass `unknown` once after the full pass; a service's checks and lifecycle actions execute serially.
 
-When a local health-check URL is registered, AXIS accesses that URL directly inside the manager process every five seconds. This never launches PowerShell, WSL, Docker CLI, or this script. The lightweight check measures service availability; `status` remains the user-triggered process, unit, or container-level deep check.
+When a local health-check URL is registered, AXIS accesses that URL directly inside the manager process every five seconds. This never launches PowerShell, WSL, Docker CLI, or this script. The lightweight check measures service availability; `status` remains the user-triggered process, unit, or container-level deep check. When desired state is unknown, an unreachable or timed-out lightweight probe returning `unknown` does not overwrite an explicit `unhealthy` result from `status`.
 
 ## 4. `start`, `stop`, and `restart`
 
@@ -89,7 +89,7 @@ When a local health-check URL is registered, AXIS accesses that URL directly ins
   - `restart` completes both stop and start, waits until the service is usable, and exits.
 - A background service started by the script must not inherit the management script's standard-output or standard-error handles. Redirect background output to a service-owned log or a null device; inherited handles can keep the management action open indefinitely.
 - When a health-check URL is configured, AXIS validates that endpoint directly after the action; the operation succeeds only when both the script exit code and observed health reach the target state. Without a health URL, AXIS falls back to the action result. After a failed action, AXIS runs `status` once to clear any stale desired state left by the failed request.
-- Return success only after the real service has reached the intended state. With a default scene, startup uses the normal scene operation. Without one, AXIS runs each read-only `status` once before continuing with lightweight background health checks.
+- Return success only after the real service has reached the intended state. With a default scene, startup uses the normal scene operation. Without one, AXIS runs each read-only `status` and retries first-pass `unknown` results once before continuing with lightweight background health checks.
 
 ## 5. Idempotency
 

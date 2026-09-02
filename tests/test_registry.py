@@ -1227,6 +1227,37 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         await self.manager.refresh_all_health()
         self.assertEqual(self.manager.list_services()[0]["status"]["state"], "stopped")
 
+    async def test_indeterminate_health_does_not_erase_explicit_unhealthy_status(self) -> None:
+        health_url = "http://127.0.0.1:18030/health"
+        service = await self.add_service("异常状态保留", health_url=health_url)
+        explicit_error = "容器与界面状态不一致"
+        before = self.manager._set_status(
+            service["id"], "unhealthy", explicit_error, "script"
+        )
+        self.health_probe.results[health_url] = HealthProbeResult(
+            "unknown", "健康接口响应超时", False
+        )
+
+        await self.manager.refresh_all_health()
+        await self.manager.refresh_all_health()
+
+        item = self.manager.list_services()[0]
+        self.assertEqual(item["desired_state"], "unknown")
+        self.assertEqual(item["status"]["state"], "unhealthy")
+        self.assertEqual(item["status"]["source"], "script")
+        self.assertEqual(item["status"]["error"], explicit_error)
+        self.assertGreater(item["status"]["checked_at"], before["checked_at"])
+
+        self.health_probe.results[health_url] = HealthProbeResult("stopped", None, False)
+        await self.manager.refresh_all_health()
+        self.assertEqual(self.manager.list_services()[0]["status"]["state"], "unhealthy")
+        await self.manager.refresh_all_health()
+        self.assertEqual(self.manager.list_services()[0]["status"]["state"], "stopped")
+
+        self.health_probe.results[health_url] = HealthProbeResult("running", None, True)
+        await self.manager.refresh_all_health()
+        self.assertEqual(self.manager.list_services()[0]["status"]["state"], "running")
+
     async def test_action_records_desired_state_and_immediately_verifies_health(self) -> None:
         health_url = "http://127.0.0.1:8000/v1/models"
         service = await self.add_service(
@@ -1498,6 +1529,40 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["status"]["state"], "stopped")
         self.assertEqual(item["status"]["source"], "startup")
         self.assertEqual(self.runner.calls, [("启动校准.ps1", "status")])
+
+    async def test_manager_start_retries_transient_unknown_status_once(self) -> None:
+        transient = await self.add_service("A 冷启动校准")
+        stable = await self.add_service("B 稳定校准")
+        original_run = self.runner.run
+        transient_status_calls = 0
+
+        def run_with_transient_unknown(script_path: str, action: str) -> ScriptResult:
+            nonlocal transient_status_calls
+            if action == "status" and Path(script_path).name == "A 冷启动校准.ps1":
+                transient_status_calls += 1
+                if transient_status_calls == 1:
+                    self.runner.calls.append((Path(script_path).name, action))
+                    return ScriptResult(1, "", "管理脚本执行超时")
+                self.runner.states[str(Path(script_path).resolve())] = "unhealthy"
+            return original_run(script_path, action)
+
+        with patch.object(self.runner, "run", side_effect=run_with_transient_unknown):
+            await self.manager.start()
+
+        items = {item["id"]: item for item in self.manager.list_services()}
+        self.assertEqual(items[transient["id"]]["desired_state"], "unknown")
+        self.assertEqual(items[transient["id"]]["status"]["state"], "unhealthy")
+        self.assertEqual(items[transient["id"]]["status"]["source"], "startup")
+        self.assertEqual(items[stable["id"]]["status"]["state"], "stopped")
+        self.assertEqual(
+            self.runner.calls,
+            [
+                ("A 冷启动校准.ps1", "status"),
+                ("B 稳定校准.ps1", "status"),
+                ("A 冷启动校准.ps1", "status"),
+            ],
+        )
+        self.assertEqual(transient_status_calls, 2)
 
     async def test_manager_start_with_default_scene_skips_status_reconciliation(self) -> None:
         service = await self.add_service("默认目标")
