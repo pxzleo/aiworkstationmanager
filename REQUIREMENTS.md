@@ -78,7 +78,7 @@
 |---|---|---|---|---|
 | `ninfer-4090` | Docker Compose | 运行中 | `0.0.0.0:8080` | `/health`、`/v1/models`、`/slots`、`/metrics` 可用 |
 | `ninfer-3090` | Docker Compose | 已停止 | 后端计划端口 `18030` | 容器 restart policy 为 `unless-stopped` |
-| `ninfer3090-ui.service` | WSL systemd | 运行中 | `127.0.0.1:18031` | UI 存活，但 3090 后端当前停止 |
+| `ninfer3090-ui.service` | WSL systemd | 已停止 | `127.0.0.1:18031` | unit 保持可手动启动但不绑定 systemd 启动目标，由 AXIS 已登记服务统一管理 |
 | `qwen38-27b-rtx3090-single-1` | Docker Compose | 已停止 | 未监听 | restart policy 为 `no` |
 | q27 | WSL 原生构建/服务 | 当前未发现监听 | 历史上可作为独立推理后端 | 项目位于 `/home/xu/ai_stud/q27` |
 | FastGPT 相关容器组 | Docker Compose | 已停止 | 未监听 | 包含应用、数据库、Redis、MinIO 等依赖 |
@@ -87,7 +87,7 @@
 | ComfyUI 视频服务 | Windows 原生 ComfyUI | 已配置，当前未运行 | 计划 `0.0.0.0:8000` | 视频场景绑定 RTX 4090，运行 MiniMax H3；仅向专用网络开放 |
 | ComfyUI 音频服务 | Windows PowerShell 启动的独立 ComfyUI | 已配置，当前未运行 | 计划 `0.0.0.0:8001` | 视频场景绑定 RTX 3090，运行 Qwen TTS、ACE-Step 1.5 等辅助模型；仅向专用网络开放 |
 
-小智核心、管理后台、专用 Nginx 前端和网易云音乐 API 不得通过 WSL systemd 独立自启动；对应 unit 必须保持 `disabled`，当前实例由用户通过 AXIS 已登记服务或场景统一启动、停止。管理脚本仍须按固定 `start`、`stop`、`restart`、`status` 契约管理各自明确拥有的 unit，不得修改 WSL linger 或无关服务。
+小智核心、管理后台、专用 Nginx 前端、网易云音乐 API 和 `ninfer3090-ui.service` 不得通过 WSL systemd 独立自启动；对应 unit 必须保持不绑定任何 systemd 启动目标，当前实例由用户通过 AXIS 已登记服务或场景统一启动、停止。管理脚本仍须按固定 `start`、`stop`、`restart`、`status` 契约管理各自明确拥有的 unit，不得修改 WSL linger 或无关服务。
 
 ### 3.5 当前 NInfer 4090 参数快照
 
@@ -166,7 +166,7 @@ ASR 与 TTS 使用独立的 user systemd unit `sensevoice-asr-api.service`、`in
 | UI | 当前地址 | 快照状态 | 能力与注意事项 |
 |---|---|---|---|
 | NInfer 4090 UI | `http://127.0.0.1:8081` | 在线，后端 8080 在线 | 显示服务、模型、slots、KV、GPU、请求、日志等信息 |
-| NInfer 3090 UI | `http://127.0.0.1:18031` | UI 在线，后端 18030 离线 | 必须显示 UI 与模型后端的分离状态 |
+| NInfer 3090 UI | `http://127.0.0.1:18031` | UI 与后端均离线，按需手动启动 | 必须显示 UI 与模型后端的分离状态，且不得绕过 AXIS 独立自启动 |
 | LM Studio Web Monitor | `http://127.0.0.1:8765` 或局域网地址 | 当前未监听 | 可查看 CPU、内存、GPU、显存、模型输入输出和日志，并执行模型加载/卸载 |
 
 NInfer UI 当前只监听 loopback，局域网浏览器不能直接访问；LM Studio Web Monitor 当前实现会监听全部网卡、创建防火墙放行规则，并使用 URL 查询参数形式的静态访问凭据。管理系统不得把该凭据暴露在菜单、审计、Referer 或日志中。MVP 应通过管理系统的登录态和同源反向代理安全地打开现有 UI，或在管理员确认后采用经过加固的独立局域网地址。
