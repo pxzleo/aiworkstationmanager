@@ -20,6 +20,7 @@ from workstation_manager.auth import SESSION_COOKIE, AuthError, AuthService
 from workstation_manager.config import Settings
 from workstation_manager.database import Database, DatabaseError, SCHEMA_VERSION
 from workstation_manager.history import Sampler
+from workstation_manager.portproxy import PortProxySyncError
 from workstation_manager.registry import (
     HealthProbeResult,
     HttpHealthProbe,
@@ -98,7 +99,61 @@ class FakeHealthProbe:
         )
 
 
+class FakePortProxySynchronizer:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.failures: set[str] = set()
+        self.removed: list[str] = []
+        self.restored: list[str] = []
+
+    def sync_services(
+        self, services: list[dict[str, Any]]
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        errors: dict[str, str] = {}
+        synced: dict[str, str] = {}
+        for service in services:
+            if not service.get("wsl_portproxy_enabled"):
+                continue
+            self.calls.append(service["name"])
+            if service["name"] in self.failures:
+                errors[service["id"]] = "测试端口转发同步失败"
+            else:
+                synced[service["id"]] = "172.29.43.201"
+        return errors, synced
+
+    def remove_owned(self, mapping: Any) -> bool:
+        self.removed.append(mapping.service_name)
+        if mapping.service_name in self.failures:
+            raise PortProxySyncError("测试端口转发清理失败")
+        return True
+
+    def restore_owned(self, mapping: Any) -> None:
+        self.restored.append(mapping.service_name)
+
+
 class DatabaseRegistryTests(unittest.TestCase):
+    def test_schema_twenty_two_adds_explicit_wsl_portproxy_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "manager.db"
+            database = Database(path)
+            service = {
+                "id": "a" * 32, "name": "WSL 服务", "description": "",
+                "script_path": "D:/a.ps1", "gpu_label": "", "port": 18000,
+                "ui_url": "", "wsl_portproxy_enabled": True,
+                "wsl_distro": "Ubuntu-22.04", "wsl_listen_address": "0.0.0.0",
+                "wsl_listen_port": 18000, "wsl_connect_port": 18000,
+            }
+
+            database.create_registered_service(service)
+            stored = database.get_registered_service(service["id"])
+
+            self.assertEqual(stored["wsl_portproxy_enabled"], 1)
+            self.assertEqual(stored["wsl_distro"], "Ubuntu-22.04")
+            self.assertEqual(stored["wsl_listen_address"], "0.0.0.0")
+            self.assertEqual(stored["wsl_listen_port"], 18000)
+            self.assertEqual(stored["wsl_connect_port"], 18000)
+            self.assertIsNone(stored["wsl_last_address"])
+
     def test_schema_twenty_adds_writable_operation_total_steps(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "manager.db"
@@ -133,7 +188,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 version = connection.execute(
                     "SELECT version FROM schema_version"
                 ).fetchone()["version"]
-            self.assertEqual(version, 21)
+            self.assertEqual(version, 22)
             self.assertIsNone(migrated["total_steps"])
 
             database.update_operation("a" * 32, total_steps=3)
@@ -178,7 +233,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                        WHERE type='index' AND name='idx_scenes_single_default'"""
                 ).fetchone()
 
-            self.assertEqual(version, 21)
+            self.assertEqual(version, 22)
             self.assertEqual(scene["is_default"], 0)
             self.assertEqual(scene["detailed_description"], "")
             self.assertIsNotNone(index)
@@ -219,7 +274,7 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 21)
+            self.assertEqual(SCHEMA_VERSION, 22)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -322,7 +377,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-                self.assertEqual(version, 21)
+                self.assertEqual(version, 22)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -365,7 +420,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 21)
+            self.assertEqual(SCHEMA_VERSION, 22)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -431,7 +486,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 60, bucket_seconds=15, now=now + timedelta(seconds=30)
             )
 
-            self.assertEqual(SCHEMA_VERSION, 21)
+            self.assertEqual(SCHEMA_VERSION, 22)
             self.assertEqual(result["stored_sample_count"], 3)
             self.assertEqual(len(result["samples"]), 2)
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
@@ -481,7 +536,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_gpu_samples WHERE sample_id=1"
                 ).fetchone()
 
-            self.assertEqual(version, 21)
+            self.assertEqual(version, 22)
             self.assertEqual(row["temperature_c"], 62)
             self.assertIsNone(row["power_w"])
             self.assertIsNone(row["graphics_clock_mhz"])
@@ -520,7 +575,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_samples"
                 ).fetchone()
 
-            self.assertEqual(version, 21)
+            self.assertEqual(version, 22)
             self.assertEqual(row["memory_percent"], 50)
             self.assertIsNone(row["memory_used_bytes"])
             self.assertIsNone(row["memory_total_bytes"])
@@ -800,8 +855,64 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         restarted = RegisteredServiceManager(self.database, self.runner)
         self.assertEqual(restarted.list_services()[0]["status"]["state"], "running")
         self.assertEqual(self.database.list_audit(1)[0]["event"], "management.service")
-        self.manager.delete_service(service["id"], "admin", "local")
+        await self.manager.delete_service(service["id"], "admin", "local")
         self.assertEqual(self.manager.list_services(), [])
+
+    async def test_wsl_portproxy_is_synchronized_before_service_start(self) -> None:
+        synchronizer = FakePortProxySynchronizer()
+        manager = RegisteredServiceManager(
+            self.database, self.runner, self.health_probe,
+            portproxy_synchronizer=synchronizer,
+        )
+        service = await manager.create_service(
+            {
+                "name": "WSL 推理服务", "description": "",
+                "script_path": str(self.make_script("WSL 推理服务")), "gpu_label": "",
+                "port": 18000, "ui_url": "", "health_url": "", "health_expect": "",
+                "wsl_portproxy_enabled": True, "wsl_distro": "Ubuntu-22.04",
+                "wsl_listen_address": "0.0.0.0", "wsl_listen_port": 18000,
+                "wsl_connect_port": 18000,
+            },
+            "admin",
+            "local",
+        )
+
+        result = await self.wait_operation(
+            manager.submit_service_action(service["id"], "start", "admin", "local")
+        )
+
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(synchronizer.calls, ["WSL 推理服务"])
+        self.assertIn(("WSL 推理服务.ps1", "start"), self.runner.calls)
+
+    async def test_wsl_portproxy_failure_prevents_service_start(self) -> None:
+        synchronizer = FakePortProxySynchronizer()
+        synchronizer.failures.add("WSL 推理服务")
+        manager = RegisteredServiceManager(
+            self.database, self.runner, self.health_probe,
+            portproxy_synchronizer=synchronizer,
+        )
+        service = await manager.create_service(
+            {
+                "name": "WSL 推理服务", "description": "",
+                "script_path": str(self.make_script("WSL 推理服务")), "gpu_label": "",
+                "port": 18000, "ui_url": "", "health_url": "", "health_expect": "",
+                "wsl_portproxy_enabled": True, "wsl_distro": "Ubuntu-22.04",
+                "wsl_listen_address": "0.0.0.0", "wsl_listen_port": 18000,
+                "wsl_connect_port": 18000,
+            },
+            "admin",
+            "local",
+        )
+
+        result = await self.wait_operation(
+            manager.submit_service_action(service["id"], "start", "admin", "local")
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertNotIn(("WSL 推理服务.ps1", "start"), self.runner.calls)
+        self.assertIn("测试端口转发同步失败", result["steps"][0]["error_summary"])
+        self.assertEqual(manager.last_portproxy_error, "测试端口转发同步失败")
 
     async def test_scene_stops_unselected_then_starts_selected_in_order(self) -> None:
         first = await self.add_service("A")
@@ -1149,7 +1260,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         service = await self.add_service("互斥服务")
         operation = self.manager.submit_service_action(service["id"], "start", "admin", "local")
         with self.assertRaisesRegex(RegistryError, "已有服务或场景操作"):
-            self.manager.delete_service(service["id"], "admin", "local")
+            await self.manager.delete_service(service["id"], "admin", "local")
         second = RegisteredServiceManager(self.database, self.runner)
         with self.assertRaisesRegex(RegistryError, "已有服务或场景操作"):
             second.submit_service_action(service["id"], "stop", "admin", "local")
@@ -1527,6 +1638,108 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated["status"]["state"], "unknown")
         restarted = RegisteredServiceManager(self.database, self.runner)
         self.assertEqual(restarted.list_services()[0]["status"]["state"], "unknown")
+
+    async def test_legacy_partial_update_preserves_wsl_portproxy_configuration(self) -> None:
+        service = await self.manager.create_service(
+            {
+                "name": "WSL 服务", "description": "", "script_path": str(self.make_script("WSL")),
+                "gpu_label": "", "port": 18000, "ui_url": "", "health_url": "",
+                "health_expect": "", "wsl_portproxy_enabled": True,
+                "wsl_distro": "Ubuntu-22.04", "wsl_listen_address": "0.0.0.0",
+                "wsl_listen_port": 18000, "wsl_connect_port": 18000,
+            },
+            "admin", "local",
+        )
+
+        updated = await self.manager.update_service(
+            service["id"], {"description": "旧客户端只修改说明"}, "admin", "local"
+        )
+
+        self.assertTrue(updated["wsl_portproxy_enabled"])
+        self.assertEqual(updated["wsl_listen_port"], 18000)
+        self.assertEqual(updated["wsl_connect_port"], 18000)
+
+    async def test_disabling_wsl_portproxy_removes_owned_mapping_before_update(self) -> None:
+        synchronizer = FakePortProxySynchronizer()
+        manager = RegisteredServiceManager(
+            self.database, self.runner, self.health_probe,
+            portproxy_synchronizer=synchronizer,
+        )
+        service = await manager.create_service(
+            {
+                "name": "待关闭映射", "description": "", "script_path": str(self.make_script("关闭映射")),
+                "gpu_label": "", "port": 18000, "ui_url": "", "health_url": "",
+                "health_expect": "", "wsl_portproxy_enabled": True,
+                "wsl_distro": "Ubuntu-22.04", "wsl_listen_address": "0.0.0.0",
+                "wsl_listen_port": 18000, "wsl_connect_port": 18000,
+            },
+            "admin", "local",
+        )
+        self.database.update_registered_service_portproxy_address(
+            service["id"], "172.29.43.201"
+        )
+
+        updated = await manager.update_service(
+            service["id"], {"wsl_portproxy_enabled": False}, "admin", "local"
+        )
+
+        self.assertEqual(synchronizer.removed, ["待关闭映射"])
+        self.assertFalse(updated["wsl_portproxy_enabled"])
+        self.assertIsNone(self.database.get_registered_service(service["id"])["wsl_last_address"])
+
+    async def test_portproxy_cleanup_failure_preserves_service_registration(self) -> None:
+        synchronizer = FakePortProxySynchronizer()
+        synchronizer.failures.add("不可清理映射")
+        manager = RegisteredServiceManager(
+            self.database, self.runner, self.health_probe,
+            portproxy_synchronizer=synchronizer,
+        )
+        service = await manager.create_service(
+            {
+                "name": "不可清理映射", "description": "", "script_path": str(self.make_script("不可清理")),
+                "gpu_label": "", "port": 18000, "ui_url": "", "health_url": "",
+                "health_expect": "", "wsl_portproxy_enabled": True,
+                "wsl_distro": "Ubuntu-22.04", "wsl_listen_address": "0.0.0.0",
+                "wsl_listen_port": 18000, "wsl_connect_port": 18000,
+            },
+            "admin", "local",
+        )
+
+        with self.assertRaisesRegex(RegistryError, "测试端口转发清理失败"):
+            await manager.delete_service(service["id"], "admin", "local")
+
+        self.assertIsNotNone(self.database.get_registered_service(service["id"]))
+
+    async def test_database_delete_failure_restores_removed_portproxy(self) -> None:
+        synchronizer = FakePortProxySynchronizer()
+        manager = RegisteredServiceManager(
+            self.database, self.runner, self.health_probe,
+            portproxy_synchronizer=synchronizer,
+        )
+        service = await manager.create_service(
+            {
+                "name": "回滚映射", "description": "", "script_path": str(self.make_script("回滚")),
+                "gpu_label": "", "port": 18000, "ui_url": "", "health_url": "",
+                "health_expect": "", "wsl_portproxy_enabled": True,
+                "wsl_distro": "Ubuntu-22.04", "wsl_listen_address": "0.0.0.0",
+                "wsl_listen_port": 18000, "wsl_connect_port": 18000,
+            },
+            "admin", "local",
+        )
+        self.database.update_registered_service_portproxy_address(
+            service["id"], "172.29.43.201"
+        )
+
+        with patch.object(
+            self.database, "delete_registered_service",
+            side_effect=DatabaseError("模拟数据库删除失败"),
+        ):
+            with self.assertRaisesRegex(RegistryError, "模拟数据库删除失败"):
+                await manager.delete_service(service["id"], "admin", "local")
+
+        self.assertEqual(synchronizer.removed, ["回滚映射"])
+        self.assertEqual(synchronizer.restored, ["回滚映射"])
+        self.assertIsNotNone(self.database.get_registered_service(service["id"]))
 
     async def test_second_started_manager_cannot_interrupt_first_instance_operation(self) -> None:
         await self.manager.start()

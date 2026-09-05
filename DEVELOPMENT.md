@@ -62,11 +62,16 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
   "script_path": "C:\\Services\\comfyui.ps1",
   "gpu_label": "RTX 3090",
   "port": 8189,
-  "ui_url": "http://192.168.100.190:8189/"
+  "ui_url": "http://192.168.100.190:8189/",
+  "wsl_portproxy_enabled": false,
+  "wsl_distro": "Ubuntu-22.04",
+  "wsl_listen_address": "0.0.0.0",
+  "wsl_listen_port": null,
+  "wsl_connect_port": null
 }
 ```
 
-`name` 最长 100 字符，`description` 最长 1000 字符，`script_path` 必须是现有 `.ps1`、`.cmd` 或 `.bat` 绝对路径，`gpu_label` 最长 100 字符，`port` 为 `1..65535`，`ui_url` 必须为空或完整 HTTP/HTTPS 地址。
+`name` 最长 100 字符，`description` 最长 1000 字符，`script_path` 必须是现有 `.ps1`、`.cmd` 或 `.bat` 绝对路径，`gpu_label` 最长 100 字符，`port` 为 `1..65535`，`ui_url` 必须为空或完整 HTTP/HTTPS 地址。启用 `wsl_portproxy_enabled` 后，管理器启动及任一服务启动/重启前会统一校准全部已登记的 Windows `portproxy`，关闭、修改或删除登记时会清理旧映射；管理器仅更新或清理自己上次成功同步过的目标，未知现有映射会拒绝操作。同步成功还要求 IP Helper 实际持有监听端口。监听地址只允许 `0.0.0.0`、loopback 或私网 IPv4，监听端口为空时使用服务端口，WSL 目标端口为空时使用监听端口。
 
 登记或修改场景使用有序且不包含未知服务的 `service_ids`；重复 ID 会按首次出现去重。`description` 是最长 1000 字符的卡片简短介绍，`detailed_description` 是最长 8000 字符的独立详细使用说明：
 
@@ -118,7 +123,7 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 | POST | `/api/v1/registered-services/{id}/actions` | 提交 `start`、`stop` 或 `restart` |
 | POST | `/api/v1/registered-services/actions/stop-all` | 创建停止全部服务的操作 |
 
-登记请求字段为 `name`、`description`、`script_path`、`gpu_label`、`port`、`ui_url`、`health_url` 和 `health_expect`。`health_url` 只允许本机 loopback HTTP/HTTPS；`health_expect` 可留空，非空时要求响应正文包含该文本。
+登记请求字段还包括 `wsl_portproxy_enabled`、`wsl_distro`、`wsl_listen_address`、`wsl_listen_port` 和 `wsl_connect_port`。`health_url` 只允许本机 loopback HTTP/HTTPS；`health_expect` 可留空，非空时要求响应正文包含该文本。WSL 映射必须显式启用，管理器不会根据普通服务端口猜测并扩大局域网暴露范围；未知映射、目标冲突、同步失败或 IP Helper 未实际监听都会阻止对应服务启动并通过健康接口明确报告。
 
 服务列表读取和页面刷新不会调用脚本 `status`。管理器以固定 5 秒周期在进程内直接检查健康地址，单次超时 1 秒、并发上限 2；连续两次失败才改变稳定状态。后台检查不启动 PowerShell、WSL、Docker CLI 或其他子进程。`status` 接口是用户主动触发的深度检查；没有默认场景的管理器启动会串行调用每个服务的 `status`，并在整轮结束后重试第一轮的 `unknown`，失败的生命周期动作也会额外调用一次，以真实状态校准期望状态。
 
@@ -194,6 +199,6 @@ WM_TRUSTED_PROXY_IPS
 
 ## 数据与并发
 
-默认数据库是 `data/workstation-manager.db`，当前 schema 为 21，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数。旧客户端更新场景时若未提交详细说明字段，已有详细说明会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
+默认数据库是 `data/workstation-manager.db`，当前 schema 为 22，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置。旧客户端更新场景时若未提交详细说明字段，已有详细说明会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
 
 服务控制面分别保存期望状态和实际观察状态。场景、总览及 GPU 服务摘要只使用实际观察状态；状态或错误变化时才写入 SQLite，连续成功检查不会每 5 秒写盘。资源监控定时采样和健康监控都不会调用服务脚本；显式深度检查、无默认场景的启动校准及失败动作校准才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留 24 小时；内存队列固定只保留最近 15 分钟。

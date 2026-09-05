@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 import re
 import shutil
@@ -16,6 +17,11 @@ from urllib.request import ProxyHandler, Request, build_opener
 from urllib.parse import urlsplit
 
 from .database import Database, DatabaseError, OperationBusyError, utc_now
+from .portproxy import (
+    PortProxySyncError,
+    WslPortProxySynchronizer,
+    mapping_from_service,
+)
 from .redaction import redact_value
 
 
@@ -269,9 +275,51 @@ def validate_service_input(payload: dict[str, Any], runner: ScriptRunner) -> dic
         raise RegistryError(422, "invalid_health_expect", "健康检查匹配内容不能超过 512 个字符")
     if health_expect and not health_url:
         raise RegistryError(422, "invalid_health_expect", "填写匹配内容前必须填写健康检查地址")
+    wsl_portproxy_enabled = bool(payload.get("wsl_portproxy_enabled", False))
+    wsl_distro = str(payload.get("wsl_distro") or "Ubuntu-22.04").strip()
+    if not 1 <= len(wsl_distro) <= 100 or any(ord(character) < 32 for character in wsl_distro):
+        raise RegistryError(422, "invalid_wsl_distro", "WSL 发行版名称长度必须为 1..100")
+    wsl_listen_address = str(payload.get("wsl_listen_address") or "0.0.0.0").strip()
+    try:
+        parsed_listen_address = ipaddress.ip_address(wsl_listen_address)
+    except ValueError as exc:
+        raise RegistryError(422, "invalid_wsl_listen_address", "局域网监听地址必须是 IPv4 地址") from exc
+    if parsed_listen_address.version != 4 or not (
+        parsed_listen_address.is_unspecified
+        or parsed_listen_address.is_private
+        or parsed_listen_address.is_loopback
+    ):
+        raise RegistryError(
+            422, "invalid_wsl_listen_address", "局域网监听地址只允许 0.0.0.0、私网或 loopback IPv4"
+        )
+
+    def optional_proxy_port(key: str, label: str) -> int | None:
+        raw_value = payload.get(key)
+        try:
+            value = None if raw_value in {None, ""} else int(raw_value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RegistryError(422, "invalid_wsl_portproxy_port", f"{label}必须是整数") from exc
+        if value is not None and not 1 <= value <= 65535:
+            raise RegistryError(422, "invalid_wsl_portproxy_port", f"{label}必须在 1..65535")
+        return value
+
+    wsl_listen_port = optional_proxy_port("wsl_listen_port", "Windows 监听端口")
+    wsl_connect_port = optional_proxy_port("wsl_connect_port", "WSL 目标端口")
+    if wsl_portproxy_enabled:
+        wsl_listen_port = wsl_listen_port or port
+        wsl_connect_port = wsl_connect_port or wsl_listen_port
+        if wsl_listen_port is None:
+            raise RegistryError(
+                422, "invalid_wsl_portproxy_port", "启用 WSL 局域网映射时必须填写服务端口或监听端口"
+            )
     return {"name": name, "description": description, "script_path": script_path,
             "gpu_label": gpu_label, "port": port, "ui_url": ui_url,
-            "health_url": health_url, "health_expect": health_expect}
+            "health_url": health_url, "health_expect": health_expect,
+            "wsl_portproxy_enabled": wsl_portproxy_enabled,
+            "wsl_distro": wsl_distro,
+            "wsl_listen_address": wsl_listen_address,
+            "wsl_listen_port": wsl_listen_port,
+            "wsl_connect_port": wsl_connect_port}
 
 
 def validate_scene_input(payload: dict[str, Any], database: Database) -> dict[str, Any]:
@@ -310,6 +358,7 @@ class RegisteredServiceManager:
         health_probe: HttpHealthProbe | None = None,
         health_interval_seconds: float = HEALTH_INTERVAL_SECONDS,
         health_failure_threshold: int = HEALTH_FAILURE_THRESHOLD,
+        portproxy_synchronizer: WslPortProxySynchronizer | None = None,
     ) -> None:
         if health_interval_seconds <= 0:
             raise ValueError("健康检查间隔必须大于 0")
@@ -320,6 +369,7 @@ class RegisteredServiceManager:
         self.health_probe = health_probe or HttpHealthProbe()
         self.health_interval_seconds = health_interval_seconds
         self.health_failure_threshold = health_failure_threshold
+        self.portproxy_synchronizer = portproxy_synchronizer or WslPortProxySynchronizer()
         initial_services = self.database.list_registered_services()
         self.statuses = {item["id"]: self._stored_status(item) for item in initial_services}
         self._health_authorities = {
@@ -339,6 +389,55 @@ class RegisteredServiceManager:
         self._instance_lock = ManagerInstanceLock(self.database.path)
         self.last_operation_error: str | None = None
         self.last_health_error: str | None = None
+        self.portproxy_errors: dict[str, str] = {}
+
+    @property
+    def last_portproxy_error(self) -> str | None:
+        if not self.portproxy_errors:
+            return None
+        return "; ".join(dict.fromkeys(self.portproxy_errors.values()))[:1024]
+
+    async def _sync_all_portproxies(self) -> None:
+        services = self.database.list_registered_services()
+        errors, synced_addresses = await asyncio.to_thread(
+            self.portproxy_synchronizer.sync_services, services
+        )
+        for service_id, address in synced_addresses.items():
+            self.database.update_registered_service_portproxy_address(service_id, address)
+        self.portproxy_errors = {
+            service_id: redact_value(message) for service_id, message in errors.items()
+        }
+
+    async def _remove_owned_portproxy(self, service: dict[str, Any]) -> bool:
+        mapping = mapping_from_service(service)
+        if mapping is None:
+            return False
+        try:
+            return await asyncio.to_thread(self.portproxy_synchronizer.remove_owned, mapping)
+        except PortProxySyncError as exc:
+            message = redact_value(str(exc))
+            self.portproxy_errors[service["id"]] = message
+            raise RegistryError(503, "portproxy_sync_failed", message) from exc
+
+    async def _restore_owned_portproxy(self, service: dict[str, Any]) -> str | None:
+        mapping = mapping_from_service(service)
+        if mapping is None:
+            return None
+        try:
+            await asyncio.to_thread(self.portproxy_synchronizer.restore_owned, mapping)
+        except PortProxySyncError as exc:
+            return redact_value(str(exc))
+        return None
+
+    @staticmethod
+    def _portproxy_identity(service: dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            bool(service.get("wsl_portproxy_enabled")),
+            service.get("wsl_distro"),
+            service.get("wsl_listen_address"),
+            service.get("wsl_listen_port"),
+            service.get("wsl_connect_port"),
+        )
 
     @staticmethod
     def _stored_status(service: dict[str, Any]) -> dict[str, Any]:
@@ -430,6 +529,7 @@ class RegisteredServiceManager:
                 for item in self.database.list_registered_services()
             }
             self._reload_health_authorities()
+            await self._sync_all_portproxies()
             if self.database.get_default_scene() is None:
                 unknown_services = []
                 for service in self.database.list_registered_services():
@@ -624,6 +724,7 @@ class RegisteredServiceManager:
                 }
             )
             enriched["desired_state"] = item.get("desired_state", "unknown")
+            enriched["wsl_portproxy_error"] = self.portproxy_errors.get(item["id"])
             enriched["busy"] = item["id"] in self._busy_services
             enriched["operation_pending"] = self._operation_pending
             result.append(enriched)
@@ -648,40 +749,79 @@ class RegisteredServiceManager:
     async def update_service(self, service_id: str, payload: dict[str, Any],
                              username: str, source_ip: str) -> dict[str, Any]:
         self._require_idle()
-        self._require_service(service_id)
-        item = validate_service_input(payload, self.runner)
+        self._operation_pending = True
+        removed = False
         try:
-            updated = self.database.update_registered_service(service_id, item)
-        except DatabaseError as exc:
-            raise RegistryError(409, "service_conflict", str(exc)) from exc
-        if not updated:
-            raise RegistryError(404, "service_not_found", "已登记服务不存在")
-        self.database.append_audit(source_ip, "management.service.update", "success",
-                                   {"service_id": service_id, "name": item["name"],
-                                    "requested_by": username})
-        stored = self.database.get_registered_service(service_id)
-        if stored is None:
-            raise RegistryError(404, "service_not_found", "已登记服务不存在")
-        self.statuses[service_id] = self._stored_status(stored)
-        self._health_failures.pop(service_id, None)
-        self._reload_health_authorities()
-        return next(value for value in self.list_services() if value["id"] == service_id)
+            current = self._require_service(service_id)
+            item = validate_service_input({**current, **payload}, self.runner)
+            mapping_changed = self._portproxy_identity(current) != self._portproxy_identity(item)
+            if mapping_changed:
+                removed = await self._remove_owned_portproxy(current)
+            try:
+                updated = self.database.update_registered_service(
+                    service_id, item, source_ip,
+                    {"service_id": service_id, "name": item["name"],
+                     "requested_by": username},
+                )
+            except DatabaseError as exc:
+                restore_error = await self._restore_owned_portproxy(current) if removed else None
+                message = str(exc)
+                if restore_error:
+                    message = f"{message}; 旧端口转发恢复失败: {restore_error}"
+                raise RegistryError(409, "service_conflict", message) from exc
+            if not updated:
+                restore_error = await self._restore_owned_portproxy(current) if removed else None
+                message = "已登记服务不存在"
+                if restore_error:
+                    message = f"{message}; 旧端口转发恢复失败: {restore_error}"
+                raise RegistryError(404, "service_not_found", message)
+            stored = self.database.get_registered_service(service_id)
+            if stored is None:
+                raise RegistryError(404, "service_not_found", "已登记服务不存在")
+            self.statuses[service_id] = self._stored_status(stored)
+            self._health_failures.pop(service_id, None)
+            self._reload_health_authorities()
+            if mapping_changed:
+                await self._sync_all_portproxies()
+            return next(value for value in self.list_services() if value["id"] == service_id)
+        finally:
+            self._operation_pending = False
 
-    def delete_service(self, service_id: str, username: str, source_ip: str) -> None:
+    async def delete_service(self, service_id: str, username: str, source_ip: str) -> None:
         self._require_idle()
-        service = self._require_service(service_id)
-        if service_id in self._busy_services:
-            raise RegistryError(409, "service_busy", "服务操作正在执行")
-        if not self.database.delete_registered_service(service_id):
-            raise RegistryError(404, "service_not_found", "已登记服务不存在")
-        self.statuses.pop(service_id, None)
-        self._health_failures.pop(service_id, None)
-        self._health_authorities.pop(service_id, None)
-        self._registered_ports.pop(service_id, None)
-        self._service_locks.pop(service_id, None)
-        self.database.append_audit(source_ip, "management.service.delete", "success",
-                                   {"service_id": service_id, "name": service["name"],
-                                    "requested_by": username})
+        self._operation_pending = True
+        removed = False
+        try:
+            service = self._require_service(service_id)
+            if service_id in self._busy_services:
+                raise RegistryError(409, "service_busy", "服务操作正在执行")
+            removed = await self._remove_owned_portproxy(service)
+            try:
+                deleted = self.database.delete_registered_service(
+                    service_id, source_ip,
+                    {"service_id": service_id, "name": service["name"],
+                     "requested_by": username},
+                )
+            except DatabaseError as exc:
+                restore_error = await self._restore_owned_portproxy(service) if removed else None
+                message = str(exc)
+                if restore_error:
+                    message = f"{message}; 旧端口转发恢复失败: {restore_error}"
+                raise RegistryError(409, "service_conflict", message) from exc
+            if not deleted:
+                restore_error = await self._restore_owned_portproxy(service) if removed else None
+                message = "已登记服务不存在"
+                if restore_error:
+                    message = f"{message}; 旧端口转发恢复失败: {restore_error}"
+                raise RegistryError(404, "service_not_found", message)
+            self.statuses.pop(service_id, None)
+            self._health_failures.pop(service_id, None)
+            self._health_authorities.pop(service_id, None)
+            self._registered_ports.pop(service_id, None)
+            self._service_locks.pop(service_id, None)
+            self.portproxy_errors.pop(service_id, None)
+        finally:
+            self._operation_pending = False
 
     def create_scene(self, payload: dict[str, Any], username: str, source_ip: str) -> dict[str, Any]:
         self._require_idle()
@@ -897,6 +1037,12 @@ class RegisteredServiceManager:
             try:
                 expected = "stopped" if action == "stop" else "running"
                 self._set_desired_state(service_id, expected)
+                if action in {"start", "restart"}:
+                    await self._sync_all_portproxies()
+                    if service_id in self.portproxy_errors:
+                        raise RegistryError(
+                            503, "portproxy_sync_failed", self.portproxy_errors[service_id]
+                        )
                 result = await asyncio.to_thread(self.runner.run, service["script_path"], action)
                 if result.returncode != 0:
                     error = result.stderr or result.stdout or f"脚本退出码 {result.returncode}"

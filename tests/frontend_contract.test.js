@@ -31,7 +31,7 @@ test('authentication UI accepts the configured four-character minimum', () => {
 });
 
 test('registered service editor exposes the agreed fields and actions', () => {
-  for (const value of ['已登记服务', '服务名称', '管理脚本绝对路径', 'GPU 展示标签', '服务端口', 'UI 地址', '健康检查地址', '响应必须包含']) {
+  for (const value of ['已登记服务', '服务名称', '管理脚本绝对路径', 'GPU 展示标签', '服务端口', 'UI 地址', '健康检查地址', '响应必须包含', '由管理器维护 WSL 局域网映射', 'WSL 发行版', 'Windows 监听地址', 'Windows 监听端口', 'WSL 目标端口']) {
     assert.ok(html.includes(value), `missing ${value}`);
   }
   for (const action of ['start', 'stop', 'restart']) assert.ok(js.includes(action));
@@ -44,6 +44,10 @@ test('registered service editor exposes the agreed fields and actions', () => {
   assert.ok(js.includes("serviceStatusLabel"));
   assert.ok(js.includes("health_url"));
   assert.ok(js.includes("health_expect"));
+  assert.ok(js.includes("wsl_portproxy_enabled"));
+  assert.ok(js.includes("serviceWslPortproxyEnabled"));
+  assert.ok(js.includes("service.wsl_portproxy_error"));
+  assert.ok(js.includes("映射异常"));
   assert.ok(html.includes('id="stopAllServicesButton"'));
   assert.ok(js.includes('openStopAllProgress(result.operation_id)'));
   assert.ok(js.includes('renderStopAllProgress(item)'));

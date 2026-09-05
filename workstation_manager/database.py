@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 
 class DatabaseError(RuntimeError):
@@ -104,6 +104,7 @@ class Database:
                         19: self._migrate_to_19,
                         20: self._migrate_to_20,
                         21: self._migrate_to_21,
+                        22: self._migrate_to_22,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -465,6 +466,29 @@ class Database:
         if table is None:
             return
         cls._ensure_column(connection, "operations", "total_steps", "INTEGER")
+
+    @classmethod
+    def _migrate_to_22(cls, connection: sqlite3.Connection) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='registered_services'"
+        ).fetchone()
+        if table is None:
+            return
+        cls._ensure_column(
+            connection, "registered_services", "wsl_portproxy_enabled",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        cls._ensure_column(
+            connection, "registered_services", "wsl_distro",
+            "TEXT NOT NULL DEFAULT 'Ubuntu-22.04'",
+        )
+        cls._ensure_column(
+            connection, "registered_services", "wsl_listen_address",
+            "TEXT NOT NULL DEFAULT '0.0.0.0'",
+        )
+        cls._ensure_column(connection, "registered_services", "wsl_listen_port", "INTEGER")
+        cls._ensure_column(connection, "registered_services", "wsl_connect_port", "INTEGER")
+        cls._ensure_column(connection, "registered_services", "wsl_last_address", "TEXT")
 
     @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
@@ -1093,24 +1117,41 @@ class Database:
                     connection.execute(
                         """INSERT INTO registered_services(
                                id,name,description,script_path,gpu_label,port,ui_url,
-                               health_url,health_expect,created_at,updated_at
-                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                               health_url,health_expect,wsl_portproxy_enabled,wsl_distro,
+                               wsl_listen_address,wsl_listen_port,wsl_connect_port,
+                               wsl_last_address,created_at,updated_at
+                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (item["id"], item["name"], item["description"], item["script_path"],
                          item["gpu_label"], item["port"], item["ui_url"],
-                         item.get("health_url", ""), item.get("health_expect", ""), now, now),
+                         item.get("health_url", ""), item.get("health_expect", ""),
+                         int(item.get("wsl_portproxy_enabled", False)),
+                         item.get("wsl_distro", "Ubuntu-22.04"),
+                         item.get("wsl_listen_address", "0.0.0.0"),
+                         item.get("wsl_listen_port"), item.get("wsl_connect_port"),
+                         item.get("wsl_last_address"), now, now),
                     )
         except sqlite3.IntegrityError as exc:
             raise DatabaseError("服务名称或 ID 已存在") from exc
         except (sqlite3.Error, KeyError) as exc:
             raise DatabaseError(f"创建已登记服务失败: {exc}") from exc
 
-    def update_registered_service(self, service_id: str, item: dict[str, Any]) -> bool:
+    def update_registered_service(
+        self, service_id: str, item: dict[str, Any],
+        audit_source_ip: str | None = None, audit_summary: dict[str, Any] | None = None,
+    ) -> bool:
         try:
             with self.connect() as connection:
                 with connection:
                     cursor = connection.execute(
                         """UPDATE registered_services SET name=?,description=?,script_path=?,
                                gpu_label=?,port=?,ui_url=?,health_url=?,health_expect=?,
+                               wsl_portproxy_enabled=?,wsl_distro=?,wsl_listen_address=?,
+                               wsl_listen_port=?,wsl_connect_port=?,
+                               wsl_last_address=CASE
+                                   WHEN wsl_portproxy_enabled<>? OR wsl_distro<>?
+                                        OR wsl_listen_address<>?
+                                        OR wsl_listen_port IS NOT ? OR wsl_connect_port IS NOT ?
+                                   THEN NULL ELSE wsl_last_address END,
                                desired_state=CASE WHEN script_path<>? THEN 'unknown' ELSE desired_state END,
                                observed_state=CASE
                                    WHEN script_path<>? OR health_url<>? OR health_expect<>?
@@ -1134,6 +1175,12 @@ class Database:
                         (item["name"], item["description"], item["script_path"],
                          item["gpu_label"], item["port"], item["ui_url"],
                          item["health_url"], item["health_expect"],
+                         int(item["wsl_portproxy_enabled"]), item["wsl_distro"],
+                         item["wsl_listen_address"], item["wsl_listen_port"],
+                         item["wsl_connect_port"],
+                         int(item["wsl_portproxy_enabled"]), item["wsl_distro"],
+                         item["wsl_listen_address"], item["wsl_listen_port"],
+                         item["wsl_connect_port"],
                          item["script_path"],
                          item["script_path"], item["health_url"], item["health_expect"],
                          item["script_path"], item["health_url"], item["health_expect"],
@@ -1143,11 +1190,31 @@ class Database:
                          item["script_path"], item["health_url"], item["health_expect"],
                          utc_now(), service_id),
                     )
-                    return cursor.rowcount == 1
+                    updated = cursor.rowcount == 1
+                    if updated and audit_source_ip is not None and audit_summary is not None:
+                        self.insert_audit(
+                            connection, audit_source_ip, "management.service.update",
+                            "success", audit_summary,
+                        )
+                    return updated
         except sqlite3.IntegrityError as exc:
             raise DatabaseError("服务名称已存在") from exc
         except (sqlite3.Error, KeyError) as exc:
             raise DatabaseError(f"更新已登记服务失败: {exc}") from exc
+
+    def update_registered_service_portproxy_address(
+        self, service_id: str, address: str | None
+    ) -> bool:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        "UPDATE registered_services SET wsl_last_address=? WHERE id=?",
+                        (address, service_id),
+                    )
+                    return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"保存 WSL 端口转发目标失败: {exc}") from exc
 
     def update_registered_service_status(
         self, service_id: str, state: str, error: str | None
@@ -1178,14 +1245,23 @@ class Database:
         except sqlite3.Error as exc:
             raise DatabaseError(f"保存服务期望状态失败: {exc}") from exc
 
-    def delete_registered_service(self, service_id: str) -> bool:
+    def delete_registered_service(
+        self, service_id: str, audit_source_ip: str | None = None,
+        audit_summary: dict[str, Any] | None = None,
+    ) -> bool:
         try:
             with self.connect() as connection:
                 with connection:
                     cursor = connection.execute(
                         "DELETE FROM registered_services WHERE id=?", (service_id,)
                     )
-                    return cursor.rowcount == 1
+                    deleted = cursor.rowcount == 1
+                    if deleted and audit_source_ip is not None and audit_summary is not None:
+                        self.insert_audit(
+                            connection, audit_source_ip, "management.service.delete",
+                            "success", audit_summary,
+                        )
+                    return deleted
         except sqlite3.Error as exc:
             raise DatabaseError(f"删除已登记服务失败: {exc}") from exc
 

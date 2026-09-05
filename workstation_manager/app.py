@@ -59,6 +59,11 @@ class ServicePayload(BaseModel):
     ui_url: str = Field(default="", max_length=2048)
     health_url: str = Field(default="", max_length=2048)
     health_expect: str = Field(default="", max_length=512)
+    wsl_portproxy_enabled: bool = False
+    wsl_distro: str = Field(default="Ubuntu-22.04", max_length=100)
+    wsl_listen_address: str = Field(default="0.0.0.0", max_length=45)
+    wsl_listen_port: int | None = Field(default=None, ge=1, le=65535)
+    wsl_connect_port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class ScenePayload(BaseModel):
@@ -333,16 +338,18 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         }
         operation_error = resolved_registry.last_operation_error
         health_monitor_error = resolved_registry.last_health_error
+        portproxy_error = resolved_registry.last_portproxy_error
         return {"version": __version__, "schema": {"api": "v1", "database": DATABASE_SCHEMA_VERSION},
                 "status": "healthy" if sampler_running and not sampler_error and not collector_errors
                 and not history_persistence_error and not operation_error
-                and not health_monitor_error else "degraded",
+                and not health_monitor_error and not portproxy_error else "degraded",
                 "sampler_running": sampler_running,
                 "sampler_error": public_sampler_error,
                 "collector_errors": collector_errors,
                 "history_persistence_error": public_history_error,
                 "service_operation_error": operation_error,
                 "service_health_monitor_error": health_monitor_error,
+                "wsl_portproxy_error": portproxy_error,
                 "service_status_mode": "health",
                 "sampled_at": resolved_sampler.current.get("sampled_at")
                 if resolved_sampler.current else None,
@@ -352,7 +359,8 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
                               "resource_history": "ready" if not history_persistence_error
                               else "degraded",
                               "registered_services": "ready"
-                              if not operation_error and not health_monitor_error else "degraded"}}
+                              if not operation_error and not health_monitor_error
+                              and not portproxy_error else "degraded"}}
 
     @app.get("/api/v1/auth/status")
     async def auth_status(request: Request) -> dict[str, bool]:
@@ -477,13 +485,14 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     @app.put("/api/v1/registered-services/{service_id}")
     async def update_service(service_id: str, payload: ServicePayload, request: Request,
                              session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, Any]:
-        return await resolved_registry.update_service(service_id, payload.model_dump(), session.username,
+        return await resolved_registry.update_service(
+            service_id, payload.model_dump(exclude_unset=True), session.username,
                                                       _client_ip(request))
 
     @app.delete("/api/v1/registered-services/{service_id}", status_code=204)
     async def delete_service(service_id: str, request: Request,
                              session: AuthenticatedSession = Depends(require_csrf)) -> Response:
-        resolved_registry.delete_service(service_id, session.username, _client_ip(request))
+        await resolved_registry.delete_service(service_id, session.username, _client_ip(request))
         return Response(status_code=204)
 
     @app.post("/api/v1/registered-services/{service_id}/status")

@@ -240,6 +240,13 @@
       <label>UI 地址<input id="serviceUiUrl" type="url" maxlength="2048" placeholder="http://192.168.1.10:8080"></label>
       <label>健康检查地址<input id="serviceHealthUrl" type="url" maxlength="2048" placeholder="http://127.0.0.1:8080/health"></label>
       <label>响应必须包含<input id="serviceHealthExpect" maxlength="512" placeholder="可选，用于区分共用端口的服务"></label>
+      <label class="service-portproxy-toggle"><input id="serviceWslPortproxyEnabled" type="checkbox"><span>由管理器维护 WSL 局域网映射</span></label>
+      <div class="service-portproxy-fields" id="servicePortproxyFields" hidden>
+        <label>WSL 发行版<input id="serviceWslDistro" maxlength="100" value="Ubuntu-22.04"></label>
+        <label>Windows 监听地址<input id="serviceWslListenAddress" maxlength="45" value="0.0.0.0" placeholder="0.0.0.0"></label>
+        <label>Windows 监听端口<input id="serviceWslListenPort" type="number" min="1" max="65535" placeholder="默认使用服务端口"></label>
+        <label>WSL 目标端口<input id="serviceWslConnectPort" type="number" min="1" max="65535" placeholder="默认同监听端口"></label>
+      </div>
       <p class="auth-error" id="serviceFormError" role="alert"></p>
       <div class="dialog-actions"><button class="button secondary" type="button" data-close="serviceDialog">取消</button><button class="button primary" type="submit">保存服务</button></div>
     </form>

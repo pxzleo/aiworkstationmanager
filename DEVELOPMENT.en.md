@@ -62,11 +62,16 @@ Creating or updating a service requires the complete object. `description`, `gpu
   "script_path": "C:\\Services\\comfyui.ps1",
   "gpu_label": "RTX 3090",
   "port": 8189,
-  "ui_url": "http://192.168.100.190:8189/"
+  "ui_url": "http://192.168.100.190:8189/",
+  "wsl_portproxy_enabled": false,
+  "wsl_distro": "Ubuntu-22.04",
+  "wsl_listen_address": "0.0.0.0",
+  "wsl_listen_port": null,
+  "wsl_connect_port": null
 }
 ```
 
-`name` is at most 100 characters, `description` at most 1000, `script_path` is an existing absolute `.ps1`, `.cmd`, or `.bat` path, `gpu_label` is at most 100 characters, `port` is `1..65535`, and `ui_url` is empty or a complete HTTP/HTTPS URL.
+`name` is at most 100 characters, `description` at most 1000, `script_path` is an existing absolute `.ps1`, `.cmd`, or `.bat` path, `gpu_label` is at most 100 characters, `port` is `1..65535`, and `ui_url` is empty or a complete HTTP/HTTPS URL. When `wsl_portproxy_enabled` is enabled, the manager reconciles all declared Windows `portproxy` entries at manager startup and before any service starts or restarts, and removes the old mapping when the registration is disabled, changed, or deleted. It only updates or removes a target recorded by its own previous successful synchronization and refuses to operate on unknown mappings. Success also requires IP Helper to own the actual listener. The listen address must be `0.0.0.0`, loopback, or a private IPv4 address. A missing listen port defaults to the service port, and a missing WSL target port defaults to the listen port.
 
 Creating or updating a scene uses ordered `service_ids` that contain no unknown service. Duplicate IDs are reduced to their first occurrence. `description` is the card's short introduction with a 1,000-character limit; `detailed_description` is a separate detailed usage field with an 8,000-character limit:
 
@@ -118,7 +123,7 @@ A single-service action uses `{"action":"start"}`; `action` is one of `start`, `
 | POST | `/api/v1/registered-services/{id}/actions` | Submit `start`, `stop`, or `restart` |
 | POST | `/api/v1/registered-services/actions/stop-all` | Create a stop-all operation |
 
-Registration payload fields are `name`, `description`, `script_path`, `gpu_label`, `port`, `ui_url`, `health_url`, and `health_expect`. `health_url` accepts only local-loopback HTTP or HTTPS. `health_expect` may be empty; otherwise the response body must contain that text.
+Registration payload fields also include `wsl_portproxy_enabled`, `wsl_distro`, `wsl_listen_address`, `wsl_listen_port`, and `wsl_connect_port`. `health_url` accepts only local-loopback HTTP or HTTPS. `health_expect` may be empty; otherwise the response body must contain that text. WSL mappings must be explicitly enabled: the manager never guesses from an ordinary service port and broadens LAN exposure. An unknown mapping, target conflict, synchronization failure, or missing IP Helper listener blocks the affected service startup and is reported by the health endpoint.
 
 Reading service lists and reloading the page never run script `status` actions. AXIS checks health URLs directly inside the manager process every five seconds with a one-second timeout and concurrency limit of two; two consecutive failures are required to change a stable state. Background checks never launch PowerShell, WSL, Docker CLI, or another child process. The `status` endpoint is a user-triggered deep check; startup without a default scene checks registered services sequentially and retries first-pass `unknown` results once after the full pass. A failed lifecycle action runs one additional check to reconcile desired state with reality.
 
@@ -194,6 +199,6 @@ This list follows `workstation_manager/config.py`. Boolean values use `true/fals
 
 ## Data and concurrency
 
-The default database is `data/workstation-manager.db`. The current schema is 21 and migrates automatically at startup. Schema 19 adds the unique scene `is_default` marker. Schema 20 adds the separate scene `detailed_description` field. Schema 21 adds the authoritative operation `total_steps` count. Existing details remain unchanged when an older client updates a scene without sending the details field. Only one manager instance may use a database at a time, preventing duplicate script execution.
+The default database is `data/workstation-manager.db`. The current schema is 22 and migrates automatically at startup. Schema 19 adds the unique scene `is_default` marker. Schema 20 adds the separate scene `detailed_description` field. Schema 21 adds the authoritative operation `total_steps` count. Schema 22 adds explicit WSL `portproxy` configuration to registered services. Existing details remain unchanged when an older client updates a scene without sending the details field. Only one manager instance may use a database at a time, preventing duplicate script execution.
 
 The service control plane stores desired and observed states separately. Scenes, the overview, and GPU service summaries use only observed state. SQLite is updated only when the state or error changes, so successful five-second checks do not write continuously. Neither scheduled resource sampling nor health monitoring runs service scripts; explicit deep checks, startup reconciliation without a default scene, and failed-action reconciliation invoke `status`. Resource sampling writes CPU, memory, and per-GPU load, VRAM, temperature, power, and graphics-clock metrics to SQLite and retains 24 hours by default; the in-memory queue remains limited to the latest 15 minutes.
