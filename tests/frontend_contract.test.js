@@ -146,6 +146,14 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(css.includes('@keyframes gpuCardIn'));
   assert.ok(css.includes('@media (prefers-reduced-motion: reduce)'));
   assert.ok(i18n.includes("'未检测到 NVIDIA GPU。': 'No NVIDIA GPU detected.'"));
+  assert.ok(js.includes('snapshot.stale_collectors?.nvidia'));
+  assert.ok(js.includes("staleGpu ? [] : snapshot.gpus || []"));
+  assert.ok(js.includes("gpu._stale ? `${ui('上次数据')}"));
+  assert.ok(js.includes('gpuLayout.sparklinePath'));
+  assert.ok(!js.includes("metricForGpu(sample, gpu, 'load_percent')).filter(finite)"));
+  assert.ok(css.includes('.gpu-lane.stale'));
+  assert.ok(i18n.includes("'GPU 数据延迟': 'GPU data delayed'"));
+  assert.ok(i18n.includes("'采样状态': 'Sampling status'"));
 });
 
 test('scene editor and management log remain wired', () => {

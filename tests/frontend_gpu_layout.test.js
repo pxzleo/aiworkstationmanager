@@ -69,3 +69,11 @@ test('gpuSetSignature tracks card identity and order', () => {
   const changed = gpuLayout.prepareGpus([{ index: 0, uuid: 'b' }, { index: 1, uuid: 'a' }]);
   assert.notEqual(gpuLayout.gpuSetSignature(first), gpuLayout.gpuSetSignature(changed));
 });
+
+test('sparklinePath preserves missing samples as visible gaps', () => {
+  assert.equal(
+    gpuLayout.sparklinePath([20, 30, null, 40, 50]),
+    'M0,90 L75,80 M225,70 L300,60',
+  );
+  assert.equal(gpuLayout.sparklinePath([null, 25]), 'M300,85');
+});

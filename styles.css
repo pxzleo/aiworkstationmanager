@@ -193,6 +193,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .status-banner[hidden] { display: none; }
 .status-banner strong { color: var(--warning); white-space: nowrap; }
 .data-stale .gpu-stage, .data-stale .system-line { opacity: .74; }
+.gpu-lane.stale { opacity: .74; }
 .overview-lower { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, .65fr); gap: 40px; }
 .section-heading { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 14px; }
 .section-heading h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }

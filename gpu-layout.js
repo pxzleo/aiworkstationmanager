@@ -57,6 +57,21 @@
     return matches.length === 1 ? matches[0][field] ?? null : null;
   }
 
+  function sparklinePath(values, width = 300, baseline = 110) {
+    const points = Array.isArray(values) ? values : [];
+    let connected = false;
+    return points.map((value, index) => {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        connected = false;
+        return '';
+      }
+      const x = points.length === 1 ? width / 2 : index * (width / (points.length - 1));
+      const command = connected ? 'L' : 'M';
+      connected = true;
+      return `${command}${x},${baseline - value}`;
+    }).filter(Boolean).join(' ');
+  }
+
   function normalizeLabel(value) {
     return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
   }
@@ -98,5 +113,5 @@
     return keys.length === 1 ? keys[0] : null;
   }
 
-  return { validGpuIndex, prepareGpus, gpuSetSignature, metricForGpu, serviceGpuKey, serviceGpuKeys };
+  return { validGpuIndex, prepareGpus, gpuSetSignature, metricForGpu, sparklinePath, serviceGpuKey, serviceGpuKeys };
 }));

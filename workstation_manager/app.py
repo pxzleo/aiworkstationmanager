@@ -173,7 +173,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         operation_retention_max=resolved_settings.operation_retention_max,
         resource_history_retention_minutes=resolved_settings.history_minutes,
     )
-    resolved_sampler = sampler or Sampler(resolved_settings)
+    resolved_sampler = sampler or Sampler(resolved_settings, isolated_collection=True)
     resolved_sampler.set_sample_sink(resolved_database.append_resource_sample)
     resolved_auth = AuthService(resolved_database, resolved_settings.session_ttl_seconds,
                                 resolved_settings.session_max_active)
@@ -193,7 +193,10 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        await resolved_sampler.sample_once()
+        try:
+            await resolved_sampler.sample_once()
+        except (OSError, RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            resolved_sampler.record_error(exc, "初始资源采样失败，将在后台周期重试")
         resolved_sampler.start()
         try:
             await resolved_registry.start()
@@ -316,6 +319,11 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     @app.get("/api/v1/health")
     async def health() -> dict[str, Any]:
         sampler_running = resolved_sampler._task is not None and not resolved_sampler._task.done()
+        sampler_error = resolved_sampler.last_error
+        public_sampler_error = None if sampler_error is None else {
+            "error_type": sampler_error["error_type"],
+            "message": sampler_error["message"],
+        }
         collector_errors = resolved_sampler.current.get("collector_errors", []) \
             if resolved_sampler.current else []
         history_persistence_error = resolved_sampler.history_persistence_error
@@ -326,10 +334,11 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         operation_error = resolved_registry.last_operation_error
         health_monitor_error = resolved_registry.last_health_error
         return {"version": __version__, "schema": {"api": "v1", "database": DATABASE_SCHEMA_VERSION},
-                "status": "healthy" if sampler_running and not collector_errors
+                "status": "healthy" if sampler_running and not sampler_error and not collector_errors
                 and not history_persistence_error and not operation_error
                 and not health_monitor_error else "degraded",
                 "sampler_running": sampler_running,
+                "sampler_error": public_sampler_error,
                 "collector_errors": collector_errors,
                 "history_persistence_error": public_history_error,
                 "service_operation_error": operation_error,
@@ -338,7 +347,8 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
                 "sampled_at": resolved_sampler.current.get("sampled_at")
                 if resolved_sampler.current else None,
                 "readiness": {"setup_complete": resolved_auth.is_setup(),
-                              "sampler": "ready" if sampler_running else "not_ready",
+                              "sampler": "ready" if sampler_running and not sampler_error
+                              else "degraded" if sampler_running else "not_ready",
                               "resource_history": "ready" if not history_persistence_error
                               else "degraded",
                               "registered_services": "ready"

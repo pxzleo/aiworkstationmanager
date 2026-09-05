@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
+import time
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -12,6 +15,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+import psutil
 
 from workstation_manager import __version__
 from workstation_manager.app import create_app
@@ -21,7 +25,39 @@ from workstation_manager.collectors import (
     collect_gpu_processes, collect_gpus, collect_snapshot, collect_wsl_resources,
 )
 from workstation_manager.config import ConfigError, Settings, load_settings
-from workstation_manager.history import HistoryStore, Sampler, parse_window
+from workstation_manager.history import (
+    CollectionTimeoutError,
+    HistoryStore,
+    ResourceCollectionWorker,
+    Sampler,
+    SamplerStopError,
+    parse_window,
+)
+
+
+def _hang_once_collection(settings: Settings) -> dict:
+    marker = settings.database_path.with_suffix(".collector-started")
+    if not marker.exists():
+        marker.write_text("started", encoding="utf-8")
+        time.sleep(10)
+    return {
+        "sampled_at": datetime.now(timezone.utc).isoformat(),
+        "host": {"cpu": {}, "memory": {}},
+        "gpus": [{"uuid": "GPU-recovered", "index": 0, "name": "RTX"}],
+        "collector_errors": [],
+    }
+
+
+def _hang_with_child_process(settings: Settings) -> dict:
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    settings.database_path.with_suffix(".child-pid").write_text(
+        str(child.pid), encoding="utf-8"
+    )
+    time.sleep(60)
+    raise RuntimeError("阻塞采集意外返回")
 
 
 class ConfigTests(unittest.TestCase):
@@ -328,6 +364,181 @@ class HistoryTests(unittest.TestCase):
 
 
 class SamplerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_nvidia_failure_keeps_last_successful_gpu_until_recovery(self) -> None:
+        snapshots = iter(
+            [
+                {
+                    "sampled_at": "2026-09-05T02:14:38+00:00",
+                    "host": {"cpu": {}, "memory": {}},
+                    "gpus": [
+                        {
+                            "uuid": "GPU-a",
+                            "index": 0,
+                            "name": "RTX 4090",
+                            "load_percent": 80,
+                        }
+                    ],
+                    "collector_errors": [],
+                },
+                {
+                    "sampled_at": "2026-09-05T02:14:44+00:00",
+                    "host": {"cpu": {}, "memory": {}},
+                    "gpus": [],
+                    "collector_errors": [
+                        {
+                            "collector": "nvidia",
+                            "error_type": "CommandError",
+                            "message": "nvidia 采集失败",
+                            "cause": "nvidia-smi 返回退出码 255",
+                        }
+                    ],
+                },
+                {
+                    "sampled_at": "2026-09-05T02:14:50+00:00",
+                    "host": {"cpu": {}, "memory": {}},
+                    "gpus": [
+                        {
+                            "uuid": "GPU-a",
+                            "index": 0,
+                            "name": "RTX 4090",
+                            "load_percent": 20,
+                        }
+                    ],
+                    "collector_errors": [],
+                },
+            ]
+        )
+        sampler = Sampler(Settings(), collector=lambda _: next(snapshots))
+
+        first = await sampler.sample_once()
+        failed = await sampler.sample_once()
+        recovered = await sampler.sample_once()
+
+        self.assertEqual(failed["gpus"], first["gpus"])
+        self.assertEqual(
+            failed["stale_collectors"]["nvidia"]["last_success_at"],
+            first["sampled_at"],
+        )
+        history = sampler.history.query(
+            15, now=datetime.fromisoformat(recovered["sampled_at"])
+        )
+        self.assertEqual(history[1]["gpus"], [])
+        self.assertEqual(recovered["gpus"][0]["load_percent"], 20)
+        self.assertNotIn("stale_collectors", recovered)
+
+    def test_collection_worker_restarts_after_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = Settings(database_path=Path(temporary) / "manager.db")
+            worker = ResourceCollectionWorker(settings, _hang_once_collection)
+            self.addCleanup(worker.close)
+
+            with self.assertRaises(CollectionTimeoutError):
+                worker.collect(timeout=2)
+
+            recovered = worker.collect(timeout=5)
+
+        self.assertEqual(recovered["gpus"][0]["uuid"], "GPU-recovered")
+
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object 进程树回收测试")
+    def test_collection_timeout_terminates_external_child_process(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = Settings(database_path=Path(temporary) / "manager.db")
+            worker = ResourceCollectionWorker(settings, _hang_with_child_process)
+            self.addCleanup(worker.close)
+
+            with self.assertRaises(CollectionTimeoutError):
+                worker.collect(timeout=2)
+
+            child_pid = int(
+                settings.database_path.with_suffix(".child-pid").read_text(encoding="utf-8")
+            )
+            for _ in range(100):
+                if not psutil.pid_exists(child_pid):
+                    break
+                time.sleep(0.02)
+
+        self.assertFalse(psutil.pid_exists(child_pid))
+
+    async def test_stop_closes_worker_after_inflight_collection_failure(self) -> None:
+        class FakeWorker:
+            closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        async def fail_collection() -> dict:
+            raise RuntimeError("collector failed")
+
+        sampler = Sampler(Settings())
+        worker = FakeWorker()
+        sampler._collection_worker = worker  # type: ignore[assignment]
+        sampler._collection_task = asyncio.create_task(fail_collection())
+        await asyncio.sleep(0)
+
+        with self.assertRaises(SamplerStopError):
+            await sampler.stop()
+
+        self.assertTrue(worker.closed)
+
+    async def test_collection_timeout_marks_current_snapshot_stale_until_recovery(self) -> None:
+        snapshots = iter(
+            [
+                {
+                    "sampled_at": "2026-09-05T02:14:38+00:00",
+                    "host": {"cpu": {}, "memory": {}},
+                    "gpus": [{"uuid": "GPU-a", "index": 0, "name": "RTX"}],
+                    "collector_errors": [],
+                },
+                {
+                    "sampled_at": "2026-09-05T02:15:00+00:00",
+                    "host": {"cpu": {}, "memory": {}},
+                    "gpus": [{"uuid": "GPU-a", "index": 0, "name": "RTX"}],
+                    "collector_errors": [],
+                },
+            ]
+        )
+        sampler = Sampler(Settings(), collector=lambda _: next(snapshots))
+        first = await sampler.sample_once()
+
+        sampler.record_error(
+            CollectionTimeoutError("timed out"),
+            "后台采样失败，将在下个周期重试",
+        )
+
+        self.assertEqual(
+            sampler.current["stale_collectors"]["snapshot"]["last_success_at"],
+            first["sampled_at"],
+        )
+        self.assertEqual(
+            sampler.current["stale_collectors"]["nvidia"]["last_success_at"],
+            first["sampled_at"],
+        )
+        self.assertEqual(sampler.current["collector_errors"][-1]["collector"], "sampler")
+
+        recovered = await sampler.sample_once()
+        self.assertNotIn("stale_collectors", recovered)
+        self.assertIsNone(sampler.last_error)
+
+    async def test_stop_reports_collection_and_worker_close_failures_together(self) -> None:
+        class FailingWorker:
+            def close(self) -> None:
+                raise RuntimeError("close failed")
+
+        async def fail_collection() -> dict:
+            raise RuntimeError("collector failed")
+
+        sampler = Sampler(Settings())
+        sampler._collection_worker = FailingWorker()  # type: ignore[assignment]
+        sampler._collection_task = asyncio.create_task(fail_collection())
+        await asyncio.sleep(0)
+
+        with self.assertRaisesRegex(
+            SamplerStopError, "collector failed.*close failed"
+        ):
+            await sampler.stop()
+
+        self.assertIn("close failed", sampler.last_error["cause"])
+
     async def test_history_sink_failure_degrades_and_recovers_without_losing_snapshot(self) -> None:
         calls = 0
 
@@ -637,6 +848,21 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "degraded")
         self.assertEqual(response.json()["collector_errors"][0]["collector"], "docker")
+
+    def test_health_reports_sampler_failure_without_exposing_cause(self) -> None:
+        self.client.app.state.sampler.last_error = {
+            "collector": "sampler",
+            "error_type": "CollectionTimeoutError",
+            "message": "后台采样超时，将在下个周期重试",
+            "cause": "secret process detail",
+        }
+
+        body = self.client.get("/api/v1/health").json()
+
+        self.assertEqual(body["status"], "degraded")
+        self.assertEqual(body["readiness"]["sampler"], "degraded")
+        self.assertEqual(body["sampler_error"]["error_type"], "CollectionTimeoutError")
+        self.assertNotIn("cause", body["sampler_error"])
 
     def test_health_is_degraded_when_resource_history_persistence_fails(self) -> None:
         self.client.app.state.sampler.history_persistence_error = {
