@@ -1045,11 +1045,14 @@ class RegisteredServiceManager:
                 if self.statuses.get(service_id, {}).get("state") == "running":
                     continue
                 sequence += 1
-                start_ok = await self._run_script_action(
+                step_ok = await self._run_script_action(
                     operation_id, sequence, "start_selected", services[service_id], "start"
-                ) and start_ok
+                )
+                start_ok = step_ok and start_ok
                 if cancel_event.is_set():
                     cancelled = True
+                    break
+                if not step_ok:
                     break
         final_scene = self._scene_with_state(scene)
         if cancel_event.is_set():

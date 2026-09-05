@@ -83,6 +83,7 @@ When a local health-check URL is registered, AXIS accesses that URL directly ins
 - Return exit code `0` only on success.
 - Return a non-zero exit code on failure and preferably write a short, specific cause to standard error.
 - The default lifecycle-action timeout is 600 seconds.
+- For a WSL service that owns a Windows `portproxy`, `start` must read the distribution's current IPv4 address and refresh only that service's fixed listen address and port. The existence of a rule or listener does not prove that a pre-reboot target is still valid, and an unknown mapping must not be overwritten.
 - Do not remain attached as a permanent foreground process:
   - `start` starts the background service, waits until it is usable, and exits.
   - `stop` waits until the service has actually stopped and exits.

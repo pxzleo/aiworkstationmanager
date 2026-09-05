@@ -1119,6 +1119,32 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("旧B.ps1", "stop"), self.runner.calls)
         self.assertNotIn(("目标.ps1", "start"), self.runner.calls)
 
+    async def test_start_failure_stops_remaining_scene_starts_and_releases_operation(self) -> None:
+        first = await self.add_service("首个目标")
+        second = await self.add_service("后续目标")
+        self.runner.failures.add(("首个目标.ps1", "start"))
+        scene = self.manager.create_scene(
+            {
+                "name": "快速失败场景",
+                "description": "",
+                "service_ids": [first["id"], second["id"]],
+            },
+            "admin",
+            "local",
+        )
+        self.runner.calls.clear()
+
+        result = await self.wait_operation(
+            self.manager.submit_scene_activation(scene["id"], "admin", "local")
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["result"], "partial")
+        self.assertEqual(len(result["steps"]), 1)
+        self.assertIn(("首个目标.ps1", "start"), self.runner.calls)
+        self.assertNotIn(("后续目标.ps1", "start"), self.runner.calls)
+        self.assertFalse(self.manager._operation_pending)
+
     async def test_crud_and_second_manager_are_blocked_while_operation_is_queued(self) -> None:
         service = await self.add_service("互斥服务")
         operation = self.manager.submit_service_action(service["id"], "start", "admin", "local")

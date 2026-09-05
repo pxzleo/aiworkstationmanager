@@ -132,7 +132,7 @@
 | RTX 4090 | 主语言模型推理 | NInfer + Qwen3.8-27B，当前 API 端口 8080 |
 | RTX 3090 | 开发辅助 AI 服务 | ComfyUI Krea2 生图 / H3 生视频（8189）；`Ubuntu-22.04` WSL 内的 SenseVoiceSmall ASR（18090，`/home/xu/ai_stud/xz_server/sensevoice-asr-api`）与 IndexTTS 1.5 vLLM TTS（6006，`/home/xu/ai_stud/xz_server/index-tts-vllm`）作为开发/agent场景必需服务 |
 
-ASR 与 TTS 使用独立的 user systemd unit `sensevoice-asr-api.service`、`index-tts-vllm.service`，均固定 `CUDA_VISIBLE_DEVICES=1`。Windows 已有 `0.0.0.0:18090/6006` 到 WSL 的端口转发，服务必须监听 WSL `0.0.0.0`，端口冲突检查必须在 WSL 内完成，不能把 Windows portproxy 监听误判为服务占用。
+ASR 与 TTS 使用独立的 user systemd unit `sensevoice-asr-api.service`、`index-tts-vllm.service`，均固定 `CUDA_VISIBLE_DEVICES=1`。Windows `0.0.0.0:18090/6006` 端口转发必须在启动动作中校准到 WSL 当前 IPv4，不能沿用重启前的静态目标；服务必须监听 WSL `0.0.0.0`，端口冲突检查必须在 WSL 内完成，不能把 Windows portproxy 监听误判为服务占用。
 
 #### 场景二：视频制作场景
 
@@ -705,7 +705,7 @@ Web UI / HTTP API
 - 当 4090 上的 NInfer/Qwen3.8 就绪，且 3090 开发辅助服务符合模板时，页面显示“开发/agent场景：已激活”。
 - 4090 NInfer 就绪但 3090 的 ComfyUI 生图/视频、ASR 或 TTS 配置缺失时，显示“开发/agent场景：部分激活”，并列出缺失组件。
 - 从视频场景切换到开发/agent场景时，系统先等待或处理 H3/ComfyUI 队列，再停止 8000 H3、确认 4090 显存释放，最后启动并验证 NInfer 8080。
-- 同一次开发/agent场景切换还必须启动并验证 SenseVoiceSmall 18090 与 IndexTTS 1.5 vLLM 6006；健康检查需精确核对模型/服务身份、3090 UUID 与 unit 的 `CUDA_VISIBLE_DEVICES=1`。`Type=simple` unit 报 active 后，管理器必须在 600 秒窗口内轮询严格健康，不能用一次 5 秒探测判定冷启动失败；管理器关闭请求不得中断已可能改变服务状态的就绪轮询，必须等有界结果后进入既有协调、回滚或恢复锁流程。停止或回滚前需确认 `active_requests=0`；随后由 Uvicorn 优雅关闭立即停止接收新连接，并最多等待 300 秒完成竞态进入的在途请求。systemd 停止预算为 330 秒，管理器固定适配器预算为 630 秒。
+- 同一次开发/agent场景切换还必须启动并验证 SenseVoiceSmall 18090 与 IndexTTS 1.5 vLLM 6006；健康检查需精确核对模型/服务身份、3090 UUID 与 unit 的 `CUDA_VISIBLE_DEVICES=1`。启动动作必须先把对应 Windows `portproxy` 刷新到 `Ubuntu-22.04` 当前 IPv4，不能把“规则存在”当作“转发有效”。`Type=simple` unit 报 active 后，服务脚本在 180 秒窗口内轮询严格健康，不能用一次 5 秒探测判定冷启动失败；任一目标服务启动失败后，场景立即结束启动阶段、记录失败并释放全局操作锁，不再串行等待后续目标。管理器关闭请求不得中断已可能改变服务状态的就绪轮询，必须等有界结果后进入既有协调、回滚或恢复锁流程。停止或回滚前需确认 `active_requests=0`；随后由 Uvicorn 优雅关闭立即停止接收新连接，并最多等待 300 秒完成竞态进入的在途请求。systemd 停止预算为 330 秒，管理器固定适配器预算为 630 秒。
 - 整个流程通过一次场景确认完成，不需要手工执行 PowerShell、Docker 或 WSL 命令。
 
 ### AC-10 视频制作场景切换
