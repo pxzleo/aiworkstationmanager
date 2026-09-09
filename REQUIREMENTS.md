@@ -86,7 +86,7 @@
 | FastGPT 相关容器组 | Docker Compose | 已停止 | 未监听 | 包含应用、数据库、Redis、MinIO 等依赖 |
 | Open WebUI / Qdrant | Docker | 已停止 | 未监听 | 属于历史 AI/RAG 环境 |
 | ComfyUI 开发图像/视频服务 | Windows 原生 ComfyUI 固定 Python 入口 | 已配置，按需启动 | `0.0.0.0:8189` | 开发/agent场景固定 RTX 3090；Krea2 生图、MiniMax H3 生视频；与视频辅助 8001 使用独立用户目录和数据库；仅通过 Windows 专用网络防火墙规则向局域网开放 |
-| ComfyUI 视频服务 | Windows 原生 ComfyUI | 已配置，当前未运行 | 计划 `0.0.0.0:8000` | 视频场景绑定 RTX 4090，运行 MiniMax H3；仅向专用网络开放 |
+| ComfyUI 视频服务 | Windows 原生 ComfyUI | 已配置，当前未运行 | 计划 `0.0.0.0:8189` | 视频场景绑定 RTX 4090，运行 MiniMax H3；与开发/agent 场景的 RTX 3090 ComfyUI 互斥复用 8189；仅向专用网络开放 |
 | ComfyUI 音频服务 | Windows PowerShell 启动的独立 ComfyUI | 已配置，当前未运行 | 计划 `0.0.0.0:8001` | 视频场景绑定 RTX 3090，运行 Qwen TTS、ACE-Step 1.5 等辅助模型；仅向专用网络开放 |
 
 小智核心、管理后台、专用 Nginx 前端、网易云音乐 API 和 `ninfer3090-ui.service` 不得通过 WSL systemd 独立自启动；对应 unit 必须保持不绑定任何 systemd 启动目标，当前实例由用户通过 AXIS 已登记服务或场景统一启动、停止。管理脚本仍须按固定 `start`、`stop`、`restart`、`status` 契约管理各自明确拥有的 unit，不得修改 WSL linger 或无关服务。
@@ -119,11 +119,11 @@
 此前视频工作流已验证的路由为：
 
 - `0.0.0.0:8189` → RTX 3090 → 开发/agent场景 ComfyUI；Krea2 Turbo INT8 生图、MiniMax H3 FL2VA pruned INT8 + 8-step Turbo LoRA 生视频。使用独立 `user-image-3090` 数据库，必须以 `--cuda-device 1` 启动并通过物理 GPU UUID、Comfy 内部设备、Krea2/H3 节点与模型文件交叉检查。
-- `0.0.0.0:8000` → RTX 4090 → ComfyUI MiniMax H3 视频生成。
+- `0.0.0.0:8189` → RTX 4090 → 视频场景 ComfyUI MiniMax H3 视频生成；与同端口的 RTX 3090 开发/agent ComfyUI 通过场景和端口预检保持互斥。
 - `0.0.0.0:8001` → RTX 3090 → ComfyUI Qwen TTS、ACE-Step 1.5 音乐生成，并为后续 ASR/其他视频辅助模型预留。
 - H3 当前标准参数为 8 步采样，使用 `minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors`，`shift_video = 12`、`shift_audio = 3`；不得在场景模板中回退到 4 步工作流或搭配 4-step LoRA。
 
-本轮在线检查时 8000 和 8001 均未监听，因此上述内容属于“已配置、曾验证的目标环境”，不能在 UI 中显示为当前运行中。管理系统必须通过 ComfyUI `/system_stats`、队列状态和 GPU 实际占用确认真实状态。
+本轮端口变更时 8189 和 8001 均未监听，因此上述内容属于“已配置、曾验证的目标环境”，不能在 UI 中显示为当前运行中。管理系统必须通过 ComfyUI `/system_stats`、队列状态和 GPU 实际占用确认真实状态。
 
 ### 3.7 两种工作场景定义
 
@@ -140,7 +140,7 @@ ASR 与 TTS 使用独立的 user systemd unit `sensevoice-asr-api.service`、`in
 
 | GPU | 主要职责 | 环境/模型 |
 |---|---|---|
-| RTX 4090 | 主视频生成 | ComfyUI + MiniMax H3，目标端口 8000 |
+| RTX 4090 | 主视频生成 | ComfyUI + MiniMax H3，目标端口 8189 |
 | RTX 3090 | 视频流辅助模型 | ComfyUI 音频/辅助服务，目标端口 8001；包括 Qwen TTS、ACE-Step 1.5、ASR 及视频工作流需要的其他模型 |
 
 两个场景是整套资源编排模板，而不只是单个模型名称。场景切换必须同时处理 4090 和 3090 上的服务、模型驻留、端口、队列和健康状态。
@@ -153,7 +153,7 @@ ASR 与 TTS 使用独立的 user systemd unit `sensevoice-asr-api.service`、`in
 |---|---|---|---|---|
 | `4090-NInfer.cmd` | NInfer + Qwen3.8-27B + NInfer UI | WSL Docker Compose + user systemd | API 8080、UI 8081 | RTX 4090；与 q27 共用 8080；与 vLLM 互斥 |
 | `4090-q27.cmd` | q27 Qwen3.8-27B Q6_K | WSL systemd | API 8080 | RTX 4090；与 NInfer、vLLM 互斥 |
-| `4090-vLLM.cmd` | vLLM Qwen3.8-27B FP8 | WSL user transient systemd | API 8000 | RTX 4090；与 H3 ComfyUI 8000 端口及 GPU 冲突 |
+| `4090-vLLM.cmd` | vLLM Qwen3.8-27B FP8 | WSL user transient systemd | API 8000 | RTX 4090；与使用 8189 的 H3 ComfyUI 仍存在 GPU 冲突，但不再共用端口 |
 | `3090-NInfer.cmd` | NInfer 3090 + NInfer UI | WSL Docker Compose + systemd | API 18030、UI 18031 | RTX 3090；与其他 3090 大模型服务互斥 |
 | `3090-Qwen3090-Control.cmd` | Qwen3.8-27B 3090 服务 | Windows Docker Compose | API 18020 | RTX 3090；与 NInfer 3090 互斥 |
 | `DualGPU-Llama-BF16.cmd` | llama.cpp Qwen3.8-27B BF16 | Windows PowerShell/原生进程 | API 1234 | RTX 4090 + RTX 3090，85:15；与双卡上的场景服务冲突 |
@@ -220,7 +220,7 @@ NInfer 4090 UI 曾把 LAN API 地址写死为历史地址 `192.168.100.152`。20
 - NInfer、ComfyUI 通用指标及 OpenAI 兼容接口健康检查。
 - 实时日志、历史日志和操作审计。
 - 中文 Web 管理界面和局域网登录认证。
-- 导入当前 NInfer 4090、NInfer 3090、q27、ComfyUI 8000/8001、OpenMontage 及主要 Docker Compose 项目。
+- 导入当前 NInfer 4090、NInfer 3090、q27、ComfyUI 8189/8001、OpenMontage 及主要 Docker Compose 项目；8189 上的 RTX 3090 开发服务与 RTX 4090 视频服务必须按身份互斥。
 - 受控执行现有 ComfyUI PowerShell 启动/停止脚本；不提供任意命令执行能力。
 - 只读扫描并人工确认导入 `C:\Users\xu\Desktop\本地模型启动` 中的 `.cmd`、`.bat`、`.ps1` 和 `.lnk`。
 - 启动并打开 NInfer 4090/3090 现有监控 UI，以及 LM Studio Web Monitor。
@@ -368,7 +368,7 @@ MVP 预置“开发/agent场景”和“视频制作场景”，但数据模型�
 | FR-SCN-011 | 场景切换按钮的一次确认即可启动完整流程，不要求用户进入终端；模型冷启动时间按实际进度展示，不承诺不现实的固定秒数。 | P0 |
 | FR-SCN-012 | 场景切换必须作为一个整体审计事件，同时记录每个子操作及回滚结果。 | P0 |
 | FR-SCN-013 | 开发/agent场景中，4090 必须运行 NInfer/Qwen3.8；3090 由同一独立 ComfyUI 实例同时提供生图和生视频能力，并负责 ASR、TTS；无法同时驻留的模型使用队列或按需加载。 | P0 |
-| FR-SCN-014 | 视频制作场景中，4090 必须运行 8000/H3；3090 必须运行 8001 视频辅助服务，支持 TTS、音乐、ASR 和其他已登记模型。 | P0 |
+| FR-SCN-014 | 视频制作场景中，4090 必须运行 8189/H3；3090 必须运行 8001 视频辅助服务，支持 TTS、音乐、ASR 和其他已登记模型。 | P0 |
 | FR-SCN-015 | H3 场景预设必须固定为已批准的 8-step 配置和兼容 LoRA，禁止静默回退到 4-step 路由。 | P0 |
 | FR-SCN-016 | 场景必须分别保存简短介绍与详细使用说明。场景卡片只显示简短介绍和服务列表；详细使用说明通过独立“详细说明”弹窗查看，并在场景编辑器中使用独立字段编辑。 | P0 |
 | FR-SCN-017 | 场景卡片的移动、详情、默认、编辑和删除操作应使用含无障碍名称与悬浮提示的明确线框图标；场景切换保留文字并配合切换图标作为唯一主操作。场景编辑器与详细说明弹窗必须采用独立滚动内容区和固定底部操作栏，确保保存、取消和关闭按钮无需滚动即可操作。 | P0 |
@@ -397,7 +397,7 @@ MVP 预置“开发/agent场景”和“视频制作场景”，但数据模型�
 | FR-ADP-003 | WSL systemd 适配器支持指定发行版和 unit 的启停、重启、状态和 journal 日志。 | P0 |
 | FR-ADP-004 | 外部 HTTP/OpenAI 服务适配器只执行健康检查和监控，默认不具备停止权限。 | P0 |
 | FR-ADP-005 | Windows 服务适配器支持服务状态、启动、停止和事件日志。 | P1 |
-| FR-ADP-006 | MVP 支持通过白名单模板管理现有 Windows ComfyUI 8000/8001/8189 固定 Python 入口，不允许前端提交任意 Shell 命令。 | P0 |
+| FR-ADP-006 | MVP 支持通过白名单模板管理现有 Windows ComfyUI 8001/8189 固定 Python 入口；8189 必须结合 GPU 与用户目录区分两个互斥服务，不允许前端提交任意 Shell 命令。 | P0 |
 | FR-ADP-007 | 每个适配器必须返回明确的类型化错误，保留底层错误原因，禁止静默忽略。 | P0 |
 | FR-ADP-008 | 通用 Windows 原生进程适配器属于 P1，同样必须使用受控模板。 | P1 |
 | FR-ADP-009 | ComfyUI 适配器支持 `/system_stats`、队列、历史任务、模型释放和服务日志；缺少接口时明确标记能力缺失。 | P0 |
@@ -707,17 +707,17 @@ Web UI / HTTP API
 
 - 当 4090 上的 NInfer/Qwen3.8 就绪，且 3090 开发辅助服务符合模板时，页面显示“开发/agent场景：已激活”。
 - 4090 NInfer 就绪但 3090 的 ComfyUI 生图/视频、ASR 或 TTS 配置缺失时，显示“开发/agent场景：部分激活”，并列出缺失组件。
-- 从视频场景切换到开发/agent场景时，系统先等待或处理 H3/ComfyUI 队列，再停止 8000 H3、确认 4090 显存释放，最后启动并验证 NInfer 8080。
+- 从视频场景切换到开发/agent场景时，系统先等待或处理 H3/ComfyUI 队列，再停止 8189 上的 4090 H3、确认 4090 显存及 8189 端口释放，最后启动并验证 NInfer 8080 与同端口的 3090 开发 ComfyUI。
 - 同一次开发/agent场景切换还必须启动并验证 SenseVoiceSmall 18090 与 IndexTTS 1.5 vLLM 6006；健康检查需精确核对模型/服务身份、3090 UUID 与 unit 的 `CUDA_VISIBLE_DEVICES=1`。启动动作必须先把对应 Windows `portproxy` 刷新到 `Ubuntu-22.04` 当前 IPv4，不能把“规则存在”当作“转发有效”。`Type=simple` unit 报 active 后，服务脚本在 180 秒窗口内轮询严格健康，不能用一次 5 秒探测判定冷启动失败；任一目标服务启动失败后，场景立即结束启动阶段、记录失败并释放全局操作锁，不再串行等待后续目标。管理器关闭请求不得中断已可能改变服务状态的就绪轮询，必须等有界结果后进入既有协调、回滚或恢复锁流程。停止或回滚前需确认 `active_requests=0`；随后由 Uvicorn 优雅关闭立即停止接收新连接，并最多等待 300 秒完成竞态进入的在途请求。systemd 停止预算为 330 秒，管理器固定适配器预算为 630 秒。
 - 整个流程通过一次场景确认完成，不需要手工执行 PowerShell、Docker 或 WSL 命令。
 
 ### AC-10 视频制作场景切换
 
-- 从开发/agent场景切换前，页面显示将停止 NInfer 8080、启动 ComfyUI 8000/H3、准备 ComfyUI 8001 辅助服务的完整计划。
+- 从开发/agent场景切换前，页面显示将停止 NInfer 8080 和 8189 上的 3090 开发 ComfyUI、启动 8189 上的 4090 ComfyUI/H3、准备 ComfyUI 8001 辅助服务的完整计划。
 - 有 NInfer 活跃请求时默认不立即停止，可选择等待排空；强制切换必须二次确认。
-- 切换成功后，通过 `/system_stats` 和实际 GPU 指标确认 8000 使用 RTX 4090、8001 使用 RTX 3090。
+- 切换成功后，通过 `/system_stats` 和实际 GPU 指标确认 8189 使用 RTX 4090、8001 使用 RTX 3090。
 - H3 工作流配置检查确认 `steps = 8` 且使用兼容的 H3 Turbo 8-step LoRA；检测到 4-step 配置时阻止切换并报告原因。
-- 8000 或 8001 任一必需组件未就绪时，视频场景不能显示为完全激活。
+- 8189 或 8001 任一必需组件未就绪时，视频场景不能显示为完全激活。
 
 ### AC-11 场景切换失败与回滚
 
@@ -751,7 +751,7 @@ Web UI / HTTP API
 ### AC-15 脚本冲突识别
 
 - 导入后识别 NInfer 4090 与 q27 共用 8080。
-- 识别 vLLM 与 H3 ComfyUI 共用 8000，并同时竞争 RTX 4090。
+- 识别 vLLM 8000 与 H3 ComfyUI 8189 虽不再共用端口但仍竞争 RTX 4090，并识别 4090 H3 与 3090 开发 ComfyUI 互斥共用 8189。
 - 识别 BF16 llama.cpp 与 LM Studio 默认 API 共用 1234，且 BF16 服务同时占用 4090/3090。
 - 在存在冲突的服务运行时，启动预检默认阻止目标操作并列出具体端口、GPU 和占用服务。
 - 检测到 NInfer UI 中历史 LAN IP 与当前主机 IP 不一致时显示配置陈旧告警，不生成错误的局域网链接。
@@ -770,7 +770,7 @@ Web UI / HTTP API
 ### M1：受控生命周期 MVP
 
 - Docker Compose、容器、WSL systemd 适配器。
-- 受控 Windows ComfyUI 8000/8001 启动器。
+- 受控 Windows ComfyUI 8189/8001 启动器。
 - 现有 NInfer/LM Studio UI 的白名单启动器和认证同源代理。
 - 已审核桌面脚本转换出的非交互适配器动作。
 - 启动、停止、重启、两种场景一键切换、异步操作和审计。
@@ -780,7 +780,7 @@ Web UI / HTTP API
 ### M2：模型与参数管理
 
 - 模型清单、环境模板和参数预设版本。
-- 当前 NInfer 4090/3090、q27、ComfyUI 8000/8001 和 OpenMontage 配置导入。
+- 当前 NInfer 4090/3090、q27、ComfyUI 8189/8001 和 OpenMontage 配置导入。
 - 配置差异预览和应用流程。
 
 ### M3：监控与运维完善
@@ -795,7 +795,7 @@ Web UI / HTTP API
 
 1. MVP 是否只允许一个管理员账号，还是第一版就需要管理员/观察者角色？
 2. “开启、关闭”是否仅指模型工作环境，还是还包括整台工作站的关机、重启和 Wake-on-LAN？本文暂按前者定义。
-3. 除已明确纳入 MVP 的 ComfyUI 8000/8001 启动器外，Windows 原生 LM Studio、llama-server 等进程是否必须进入 MVP？
+3. 除已明确纳入 MVP 的 ComfyUI 8189/8001 启动器外，Windows 原生 LM Studio、llama-server 等进程是否必须进入 MVP？
 4. 是否需要第一版就支持模型下载、移动和删除？本文将其放在 P1。
 5. 是否需要从公网或异地访问？本文只支持可信局域网，不包含公网暴露。
 6. 指标和日志期望保留多久，以及可接受的最大磁盘占用是多少？
@@ -852,7 +852,7 @@ Web UI / HTTP API
 - 总览顶部和工作场景页标题区始终提供醒目的“一键切换”入口，工作场景页分别显示“开发/agent场景 / 视频制作场景”两个直接入口；场景卡片底部保留同功能按钮。点击入口先调用只读安全预检；有 blocker 时只展示具体原因，不提交切换，预检完全通过后才显示精确确认并执行。初始加载、后台恢复或预检阻断不得把已存在的场景定义误写成“尚未配置”。
 - 环境和场景动作以 SQLite 异步 operation 执行，通过 SQLite 原子租约和数据库旁的进程级文件锁保证跨实例同一时刻至多一个控制任务。场景固定执行 `drain -> stop conflicts -> verify release/ports -> validate paths/disk/VRAM/profile/dependencies -> start desired -> strict verify`，每一步持久化；只有实际处于 running 的冲突环境才要求 stop/回滚配置，已由固定适配器明确确认 stopped 的冲突环境不得因其自身尚未通过启动验收而阻断另一场景。失败仅回滚本次实际改变且已显式授权逆向动作的步骤，不停止未列入 conflicts 的环境，也不回滚原本已运行目标。回滚到 running 必须恢复完整严格健康，回滚到 stopped 必须明确读到 stopped，否则记录 `rollback_failed`。
 - operations 与 operation_steps 记录请求人、来源、目标、动作、前后状态、步骤、时间、结果和脱敏错误摘要，并与只追加 audit 同事务关联。取得独占恢复锁的新管理器会把遗留 queued/running operation 及 running step 同步标记为 interrupted，并写入恢复审计；不得中断另一仍持锁实例的活跃任务。
-- development 必需 4090 NInfer/UI 与 3090 ComfyUI 生图/视频、ASR、TTS；这五项必须全部位于场景 `desired`，不得用 `optional_desired` 绕过不完整环境。video 必需 H3 8000 与 3090 视频辅助 8001。任何必需环境、冲突状态适配器或健康检查缺失均阻断场景激活。默认模板因此必须明确阻断，不能显示假切换或假激活。
+- development 必需 4090 NInfer/UI 与 3090 ComfyUI 生图/视频、ASR、TTS；这五项必须全部位于场景 `desired`，不得用 `optional_desired` 绕过不完整环境。video 必需 4090 H3 8189 与 3090 视频辅助 8001，切换时必须先释放 development 的 3090 ComfyUI 8189。任何必需环境、冲突状态适配器或健康检查缺失均阻断场景激活。默认模板因此必须明确阻断，不能显示假切换或假激活。
 - `control.json` 缺失时 `control.example.json` 只能作为 `example_preview` 展示源，服务端无条件强制 `control_enabled=false`，不得继承示例中的启用值。健康检查只允许 adapter 状态、loopback TCP、allowlisted loopback HTTP 精确 JSON 字段、固定参数 NVIDIA GPU UUID/严格进程名、固定 WSL user unit 环境与 host GPU UUID/index 交叉核对，以及固定 WSL Docker Compose 的 DeviceRequests/环境/CUDA Driver 四层绑定核对。GPU AI 环境必须同时确认 adapter、端口/HTTP 模型响应和适配器对应的 GPU UUID 绑定；场景 active 与 operation succeeded 均以全部检查通过为前提。WSL/DXG 下 `nvidia-smi` 可能显示宿主全部 GPU，因此 Docker 运行时验收必须以 CUDA Driver 枚举 `count=1` 和目标完整 UUID 为准。
 - `preflight_checks` 只允许强类型的活动请求 JSON/Prometheus drain、Comfy 两数组 queue drain、指定 GPU UUID 显存余量、绝对 WSL 路径、规范化本地盘符 Windows 路径及磁盘余量、已登记依赖环境健康、固定 loopback/WSL 内部端口冲突和 H3 静态 profile。Windows portproxy 已占用本机监听时，WSL 服务必须使用 `wsl_port_available` 检查发行版内部真实监听。Prometheus series 必须精确匹配 metric+labels 且登记值全部为 0；Comfy queue 缺字段、非 array 或非空均失败。Windows 路径拒绝 ADS、Win32 保留设备名及任一父级或目标 symlink/junction/reparse，`timeout_seconds` 必须由可终止隔离执行真实强制，超时 fail-closed 且不得留下阻止退出的执行单元。H3 必须严格为 8 steps、明确 8step-compatible LoRA、`shift_video=12`、`shift_audio=3`；任一缺失均为 blocker，不能 force。
 - 环境 `start`/`restart` 不得通过直接调用动作 API 绕过预检：提交时和后台执行前必须复用同一套静态配置完整性校验，GPU AI 缺少 HTTP JSON 模型精确匹配或 GPU UUID 进程检查时分别拒绝创建 operation 或将已创建 operation 明确标记为 failed。为安全释放资源，显式列入 `allowed_actions` 的 `stop` 可在启动健康检查不完整时执行，但仍要求已核对的固定适配器入口。
@@ -889,7 +889,7 @@ Web UI / HTTP API
 | 强类型场景安全预检与多环境恢复锁 | 已实现并默认关闭 | drain、显存/端口、WSL 路径/磁盘、依赖、H3 profile 均需现场真实配置；失败锁定到逐项人工恢复。 |
 | WebUI HTTP GET/HEAD 隔离预览 | 已实现并默认未配置 | 不是完整交互代理。 |
 | WebSocket、SSE、POST、上游 Cookie 会话代理 | 延期 | 当前明确拒绝；不得以“WebUI 已接入”暗示支持。 |
-| Windows ComfyUI 固定进程生命周期适配器 | 已实现；开发 Krea2/H3 8189 已配置 | 只接受固定 Python/main.py/路径/端口/GPU 指纹；8189 固定 RTX 3090，启动前交叉核对 host index 1 与目标 UUID，使用独立用户目录/数据库，并检查 Krea2 核心加载/采样节点、MiniMax H3 三个专用节点和 VHS 视频输出节点。状态交叉 PID、完整命令行和端口 owner，stop 先严格 queue drain 且只终止精确 PID。Desktop GUI、任意 Windows 进程和计划任务控制仍不支持。 |
+| Windows ComfyUI 固定进程生命周期适配器 | 已实现；开发 Krea2/H3 与视频 H3 均使用 8189 | 只接受固定 Python/main.py/路径/端口/GPU 指纹；8189 由 RTX 3090 开发服务与 RTX 4090 视频服务互斥复用，启动前分别交叉核对 host index、目标 UUID、独立用户目录/数据库及必需节点。状态交叉 PID、完整命令行、端口 owner 与 `/system_stats` GPU 身份，stop 先严格 queue drain 且只终止精确 PID。Desktop GUI、任意 Windows 进程和计划任务控制仍不支持。 |
 | root systemd、Prometheus/Comfy drain、Windows 路径与 Comfy 能力探针 | 已实现 | `wsl_systemd_root` 固定 `-u root`；Comfy 能力同时核对 host GPU UUID/name/index、内部 cuda:0、队列结构和必需节点。配置证据不足仍必须 `configured:false`。 |
 | NInfer 4090 Compose 与持久 UI | 已实现并通过现场验收 | Compose 唯一固定 4090 UUID，CUDA Driver 只枚举一张 4090；模型/视觉身份、真实聊天请求和 UI 持久 unit 均已验证。 |
 | 模型、Profile、场景模板的 CRUD 管理 | 延期 | 当前仅消费严格本地配置文件，不提供浏览器编辑或任意导入。 |
