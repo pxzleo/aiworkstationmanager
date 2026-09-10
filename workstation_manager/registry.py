@@ -395,6 +395,13 @@ def validate_scene_input(payload: dict[str, Any], database: Database) -> dict[st
         "description": description,
         "service_ids": service_ids,
     }
+    if "purpose" in payload:
+        purpose = str(payload.get("purpose") or "").strip()
+        if purpose not in {"", "code_agent", "video_gen"}:
+            raise RegistryError(
+                422, "invalid_scene_purpose", "场景用途必须为空、Code Agent 或 Video Gen"
+            )
+        result["purpose"] = purpose
     if "detailed_description" in payload:
         detailed_description = str(payload.get("detailed_description") or "").strip()
         if len(detailed_description) > 8000:
@@ -1005,12 +1012,16 @@ class RegisteredServiceManager:
         return self._submit("service", service_id, action, username, source_ip,
                             self._run_service_operation)
 
-    def submit_scene_activation(self, scene_id: str, username: str, source_ip: str) -> str:
+    def submit_scene_activation(
+        self, scene_id: str, username: str, source_ip: str, *, video_job_id: str | None = None
+    ) -> str:
         self._require_scene(scene_id)
         return self._submit("scene", scene_id, "activate", username, source_ip,
-                            self._run_scene_operation)
+                            self._run_scene_operation, video_job_id=video_job_id)
 
     def submit_default_scene_activation(self) -> str | None:
+        if self.database.resource_lease_owner("gpu:4090") is not None:
+            return None
         scene = self.database.get_default_scene()
         if scene is None:
             return None
@@ -1045,7 +1056,12 @@ class RegisteredServiceManager:
         return {"operation_id": operation_id, "status": "cancellation_requested"}
 
     def _submit(self, kind: str, target_id: str, action: str, username: str,
-                source_ip: str, worker: Any) -> str:
+                source_ip: str, worker: Any, *, video_job_id: str | None = None) -> str:
+        lease_owner = self.database.resource_lease_owner("gpu:4090")
+        if lease_owner is not None and lease_owner != video_job_id:
+            raise RegistryError(
+                409, "gpu_4090_leased", "RTX 4090 正由视频任务独占，不能执行服务或场景操作"
+            )
         if self._operation_pending or self.database.has_active_operation():
             raise RegistryError(409, "operation_busy", "已有服务或场景操作正在执行")
         operation_id = uuid.uuid4().hex
@@ -1298,6 +1314,10 @@ class RegisteredServiceManager:
         return item
 
     def _require_idle(self) -> None:
+        if self.database.resource_lease_owner("gpu:4090") is not None:
+            raise RegistryError(
+                409, "gpu_4090_leased", "RTX 4090 正由视频任务独占，不能修改服务或场景"
+            )
         if self._operation_pending or self.database.has_active_operation():
             raise RegistryError(409, "operation_busy", "已有服务或场景操作正在执行")
 

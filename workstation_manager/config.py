@@ -54,6 +54,15 @@ class Settings:
     setup_disabled: bool = False
     allowed_public_origins: tuple[str, ...] = ()
     trusted_proxy_ips: tuple[str, ...] = ()
+    comfyui_base_url: str = "http://127.0.0.1:8189"
+    ninfer_base_url: str = "http://127.0.0.1:8080"
+    ninfer_model_id: str = "qwen3.8-27b"
+    video_output_directory: Path = PROJECT_ROOT / "outputs" / "video-jobs"
+    video_job_poll_interval_seconds: float = 2.0
+    video_job_idle_timeout_seconds: float = 3600.0
+    video_job_scene_timeout_seconds: float = 1200.0
+    video_job_generation_timeout_seconds: float = 7200.0
+    video_submit_token: str = ""
 
     @property
     def history_capacity(self) -> int:
@@ -231,6 +240,33 @@ def _local_log_path(value: Any) -> Path:
     return path
 
 
+def _loopback_http_base_url(value: Any, name: str) -> str:
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    if not isinstance(value, str):
+        raise ConfigError(f"{name} 必须是字符串")
+    normalized = value.strip().rstrip("/")
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname \
+            or parsed.username or parsed.password or parsed.path not in {"", "/"} \
+            or parsed.query or parsed.fragment:
+        raise ConfigError(f"{name} 必须是无凭据、路径、查询和片段的完整 HTTP 地址")
+    try:
+        loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError:
+        loopback = parsed.hostname.lower() == "localhost"
+    if not loopback:
+        raise ConfigError(f"{name} 只允许 loopback 地址")
+    return normalized
+
+
+def _nonempty_string(value: Any, name: str, maximum: int = 200) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > maximum:
+        raise ConfigError(f"{name} 必须是长度为 1..{maximum} 的字符串")
+    return value.strip()
+
+
 def _log_level(value: Any) -> str:
     if not isinstance(value, str):
         raise ConfigError(f"manager_log_level 必须是字符串，实际值为 {value!r}")
@@ -287,6 +323,15 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         "WM_SETUP_DISABLED": "setup_disabled",
         "WM_ALLOWED_PUBLIC_ORIGINS": "allowed_public_origins",
         "WM_TRUSTED_PROXY_IPS": "trusted_proxy_ips",
+        "WM_COMFYUI_BASE_URL": "comfyui_base_url",
+        "WM_NINFER_BASE_URL": "ninfer_base_url",
+        "WM_NINFER_MODEL_ID": "ninfer_model_id",
+        "WM_VIDEO_OUTPUT_DIRECTORY": "video_output_directory",
+        "WM_VIDEO_JOB_POLL_INTERVAL_SECONDS": "video_job_poll_interval_seconds",
+        "WM_VIDEO_JOB_IDLE_TIMEOUT_SECONDS": "video_job_idle_timeout_seconds",
+        "WM_VIDEO_JOB_SCENE_TIMEOUT_SECONDS": "video_job_scene_timeout_seconds",
+        "WM_VIDEO_JOB_GENERATION_TIMEOUT_SECONDS": "video_job_generation_timeout_seconds",
+        "WM_VIDEO_SUBMIT_TOKEN": "video_submit_token",
     }
     for env_name, key in env_mapping.items():
         if env_name in env:
@@ -301,6 +346,9 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         MIN_HISTORY_MINUTES,
         MAX_HISTORY_MINUTES,
     )
+    video_submit_token = str(data.get("video_submit_token", ""))
+    if video_submit_token and len(video_submit_token) < 32:
+        raise ConfigError("video_submit_token 留空表示禁用提交，启用时至少需要 32 个字符")
     return Settings(
         host=host,
         port=_port(data.get("port", 19100), "port"),
@@ -373,4 +421,34 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         setup_disabled=_boolean(data.get("setup_disabled", False), "setup_disabled"),
         allowed_public_origins=_allowed_public_origins(data.get("allowed_public_origins", ())),
         trusted_proxy_ips=_trusted_proxy_ips(data.get("trusted_proxy_ips", ())),
+        comfyui_base_url=_loopback_http_base_url(
+            data.get("comfyui_base_url", "http://127.0.0.1:8189"), "comfyui_base_url"
+        ),
+        ninfer_base_url=_loopback_http_base_url(
+            data.get("ninfer_base_url", "http://127.0.0.1:8080"), "ninfer_base_url"
+        ),
+        ninfer_model_id=_nonempty_string(
+            data.get("ninfer_model_id", "qwen3.8-27b"), "ninfer_model_id"
+        ),
+        video_output_directory=_path(
+            data.get("video_output_directory", PROJECT_ROOT / "outputs" / "video-jobs"),
+            "video_output_directory",
+        ),
+        video_job_poll_interval_seconds=_bounded_number(
+            data.get("video_job_poll_interval_seconds", 2),
+            "video_job_poll_interval_seconds", 0.1, 60,
+        ),
+        video_job_idle_timeout_seconds=_bounded_number(
+            data.get("video_job_idle_timeout_seconds", 3600),
+            "video_job_idle_timeout_seconds", 1, 24 * 60 * 60,
+        ),
+        video_job_scene_timeout_seconds=_bounded_number(
+            data.get("video_job_scene_timeout_seconds", 1200),
+            "video_job_scene_timeout_seconds", 1, 24 * 60 * 60,
+        ),
+        video_job_generation_timeout_seconds=_bounded_number(
+            data.get("video_job_generation_timeout_seconds", 7200),
+            "video_job_generation_timeout_seconds", 1, 7 * 24 * 60 * 60,
+        ),
+        video_submit_token=video_submit_token,
     )

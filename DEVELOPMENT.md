@@ -73,10 +73,10 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 
 `name` 最长 100 字符，`description` 最长 1000 字符，`script_path` 必须是现有 `.ps1`、`.cmd` 或 `.bat` 绝对路径，`gpu_label` 最长 100 字符，`port` 为 `1..65535`，`ui_url` 必须为空或完整 HTTP/HTTPS 地址。启用 `wsl_portproxy_enabled` 后，管理器启动及任一服务启动/重启前会统一校准全部已登记的 Windows `portproxy`，关闭、修改或删除登记时会清理旧映射；管理器仅更新或清理自己上次成功同步过的目标，未知现有映射会拒绝操作。同步成功还要求 IP Helper 实际持有监听端口。监听地址只允许 `0.0.0.0`、loopback 或私网 IPv4，监听端口为空时使用服务端口，WSL 目标端口为空时使用监听端口。
 
-登记或修改场景使用有序且不包含未知服务的 `service_ids`；重复 ID 会按首次出现去重。`description` 是最长 1000 字符的卡片简短介绍，`detailed_description` 是最长 8000 字符的独立详细使用说明：
+登记或修改场景使用有序且不包含未知服务的 `service_ids`；重复 ID 会按首次出现去重。`description` 是最长 1000 字符的卡片简短介绍，`detailed_description` 是最长 8000 字符的独立详细使用说明。`purpose` 可为空或为 `code_agent`、`video_gen`；两个非空用途各只能分配给一个场景，由用户在场景编辑器中选择：
 
 ```json
-{"name":"开发","description":"开发服务组","detailed_description":"API Base：http://127.0.0.1:8080/v1","service_ids":["服务ID1","服务ID2"]}
+{"name":"开发","description":"开发服务组","detailed_description":"API Base：http://127.0.0.1:8080/v1","purpose":"code_agent","service_ids":["服务ID1","服务ID2"]}
 ```
 
 场景排序的 `scene_ids` 必须恰好包含全部现有场景 ID 且不得重复：
@@ -146,6 +146,33 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 | POST | `/api/v1/operations/{id}/cancel` | 取消尚未执行的后续步骤 |
 | GET | `/api/v1/audit` | 审计事件 |
 
+### 视频任务
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/v1/video-jobs` | 仅限本机且需专用 Bearer 令牌提交持久化视频任务；相同 `idempotency_key` 幂等返回 |
+| GET | `/api/v1/video-jobs` | 已登录用户查看任务列表，`limit` 默认 100、范围 `1..500` |
+| GET | `/api/v1/video-jobs/{id}` | 已登录用户查看单个任务、阶段、`prompt_id`、进度和输出 |
+| POST | `/api/v1/video-jobs/{id}/cancel` | 已登录用户请求取消排队或运行中的任务 |
+
+提交体只引用 OpenCode 已准备好的资源，不在 AXIS 内创建提示词、参考图、音频或工作流：
+
+```json
+{
+  "idempotency_key": "project-session-video-001",
+  "session_id": "ses_xxx",
+  "workflow_path": "D:\\AIWork\\job\\h3-api-workflow.json",
+  "output_path": "D:\\AIWork\\job\\final.mp4",
+  "callback_url": "http://127.0.0.1:61714",
+  "callback_authorization": "Basic <临时凭据>",
+  "callback_directory": "D:\\AIWork\\job"
+}
+```
+
+`workflow_path` 必须是现有 JSON 绝对路径，内容是 ComfyUI API workflow 的 `prompt` 对象；提交时内容会固化进任务记录，之后修改原文件不会改变已排队任务。`output_path` 可省略；指定时必须是绝对路径且不会覆盖现有文件，省略时写入 `video_output_directory/<job_id>/`。视频以分块方式写入同目录临时文件，再原子改名。`callback_url` 只允许无路径、查询、片段或凭据的 loopback 地址，`callback_directory` 可传递原 OpenCode 工作目录。AXIS 在收尾后调用 OpenCode 1.17.3 的 `POST /session/{sessionID}/prompt_async`，瞬时失败最多退避重试三次；`callback_authorization` 不会出现在任务查询、日志或审计响应中。提交接口还必须携带 `Authorization: Bearer <video_submit_token>`；令牌留空时接口禁用。查询和取消使用 AXIS 登录态及 CSRF。
+
+调度器先获取 RTX 4090 独占租约，阻止等待期间出现新的人工场景切换，再同时检查 NInfer `/slots` 和 `/metrics`；只有所有 slot 空闲且 `requests_processing=0`、`requests_deferred=0` 才切换 `video_gen` 场景。随后验证 ComfyUI `/system_stats`、通过 `/prompt` 获取 `prompt_id`、轮询 `/queue` 与 `/history/{prompt_id}`、通过 `/view` 收集视频。成功、失败和取消都进入 `code_agent` 场景恢复，再验证 NInfer `/health`、`/v1/models` 和真实 `/v1/chat/completions` 请求，最后异步回调原 `session_id`。AXIS 重启时恢复非终态任务；若重启发生在提交请求与 `prompt_id` 落库之间，只从 ComfyUI queue/history 的 `axis_job_id` 恢复，无法确认时明确失败并拒绝重复提交。
+
 动作接口返回异步操作；前端通过操作详情展示进度。取消不会撤销已经完成的服务动作。设置默认场景本身不会立即切换；管理器下次启动后以 `system/startup` 提交普通场景切换操作。没有默认场景时启动过程不控制任何服务，但会逐个执行只读 `status` 并对第一轮的 `unknown` 重试一次，再把明确的 `running`/`stopped` 同步为期望状态；`unhealthy`/`unknown` 对应期望状态 `unknown`。
 
 ### 查询参数与主要响应
@@ -153,7 +180,7 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 - `/api/v1/history` 的 `window` 使用分钟格式，默认 `15m`，范围为 `1m..1440m`。`15m` 返回原始采样，`1h` 按 15 秒分桶，`24h` 按 60 秒分桶。响应除 `samples` 外仍返回 `bucket_seconds`、`retention_minutes`、`stored_sample_count`、`stored_since` 和 `stored_until`，供客户端判断历史数据覆盖范围；当前资源监控界面不显示这些元数据。
 - 资源历史的主机字段包含 CPU 负载/频率/温度、物理/提交/页面文件内存、主物理网卡收发、WSL 内存与 Swap；`gpus` 额外包含显存控制器及编码/解码负载，`disks` 按物理磁盘保存读写吞吐和平均延迟。GPU P-State、风扇、PCIe、时钟限制、进程归属和 Docker 容器资源仅属于实时快照，不写入历史。
 - `/api/v1/health` 在资源历史写入失败时返回 `status: "degraded"`、`readiness.resource_history: "degraded"` 和不含底层 cause 的 `history_persistence_error`；健康监控循环异常时返回 `service_health_monitor_error` 并把 `readiness.registered_services` 标为 `degraded`。实时快照仍可用，后台任务会继续重试。
-- `/api/v1/operations` 和 `/api/v1/audit` 的 `limit` 默认为 100，范围为 `1..500`，分别返回 `operations` 或 `events` 数组。
+- `/api/v1/operations`、`/api/v1/audit` 和 `/api/v1/video-jobs` 的 `limit` 默认为 100，范围为 `1..500`，分别返回 `operations`、`events` 或 `jobs` 数组。
 - 登录和首次设置成功返回 `authenticated`、`csrf_token`、`expires_at`；`auth/me` 返回 `username`、`expires_at`、新的 `csrf_token`。
 - 服务列表返回 `{"services":[...],"status_mode":"health"}`；每个服务包含 `desired_state` 以及带 `state`、`checked_at`、`error`、`source` 的 `status` 观察结果。场景列表返回 `{"scenes":[...]}`。创建和更新接口返回创建或更新后的完整对象。
 - 服务动作、停止全部和场景切换返回 `{"operation_id":"32位十六进制ID","status":"queued"}`。取消请求成功返回相同 ID 和 `cancellation_requested`；操作详情包含操作状态及步骤记录。
@@ -191,6 +218,15 @@ WM_MANAGER_LOG_BACKUP_COUNT
 WM_SETUP_DISABLED
 WM_ALLOWED_PUBLIC_ORIGINS
 WM_TRUSTED_PROXY_IPS
+WM_COMFYUI_BASE_URL
+WM_NINFER_BASE_URL
+WM_NINFER_MODEL_ID
+WM_VIDEO_OUTPUT_DIRECTORY
+WM_VIDEO_JOB_POLL_INTERVAL_SECONDS
+WM_VIDEO_JOB_IDLE_TIMEOUT_SECONDS
+WM_VIDEO_JOB_SCENE_TIMEOUT_SECONDS
+WM_VIDEO_JOB_GENERATION_TIMEOUT_SECONDS
+WM_VIDEO_SUBMIT_TOKEN
 ```
 
 列表与 `workstation_manager/config.py` 保持一致。布尔值使用 `true/false`，列表值按配置解析器要求传入 JSON 或逗号分隔内容。不要在仓库中提交包含本机地址、用户数据或凭据的正式配置。
@@ -199,6 +235,6 @@ WM_TRUSTED_PROXY_IPS
 
 ## 数据与并发
 
-默认数据库是 `data/workstation-manager.db`，当前 schema 为 22，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置。旧客户端更新场景时若未提交详细说明字段，已有详细说明会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
+默认数据库是 `data/workstation-manager.db`，当前 schema 为 23，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置；schema 23 增加用户选择且唯一的场景 `purpose`、持久化 `video_jobs` 状态机和 RTX 4090 `resource_leases`。旧客户端更新场景时若未提交详细说明或用途字段，已有值会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
 
 服务控制面分别保存期望状态和实际观察状态。场景、总览及 GPU 服务摘要只使用实际观察状态；状态或错误变化时才写入 SQLite，连续成功检查不会每 5 秒写盘。资源监控定时采样和健康监控都不会调用服务脚本；显式深度检查、无默认场景的启动校准及失败动作校准才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留 24 小时；内存队列固定只保留最近 15 分钟。

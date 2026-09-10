@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 
 class DatabaseError(RuntimeError):
@@ -105,6 +105,7 @@ class Database:
                         20: self._migrate_to_20,
                         21: self._migrate_to_21,
                         22: self._migrate_to_22,
+                        23: self._migrate_to_23,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -489,6 +490,73 @@ class Database:
         cls._ensure_column(connection, "registered_services", "wsl_listen_port", "INTEGER")
         cls._ensure_column(connection, "registered_services", "wsl_connect_port", "INTEGER")
         cls._ensure_column(connection, "registered_services", "wsl_last_address", "TEXT")
+
+    @classmethod
+    def _migrate_to_23(cls, connection: sqlite3.Connection) -> None:
+        scenes_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='scenes'"
+        ).fetchone()
+        if scenes_table is not None:
+            cls._ensure_column(
+                connection, "scenes", "purpose", "TEXT NOT NULL DEFAULT ''"
+            )
+            connection.execute(
+                "UPDATE scenes SET purpose='' WHERE purpose NOT IN ('', 'code_agent', 'video_gen')"
+            )
+            duplicate_purposes = connection.execute(
+                """SELECT purpose FROM scenes WHERE purpose <> ''
+                   GROUP BY purpose HAVING COUNT(*) > 1"""
+            ).fetchall()
+            for duplicate in duplicate_purposes:
+                rows = connection.execute(
+                    "SELECT id FROM scenes WHERE purpose=? ORDER BY updated_at DESC,id",
+                    (duplicate["purpose"],),
+                ).fetchall()
+                for row in rows[1:]:
+                    connection.execute("UPDATE scenes SET purpose='' WHERE id=?", (row["id"],))
+            connection.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_scenes_unique_purpose
+                   ON scenes(purpose) WHERE purpose <> ''"""
+            )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS video_jobs (
+                id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                payload_hash TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                workflow_path TEXT NOT NULL,
+                workflow_json TEXT NOT NULL,
+                requested_output_path TEXT,
+                callback_url TEXT NOT NULL,
+                callback_authorization TEXT NOT NULL DEFAULT '',
+                callback_directory TEXT,
+                status TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                prompt_id TEXT,
+                output_path TEXT,
+                result TEXT,
+                progress TEXT,
+                error_code TEXT,
+                error_summary TEXT,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                callback_attempts INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT
+            )"""
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_video_jobs_status_created "
+            "ON video_jobs(status,created_at)"
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS resource_leases (
+                resource_key TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL REFERENCES video_jobs(id) ON DELETE CASCADE,
+                acquired_at TEXT NOT NULL
+            )"""
+        )
 
     @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
@@ -1327,11 +1395,12 @@ class Database:
                     ).fetchone()
                     connection.execute(
                         """INSERT INTO scenes(
-                               id,name,description,detailed_description,display_order,
+                               id,name,description,detailed_description,purpose,display_order,
                                created_at,updated_at
-                           ) VALUES (?,?,?,?,?,?,?)""",
+                           ) VALUES (?,?,?,?,?,?,?,?)""",
                         (item["id"], item["name"], item["description"],
-                         item.get("detailed_description", ""), row["next_order"], now, now),
+                         item.get("detailed_description", ""), item.get("purpose", ""),
+                         row["next_order"], now, now),
                     )
                     self._replace_scene_services(connection, item["id"], item["service_ids"])
         except sqlite3.IntegrityError as exc:
@@ -1343,7 +1412,20 @@ class Database:
         try:
             with self.connect() as connection:
                 with connection:
-                    if "detailed_description" in item:
+                    if "detailed_description" in item and "purpose" in item:
+                        cursor = connection.execute(
+                            """UPDATE scenes
+                               SET name=?,description=?,detailed_description=?,purpose=?,updated_at=?
+                               WHERE id=?""",
+                            (item["name"], item["description"],
+                             item["detailed_description"], item["purpose"], utc_now(), scene_id),
+                        )
+                    elif "purpose" in item:
+                        cursor = connection.execute(
+                            "UPDATE scenes SET name=?,description=?,purpose=?,updated_at=? WHERE id=?",
+                            (item["name"], item["description"], item["purpose"], utc_now(), scene_id),
+                        )
+                    elif "detailed_description" in item:
                         cursor = connection.execute(
                             """UPDATE scenes
                                SET name=?,description=?,detailed_description=?,updated_at=?
@@ -1398,6 +1480,242 @@ class Database:
                     )
         except sqlite3.Error as exc:
             raise DatabaseError(f"保存场景排序失败: {exc}") from exc
+
+    def get_scene_by_purpose(self, purpose: str) -> dict[str, Any] | None:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    "SELECT id FROM scenes WHERE purpose=?", (purpose,)
+                ).fetchone()
+            return None if row is None else self.get_scene(row["id"])
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"按用途读取场景失败: {exc}") from exc
+
+    @staticmethod
+    def _decode_video_job(row: sqlite3.Row, *, include_secret: bool = False) -> dict[str, Any]:
+        item = dict(row)
+        item["cancel_requested"] = bool(item["cancel_requested"])
+        if item.get("progress"):
+            try:
+                item["progress"] = json.loads(item["progress"])
+            except json.JSONDecodeError as exc:
+                raise DatabaseError(f"视频任务进度数据损坏: {exc}") from exc
+        else:
+            item["progress"] = None
+        if not include_secret:
+            item.pop("callback_authorization", None)
+            item.pop("workflow_json", None)
+        return item
+
+    def create_video_job(self, item: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        now = utc_now()
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    existing = connection.execute(
+                        "SELECT * FROM video_jobs WHERE idempotency_key=?",
+                        (item["idempotency_key"],),
+                    ).fetchone()
+                    if existing is not None:
+                        return self._decode_video_job(existing), False
+                    connection.execute(
+                        """INSERT INTO video_jobs(
+                               id,idempotency_key,payload_hash,session_id,workflow_path,workflow_json,
+                               requested_output_path,callback_url,callback_authorization,callback_directory,
+                               status,phase,created_at,updated_at
+                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            item["id"], item["idempotency_key"], item["payload_hash"],
+                            item["session_id"], item["workflow_path"], item["workflow_json"],
+                            item.get("requested_output_path"), item["callback_url"],
+                            item.get("callback_authorization", ""), item.get("callback_directory"),
+                            "queued", "queued", now, now,
+                        ),
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM video_jobs WHERE id=?", (item["id"],)
+                    ).fetchone()
+            if row is None:
+                raise DatabaseError("创建视频任务后无法读回记录")
+            return self._decode_video_job(row), True
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError(f"视频任务标识无效或冲突: {exc}") from exc
+        except (sqlite3.Error, KeyError) as exc:
+            raise DatabaseError(f"创建视频任务失败: {exc}") from exc
+
+    def get_video_job(self, job_id: str, *, include_secret: bool = False) -> dict[str, Any] | None:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM video_jobs WHERE id=?", (job_id,)
+                ).fetchone()
+            return None if row is None else self._decode_video_job(
+                row, include_secret=include_secret
+            )
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取视频任务失败: {exc}") from exc
+
+    def list_video_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
+        try:
+            with self.connect() as connection:
+                rows = connection.execute(
+                    "SELECT * FROM video_jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+                ).fetchall()
+            return [self._decode_video_job(row) for row in rows]
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取视频任务列表失败: {exc}") from exc
+
+    def next_video_job(self) -> dict[str, Any] | None:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    """SELECT * FROM video_jobs
+                       WHERE status NOT IN ('succeeded','failed','cancelled')
+                       ORDER BY created_at,id LIMIT 1"""
+                ).fetchone()
+            return None if row is None else self._decode_video_job(row, include_secret=True)
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取待处理视频任务失败: {exc}") from exc
+
+    def update_video_job(self, job_id: str, **fields: Any) -> None:
+        allowed = {
+            "status", "phase", "prompt_id", "output_path", "result", "progress",
+            "error_code", "error_summary", "cancel_requested", "started_at", "finished_at",
+            "callback_attempts",
+        }
+        if not fields or set(fields) - allowed:
+            raise DatabaseError("视频任务更新字段不受支持")
+        values = dict(fields)
+        if "progress" in values:
+            values["progress"] = None if values["progress"] is None else json.dumps(
+                values["progress"], ensure_ascii=False, separators=(",", ":")
+            )
+        if "cancel_requested" in values:
+            values["cancel_requested"] = int(bool(values["cancel_requested"]))
+        values["updated_at"] = utc_now()
+        assignments = ", ".join(f"{name}=?" for name in values)
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        f"UPDATE video_jobs SET {assignments} WHERE id=?",
+                        (*values.values(), job_id),
+                    )
+                    if cursor.rowcount != 1:
+                        raise DatabaseError("视频任务不存在")
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"更新视频任务失败: {exc}") from exc
+
+    def request_video_job_cancel(self, job_id: str) -> str:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute(
+                        "SELECT status FROM video_jobs WHERE id=?", (job_id,)
+                    ).fetchone()
+                    if row is None:
+                        return "missing"
+                    if row["status"] in {"succeeded", "failed", "cancelled"}:
+                        return "finished"
+                    connection.execute(
+                        "UPDATE video_jobs SET cancel_requested=1,updated_at=? WHERE id=?",
+                        (utc_now(), job_id),
+                    )
+                    return "requested"
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"保存视频任务取消请求失败: {exc}") from exc
+
+    def recover_video_jobs(self) -> None:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute(
+                        """DELETE FROM resource_leases WHERE owner_id IN (
+                               SELECT id FROM video_jobs
+                               WHERE status IN ('succeeded','failed','cancelled')
+                           )"""
+                    )
+                    connection.execute(
+                        """UPDATE video_jobs SET status='queued',updated_at=?
+                           WHERE status NOT IN ('queued','succeeded','failed','cancelled')""",
+                        (utc_now(),),
+                    )
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"恢复视频任务失败: {exc}") from exc
+
+    def acquire_resource_lease(self, resource_key: str, owner_id: str) -> bool:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute(
+                        "SELECT owner_id FROM resource_leases WHERE resource_key=?",
+                        (resource_key,),
+                    ).fetchone()
+                    if row is not None:
+                        return row["owner_id"] == owner_id
+                    connection.execute(
+                        "INSERT INTO resource_leases(resource_key,owner_id,acquired_at) VALUES (?,?,?)",
+                        (resource_key, owner_id, utc_now()),
+                    )
+                    return True
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"获取资源租约失败: {exc}") from exc
+
+    def release_resource_lease(self, resource_key: str, owner_id: str) -> bool:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        "DELETE FROM resource_leases WHERE resource_key=? AND owner_id=?",
+                        (resource_key, owner_id),
+                    )
+                    return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"释放资源租约失败: {exc}") from exc
+
+    def resource_lease_owner(self, resource_key: str) -> str | None:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    "SELECT owner_id FROM resource_leases WHERE resource_key=?", (resource_key,)
+                ).fetchone()
+            return None if row is None else str(row["owner_id"])
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取资源租约失败: {exc}") from exc
+
+    def finish_video_job_with_audit(
+        self, job_id: str, status: str, result: str, output_path: str | None,
+        error_code: str | None, error_summary: str | None, resource_key: str,
+    ) -> None:
+        now = utc_now()
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    cursor = connection.execute(
+                        """UPDATE video_jobs SET status=?,phase='finished',result=?,output_path=?,
+                               error_code=?,error_summary=?,finished_at=?,updated_at=? WHERE id=?""",
+                        (status, result, output_path, error_code, error_summary, now, now, job_id),
+                    )
+                    if cursor.rowcount != 1:
+                        raise DatabaseError("视频任务不存在")
+                    self.insert_audit(
+                        connection, "local", "management.video_job.finish",
+                        "success" if status == "succeeded" else "failure",
+                        {"job_id": job_id, "result": result, "error_code": error_code,
+                         "output_path": output_path},
+                    )
+                    lease = connection.execute(
+                        "DELETE FROM resource_leases WHERE resource_key=? AND owner_id=?",
+                        (resource_key, job_id),
+                    )
+                    if lease.rowcount != 1:
+                        raise DatabaseError("RTX 4090 租约不存在或不属于该视频任务")
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"保存视频任务终态失败: {exc}") from exc
 
     @staticmethod
     def _replace_scene_services(
