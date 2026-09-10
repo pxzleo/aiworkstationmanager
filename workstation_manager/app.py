@@ -34,6 +34,34 @@ from .registry import RegisteredServiceManager, RegistryError, ScriptRunner
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+async def _submit_default_scene_when_docker_ready(
+    registry: RegisteredServiceManager,
+    timeout_seconds: float = 300.0,
+    retry_interval_seconds: float = 2.0,
+) -> str | None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    first_attempt = True
+    while True:
+        if not first_attempt and asyncio.get_running_loop().time() >= deadline:
+            raise RegistryError(
+                503, "docker_handoff_timeout",
+                "等待 Docker 登录会话交接结束超时，默认场景未启动",
+            )
+        first_attempt = False
+        try:
+            return registry.submit_default_scene_activation()
+        except RegistryError as exc:
+            if exc.code != "docker_handoff_busy":
+                raise
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise RegistryError(
+                    503, "docker_handoff_timeout",
+                    "等待 Docker 登录会话交接结束超时，默认场景未启动",
+                ) from exc
+            await asyncio.sleep(min(retry_interval_seconds, remaining))
+
+
 class Credentials(BaseModel):
     model_config = ConfigDict(extra="forbid")
     username: str = Field(max_length=64)
@@ -205,7 +233,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         resolved_sampler.start()
         try:
             await resolved_registry.start()
-            resolved_registry.submit_default_scene_activation()
+            await _submit_default_scene_when_docker_ready(resolved_registry)
             yield
         finally:
             try:

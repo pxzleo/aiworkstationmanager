@@ -134,6 +134,90 @@ class PortProxySynchronizerTests(unittest.TestCase):
         with self.assertRaisesRegex(PortProxySyncError, "未实际监听"):
             synchronizer.sync(self.mapping)
 
+    def test_recreates_owned_current_mapping_with_missing_listener(self) -> None:
+        mapping = WslPortProxyMapping(
+            "service", "NInfer", "Ubuntu-22.04", "192.168.100.190", 8081, 8081,
+            "172.29.43.201",
+        )
+        self.windows.values[mapping.registry_name] = "172.29.43.201/8081"
+        original = self.windows.run
+        repaired = False
+
+        def run(arguments):
+            nonlocal repaired
+            if arguments[0] == "powershell.exe" and "Get-NetTCPConnection" in arguments[-1]:
+                absent = "if($listener){exit 3}" in arguments[-1]
+                return subprocess.CompletedProcess(arguments, 0 if absent or repaired else 3, "", "")
+            if arguments[0] == "netsh.exe" and arguments[3] == "add":
+                repaired = True
+            return original(arguments)
+
+        sync = WslPortProxySynchronizer(run, self.windows.read)
+        self.assertEqual(sync.sync(mapping), "172.29.43.201")
+        self.assertEqual([c[3] for c in self.windows.calls if c[0] == "netsh.exe"], ["delete", "add"])
+        self.assertEqual(self.windows.values[mapping.registry_name], "172.29.43.201/8081")
+
+    def test_current_mapping_with_missing_listener_requires_ownership(self) -> None:
+        self.windows.values[self.mapping.registry_name] = "172.29.43.201/18000"
+        original = self.windows.run
+        def run(arguments):
+            if arguments[0] == "powershell.exe" and "Get-NetTCPConnection" in arguments[-1]:
+                return subprocess.CompletedProcess(arguments, 3, "", "")
+            return original(arguments)
+        with self.assertRaisesRegex(PortProxySyncError, "未知转发"):
+            WslPortProxySynchronizer(run, self.windows.read).sync(self.mapping)
+        self.assertFalse(any(c[0] == "netsh.exe" for c in self.windows.calls))
+
+    def test_unknown_listener_is_not_repaired(self) -> None:
+        self.windows.values[self.mapping.registry_name] = "172.29.43.201/18000"
+        original = self.windows.run
+        def run(arguments):
+            if arguments[0] == "powershell.exe" and "Get-NetTCPConnection" in arguments[-1]:
+                return subprocess.CompletedProcess(arguments, 4, "", "")
+            return original(arguments)
+        with self.assertRaisesRegex(PortProxySyncError, "未知进程"):
+            WslPortProxySynchronizer(run, self.windows.read).sync(self.mapping)
+        self.assertFalse(any(c[0] == "netsh.exe" for c in self.windows.calls))
+
+    def test_healthy_current_mapping_is_not_rewritten(self) -> None:
+        self.windows.values[self.mapping.registry_name] = "172.29.43.201/18000"
+        self.synchronizer.sync(self.mapping)
+        self.assertFalse(any(c[0] == "netsh.exe" for c in self.windows.calls))
+
+    def test_unknown_listener_blocks_missing_or_stale_mapping_before_write(self) -> None:
+        for actual in (None, "172.29.43.200/8081"):
+            with self.subTest(actual=actual):
+                windows = FakeWindowsPortProxy()
+                mapping = WslPortProxyMapping(
+                    "service", "NInfer", "Ubuntu-22.04", "192.168.100.190", 8081, 8081,
+                    "172.29.43.200",
+                )
+                if actual:
+                    windows.values[mapping.registry_name] = actual
+                def run(arguments):
+                    if arguments[0] == "powershell.exe" and "Get-NetTCPConnection" in arguments[-1]:
+                        return subprocess.CompletedProcess(arguments, 4, "", "")
+                    return windows.run(arguments)
+                with self.assertRaisesRegex(PortProxySyncError, "未知进程"):
+                    WslPortProxySynchronizer(run, windows.read).sync(mapping)
+                self.assertFalse(any(c[0] == "netsh.exe" for c in windows.calls))
+
+    def test_owned_listener_still_missing_after_repair_fails_without_retry_loop(self) -> None:
+        mapping = WslPortProxyMapping(
+            "service", "NInfer", "Ubuntu-22.04", "192.168.100.190", 8081, 8081,
+            "172.29.43.201",
+        )
+        self.windows.values[mapping.registry_name] = "172.29.43.201/8081"
+        original = self.windows.run
+        def run(arguments):
+            if arguments[0] == "powershell.exe" and "Get-NetTCPConnection" in arguments[-1]:
+                absent = "if($listener){exit 3}" in arguments[-1]
+                return subprocess.CompletedProcess(arguments, 0 if absent else 3, "", "")
+            return original(arguments)
+        with self.assertRaisesRegex(PortProxySyncError, "未实际监听"):
+            WslPortProxySynchronizer(run, self.windows.read).sync(mapping)
+        self.assertEqual([c[3] for c in self.windows.calls if c[0] == "netsh.exe"], ["delete", "add"])
+
     def test_wildcard_and_specific_address_conflict_before_any_change(self) -> None:
         services = [
             {

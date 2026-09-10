@@ -24,7 +24,7 @@ if ($Trigger -eq "Startup") {
     $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Highest
 }
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval ([TimeSpan]::FromMinutes(1))
 $task = New-ScheduledTask -Action $action -Trigger $taskTrigger -Principal $principal -Settings $settings -Description "AXIS AI 工作站管理器；运行日志位于项目 logs\manager.log"
 Register-ScheduledTask -TaskName $taskName -InputObject $task -Force -ErrorAction Stop | Out-Null
 Write-Host "已安装当前用户最高权限计划任务: $taskName ($Trigger)。未保存账户密码。"

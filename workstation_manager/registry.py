@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import ipaddress
 import os
 import re
@@ -36,6 +37,32 @@ HEALTH_FAILURE_THRESHOLD = 2
 HEALTH_BODY_LIMIT = 256 * 1024
 
 
+def _windows_open_error_code(path: Path) -> int | None:
+    """Return the native CreateFile error without collapsing it to errno."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = (
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    )
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+    handle = create_file(
+        str(path), 0xC0000000, 0x00000007, None, 3, 0x00000080, None
+    )
+    if handle == wintypes.HANDLE(-1).value:
+        return ctypes.get_last_error()
+    close_handle(handle)
+    return 0
+
+
 class RegistryError(RuntimeError):
     def __init__(self, status_code: int, code: str, message: str) -> None:
         super().__init__(message)
@@ -45,10 +72,24 @@ class RegistryError(RuntimeError):
 
 
 class ManagerInstanceLock:
-    """Prevent two manager processes from controlling the same database."""
+    """Hold an exclusive cross-process lock associated with the database."""
 
-    def __init__(self, database_path: Path) -> None:
-        self.path = database_path.with_suffix(f"{database_path.suffix}.lock")
+    def __init__(
+        self, database_path: Path, *, suffix: str | None = None,
+        busy_code: str = "manager_already_running",
+        busy_message: str = "同一数据库已有管理器实例正在运行",
+        lock_error_code: str = "manager_lock_failed",
+        lock_error_message: str = "无法取得管理器实例锁",
+        unlock_error_code: str = "manager_unlock_failed",
+        unlock_message: str = "无法释放管理器实例锁",
+    ) -> None:
+        self.path = database_path.with_suffix(suffix or f"{database_path.suffix}.lock")
+        self.busy_code = busy_code
+        self.busy_message = busy_message
+        self.lock_error_code = lock_error_code
+        self.lock_error_message = lock_error_message
+        self.unlock_error_code = unlock_error_code
+        self.unlock_message = unlock_message
         self._handle: Any | None = None
 
     def acquire(self) -> None:
@@ -56,6 +97,16 @@ class ManagerInstanceLock:
             return
         try:
             handle = self.path.open("a+b")
+        except OSError as exc:
+            native_error = getattr(exc, "winerror", None)
+            if native_error is None and exc.errno == errno.EACCES:
+                native_error = _windows_open_error_code(self.path)
+            if native_error == 32:
+                raise RegistryError(409, self.busy_code, self.busy_message) from exc
+            raise RegistryError(
+                500, self.lock_error_code, f"{self.lock_error_message}: {exc}"
+            ) from exc
+        try:
             handle.seek(0, os.SEEK_END)
             if handle.tell() == 0:
                 handle.write(b"\0")
@@ -68,10 +119,12 @@ class ManagerInstanceLock:
                 import fcntl
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
-            if "handle" in locals():
-                handle.close()
+            handle.close()
+            busy_numbers = {errno.EACCES, errno.EAGAIN}
+            if exc.errno in busy_numbers or getattr(exc, "winerror", None) in {33, 36}:
+                raise RegistryError(409, self.busy_code, self.busy_message) from exc
             raise RegistryError(
-                409, "manager_already_running", "同一数据库已有管理器实例正在运行"
+                500, self.lock_error_code, f"{self.lock_error_message}: {exc}"
             ) from exc
         self._handle = handle
 
@@ -89,7 +142,7 @@ class ManagerInstanceLock:
                 import fcntl
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         except OSError as exc:
-            raise RegistryError(500, "manager_unlock_failed", "无法释放管理器实例锁") from exc
+            raise RegistryError(500, self.unlock_error_code, self.unlock_message) from exc
         finally:
             handle.close()
 
@@ -387,6 +440,16 @@ class RegisteredServiceManager:
         self._busy_services: set[str] = set()
         self._service_locks: dict[str, asyncio.Lock] = {}
         self._instance_lock = ManagerInstanceLock(self.database.path)
+        self._docker_handoff_lock = ManagerInstanceLock(
+            self.database.path,
+            suffix=".docker-handoff.lock",
+            busy_code="docker_handoff_busy",
+            busy_message="Docker 正在执行开机或登录会话交接，请稍后重试",
+            lock_error_code="docker_handoff_lock_failed",
+            lock_error_message="无法取得 Docker 会话交接互斥锁",
+            unlock_error_code="docker_handoff_unlock_failed",
+            unlock_message="无法释放 Docker 会话交接互斥锁",
+        )
         self.last_operation_error: str | None = None
         self.last_health_error: str | None = None
         self.portproxy_errors: dict[str, str] = {}
@@ -554,6 +617,7 @@ class RegisteredServiceManager:
                 pass
         if self._operation_tasks:
             await asyncio.gather(*tuple(self._operation_tasks), return_exceptions=True)
+        self._docker_handoff_lock.release()
         self._instance_lock.release()
 
     @staticmethod
@@ -749,6 +813,7 @@ class RegisteredServiceManager:
     async def update_service(self, service_id: str, payload: dict[str, Any],
                              username: str, source_ip: str) -> dict[str, Any]:
         self._require_idle()
+        self._docker_handoff_lock.acquire()
         self._operation_pending = True
         removed = False
         try:
@@ -786,9 +851,11 @@ class RegisteredServiceManager:
             return next(value for value in self.list_services() if value["id"] == service_id)
         finally:
             self._operation_pending = False
+            self._docker_handoff_lock.release()
 
     async def delete_service(self, service_id: str, username: str, source_ip: str) -> None:
         self._require_idle()
+        self._docker_handoff_lock.acquire()
         self._operation_pending = True
         removed = False
         try:
@@ -822,6 +889,7 @@ class RegisteredServiceManager:
             self.portproxy_errors.pop(service_id, None)
         finally:
             self._operation_pending = False
+            self._docker_handoff_lock.release()
 
     def create_scene(self, payload: dict[str, Any], username: str, source_ip: str) -> dict[str, Any]:
         self._require_idle()
@@ -978,9 +1046,10 @@ class RegisteredServiceManager:
 
     def _submit(self, kind: str, target_id: str, action: str, username: str,
                 source_ip: str, worker: Any) -> str:
-        if self._operation_pending:
+        if self._operation_pending or self.database.has_active_operation():
             raise RegistryError(409, "operation_busy", "已有服务或场景操作正在执行")
         operation_id = uuid.uuid4().hex
+        self._docker_handoff_lock.acquire()
         self._operation_pending = True
         cancel_event = asyncio.Event()
         self._cancel_requests[operation_id] = cancel_event
@@ -989,10 +1058,12 @@ class RegisteredServiceManager:
         except OperationBusyError as exc:
             self._operation_pending = False
             self._cancel_requests.pop(operation_id, None)
+            self._docker_handoff_lock.release()
             raise RegistryError(409, "operation_busy", str(exc)) from exc
         except Exception:
             self._operation_pending = False
             self._cancel_requests.pop(operation_id, None)
+            self._docker_handoff_lock.release()
             raise
         task = asyncio.create_task(
             self._guard_operation(worker, operation_id, target_id, action)
@@ -1025,6 +1096,7 @@ class RegisteredServiceManager:
             self._cancel_requests.pop(operation_id, None)
             if release_pending:
                 self._operation_pending = False
+                self._docker_handoff_lock.release()
 
     async def _run_script_action(self, operation_id: str, sequence: int,
                                  phase: str, service: dict[str, Any], action: str) -> bool:

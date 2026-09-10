@@ -16,6 +16,10 @@ class PortProxySyncError(RuntimeError):
     """Raised when an explicitly managed WSL portproxy cannot be synchronized."""
 
 
+class PortProxyListenerMissing(PortProxySyncError):
+    """The port is free but its configured proxy listener is missing."""
+
+
 @dataclass(frozen=True)
 class WslPortProxyMapping:
     service_id: str
@@ -143,9 +147,15 @@ class WslPortProxySynchronizer:
             "$service=Get-CimInstance Win32_Service -Filter \"Name='iphlpsvc'\";"
             "if($service.State -ne 'Running' -or $service.ProcessId -le 0){exit 2};"
             "$deadline=(Get-Date).AddSeconds(5);"
+            "if(Get-NetTCPConnection -State Listen "
+            f"-LocalPort {mapping.listen_port} -ErrorAction SilentlyContinue|Where-Object {{"
+            f"$_.LocalAddress -ne '{mapping.listen_address}' -and ("
+            f"'{mapping.listen_address}' -eq '0.0.0.0' -or $_.LocalAddress -in @('0.0.0.0','::'))"
+            "}){exit 4};"
             "do{$listener=Get-NetTCPConnection -State Listen "
             f"-LocalAddress '{mapping.listen_address}' -LocalPort {mapping.listen_port} "
-            "-ErrorAction SilentlyContinue|Where-Object OwningProcess -eq $service.ProcessId;"
+            "-ErrorAction SilentlyContinue;"
+            "if($listener|Where-Object OwningProcess -ne $service.ProcessId){exit 4};"
             f"if($listener){{exit {0 if should_exist else 3}}};"
             "Start-Sleep -Milliseconds 200}while((Get-Date)-lt $deadline);"
             f"exit {3 if should_exist else 0}"
@@ -159,8 +169,14 @@ class WslPortProxySynchronizer:
                 f"无法校验 {mapping.service_name} 的 Windows 监听端口: {exc}"
             ) from exc
         if result.returncode != 0:
+            if result.returncode == 4:
+                raise PortProxySyncError(
+                    f"{mapping.service_name} 的监听端口被未知进程占用，拒绝修改"
+                )
             state = "未实际监听" if should_exist else "仍在监听"
-            raise PortProxySyncError(
+            error_type = (PortProxyListenerMissing
+                          if should_exist and result.returncode == 3 else PortProxySyncError)
+            raise error_type(
                 f"{mapping.service_name} 的 Windows 端口转发 IP Helper {state} "
                 f"{mapping.listen_address}:{mapping.listen_port}"
             )
@@ -210,7 +226,7 @@ class WslPortProxySynchronizer:
         expected = f"{mapping.last_address}/{mapping.connect_port}"
         actual = self._mapping_reader(mapping.registry_name)
         if actual == expected:
-            self._verify_listener(mapping)
+            self.sync(mapping, mapping.last_address)
             return
         if actual is not None:
             raise PortProxySyncError(
@@ -241,12 +257,22 @@ class WslPortProxySynchronizer:
         self._ensure_ip_helper()
         actual = self._mapping_reader(mapping.registry_name)
         if actual == expected:
-            self._verify_listener(mapping)
-            return address
+            try:
+                self._verify_listener(mapping)
+                return address
+            except PortProxyListenerMissing:
+                self._validate_existing_target(mapping, actual)
+                # Recreate only this owned, non-listening rule; never restart IP Helper.
+                self.remove_owned(mapping)
+                actual = None
         operation = "add"
         if actual is not None:
             self._validate_existing_target(mapping, actual)
             operation = "set"
+        try:
+            self._verify_listener(mapping)
+        except PortProxyListenerMissing:
+            pass  # An unused port is expected before creation; conflicts still raise.
         arguments = [
             "netsh.exe", "interface", "portproxy", operation, "v4tov4",
             f"listenaddress={mapping.listen_address}",

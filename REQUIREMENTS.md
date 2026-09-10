@@ -154,7 +154,7 @@ ASR 与 TTS 使用独立的 user systemd unit `sensevoice-asr-api.service`、`in
 | `4090-NInfer.cmd` | NInfer + Qwen3.8-27B + NInfer UI | WSL Docker Compose + user systemd | API 8080、UI 8081 | RTX 4090；与 q27 共用 8080；与 vLLM 互斥 |
 | `4090-q27.cmd` | q27 Qwen3.8-27B Q6_K | WSL systemd | API 8080 | RTX 4090；与 NInfer、vLLM 互斥 |
 | `4090-vLLM.cmd` | vLLM Qwen3.8-27B FP8 | WSL user transient systemd | API 8000 | RTX 4090；与使用 8189 的 H3 ComfyUI 仍存在 GPU 冲突，但不再共用端口 |
-| `3090-NInfer.cmd` | NInfer 3090 + NInfer UI | WSL Docker Compose + systemd | API 18030、UI 18031 | RTX 3090；与其他 3090 大模型服务互斥 |
+| `3090-NInfer.cmd` | NInfer 3090 + NInfer UI | WSL Docker Compose + systemd | API 18030、UI 18031 | RTX 3090；只读复用 4090 NInfer 的 `/home/xu/ai_stud/ninfer4090/models/Qwen3.8-27B-Uncensored.ninfer`；与其他 3090 大模型服务互斥 |
 | `3090-Qwen3090-Control.cmd` | Qwen3.8-27B 3090 服务 | Windows Docker Compose | API 18020 | RTX 3090；与 NInfer 3090 互斥 |
 | `DualGPU-Llama-BF16.cmd` | llama.cpp Qwen3.8-27B BF16 | Windows PowerShell/原生进程 | API 1234 | RTX 4090 + RTX 3090，85:15；与双卡上的场景服务冲突 |
 | `lmstudio监控.lnk` | LM Studio Web Monitor | 快捷方式 → `D:\AIWork\lmstudio_web_monitor\run.bat` | UI 8765、LM Studio API 1234 | 可加载/卸载 LM Studio 模型并查看输入输出日志 |
@@ -168,10 +168,12 @@ ASR 与 TTS 使用独立的 user systemd unit `sensevoice-asr-api.service`、`in
 | UI | 当前地址 | 快照状态 | 能力与注意事项 |
 |---|---|---|---|
 | NInfer 4090 UI | `http://127.0.0.1:8081` | 在线，后端 8080 在线 | 显示服务、模型、slots、KV、GPU、请求、日志等信息 |
-| NInfer 3090 UI | `http://127.0.0.1:18031` | UI 与后端均离线，按需手动启动 | 必须显示 UI 与模型后端的分离状态，且不得绕过 AXIS 独立自启动 |
+| NInfer 3090 UI | `http://192.168.100.190:18031` | UI 与后端均离线，按需通过 AXIS 手动启动 | 必须显示 UI 与模型后端的分离状态，且不得绕过 AXIS 独立自启动 |
 | LM Studio Web Monitor | `http://127.0.0.1:8765` 或局域网地址 | 当前未监听 | 可查看 CPU、内存、GPU、显存、模型输入输出和日志，并执行模型加载/卸载 |
 
-NInfer UI 当前只监听 loopback，局域网浏览器不能直接访问；LM Studio Web Monitor 当前实现会监听全部网卡、创建防火墙放行规则，并使用 URL 查询参数形式的静态访问凭据。管理系统不得把该凭据暴露在菜单、审计、Referer 或日志中。MVP 应通过管理系统的登录态和同源反向代理安全地打开现有 UI，或在管理员确认后采用经过加固的独立局域网地址。
+3090 NInfer 服务脚本的 `start` 必须在已运行状态的提前返回之前校准 Web UI 局域网配置：通过独立 systemd drop-in 显式设置 `NINFER_UI_ALLOW_LAN=1` 和 `NINFER_UI_PUBLIC_HOST=192.168.100.190`，并将 UI 监听设为 `0.0.0.0:18031`，只在实际进程监听参数不符时重启 UI；保留 API `127.0.0.1:18030` 和手动启动策略。复用公共 WSL 地址及转发函数，将 Windows `192.168.100.190:18031` 映射到当前 WSL IPv4 的 `18031`，只允许更新本脚本记录的映射；防火墙限 Private 网络和 LocalSubnet。必须验证 IP Helper 的真实监听和局域网 HTTP 接口，权限不足、未知映射或校验失败均明确报错。`status` 只读并检查本机与局域网接口，不得自行修复；管理员权限由 AXIS 提供。
+
+初始调研时 NInfer UI 只监听 loopback，局域网浏览器不能直接访问；LM Studio Web Monitor 当前实现会监听全部网卡、创建防火墙放行规则，并使用 URL 查询参数形式的静态访问凭据。管理系统不得把该凭据暴露在菜单、审计、Referer 或日志中。MVP 应通过管理系统的登录态和同源反向代理安全地打开现有 UI，或在管理员确认后采用经过加固的独立局域网地址。
 
 NInfer 4090 UI 曾把 LAN API 地址写死为历史地址 `192.168.100.152`。2026-08-27 已移除 unit 和桌面脚本中的静态覆盖；快照保留 loopback API，前端根据当前浏览器 hostname 动态生成局域网地址，不能再将 WSL/Docker 历史网关地址作为 LAN 事实来源。
 
@@ -641,9 +643,14 @@ Web UI / HTTP API
 ### 11.3 兼容性
 
 - 服务端目标环境：Windows 11 + WSL2 Ubuntu 22.04 + Docker Desktop。
+- Docker Desktop 的关键开机启动不得依赖交互登录：采用当前用户 S4U/最高权限的开机计划任务在 Session 0 启动后端；任务脚本必须兼容进程已存在但引擎未就绪、托盘进程已存在和服务状态不可用，并在有用户桌面时按受控交接流程启动前台托盘。安装脚本不得把交互式 `docker info` 阻塞在未登录会话中；引擎就绪由后台探针日志确认。安装/修复任务后必须至少执行一次无重启在线验收：触发真实任务，检查最近运行结果、S4U 启动日志和管理员上下文 `docker info`；失败时不得宣称完成。
+- AXIS 的 `Start-Manager.ps1` 必须在管理器启动前等待 Docker Engine 最多 210 秒并明确记录启动异常；超时必须失败并交由计划任务重试，不能在 Docker 未就绪时提交默认场景。
+- 用户登录后若 Docker Desktop 仍由其他会话持有，登录触发的最高权限交接任务必须先取得共享锁、确认服务状态并原子保存容器与服务恢复清单，随后才允许停止 Session 0 实例并在当前交互会话启动 Docker Desktop；其他会话 Engine 等待超时必须失败关闭，不得并行启动第二个桌面实例。任务完成或失败必须写入独立日志。
+- Docker Desktop 开机任务必须在计划任务层配置失败自动重试：每 1 分钟重启一次，最多 3 次；只修正未来失败，不因此中断已正常运行的 Docker Engine。
 - 浏览器：当前版本 Chrome、Edge，以及手机端现代浏览器。
 - 不依赖固定 WSL IP；使用发行版名称和稳定的宿主访问方式。
 - 需要局域网访问的 WSL 服务必须显式登记 Windows 监听地址、监听端口、WSL 发行版和目标端口；管理器启动时统一读取各发行版当前 IPv4 并同步全部已登记映射，任一服务启动或重启前再次统一强制校验，关闭、修改或删除登记时清理其旧映射。管理器只能更新或清理自己记录的上次成功目标，不得覆盖未知现有映射，也不得根据普通服务端口猜测并扩大暴露范围；目标冲突、同步或清理失败、IP Helper 未实际持有或释放监听端口时必须明确报错并阻止对应操作。
+- 已登记转发目标正确但监听丢失时，管理器及服务公共脚本必须校验归属后仅重建该条映射一次，再验证 IP Helper 实际监听；不得直接返回成功或仅重复检查，也不得重启整个 IP Helper。未知进程、冲突监听、未知目标及查询失败必须明确失败。4090/3090 NInfer、IndexTTS、SenseVoice 与其他显式登记的 WSL 转发遵循同一规则。
 - 不依赖 GPU 枚举序号。
 
 ### 11.4 可维护性

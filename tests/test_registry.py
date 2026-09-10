@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sqlite3
+import subprocess
 import tempfile
 import threading
 import time
@@ -15,7 +16,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
-from workstation_manager.app import create_app
+from workstation_manager.app import _submit_default_scene_when_docker_ready, create_app
 from workstation_manager.auth import SESSION_COOKIE, AuthError, AuthService
 from workstation_manager.config import Settings
 from workstation_manager.database import Database, DatabaseError, SCHEMA_VERSION
@@ -24,6 +25,7 @@ from workstation_manager.portproxy import PortProxySyncError
 from workstation_manager.registry import (
     HealthProbeResult,
     HttpHealthProbe,
+    ManagerInstanceLock,
     RegisteredServiceManager,
     RegistryError,
     ScriptResult,
@@ -1265,6 +1267,132 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RegistryError, "已有服务或场景操作"):
             second.submit_service_action(service["id"], "stop", "admin", "local")
         self.assertEqual((await self.wait_operation(operation))["status"], "succeeded")
+
+    async def test_docker_handoff_lock_blocks_new_service_operation(self) -> None:
+        service = await self.add_service("Docker 交接互斥")
+        blocker = ManagerInstanceLock(
+            self.database.path,
+            suffix=".docker-handoff.lock",
+            busy_code="docker_handoff_busy",
+            busy_message="Docker 正在执行开机或登录会话交接，请稍后重试",
+        )
+        blocker.acquire()
+        try:
+            with self.assertRaises(RegistryError) as raised:
+                self.manager.submit_service_action(
+                    service["id"], "start", "admin", "local"
+                )
+            self.assertEqual(raised.exception.code, "docker_handoff_busy")
+            self.assertFalse(self.manager._operation_pending)
+        finally:
+            blocker.release()
+
+    async def test_docker_handoff_lock_blocks_service_update_and_delete(self) -> None:
+        service = await self.add_service("Docker 交接登记互斥")
+        blocker = ManagerInstanceLock(
+            self.database.path,
+            suffix=".docker-handoff.lock",
+            busy_code="docker_handoff_busy",
+            busy_message="Docker 正在执行开机或登录会话交接，请稍后重试",
+        )
+        blocker.acquire()
+        try:
+            with self.assertRaises(RegistryError) as update_error:
+                await self.manager.update_service(
+                    service["id"], {"description": "new"}, "admin", "local"
+                )
+            self.assertEqual(update_error.exception.code, "docker_handoff_busy")
+            with self.assertRaises(RegistryError) as delete_error:
+                await self.manager.delete_service(service["id"], "admin", "local")
+            self.assertEqual(delete_error.exception.code, "docker_handoff_busy")
+        finally:
+            blocker.release()
+
+    async def test_default_scene_waits_for_docker_handoff_lock(self) -> None:
+        registry = MagicMock()
+        registry.submit_default_scene_activation.side_effect = [
+            RegistryError(
+                409, "docker_handoff_busy",
+                "Docker 正在执行开机或登录会话交接，请稍后重试",
+            ),
+            "operation-id",
+        ]
+
+        result = await _submit_default_scene_when_docker_ready(
+            registry, timeout_seconds=1, retry_interval_seconds=0
+        )
+
+        self.assertEqual(result, "operation-id")
+        self.assertEqual(registry.submit_default_scene_activation.call_count, 2)
+
+    async def test_default_scene_does_not_hide_unrelated_startup_error(self) -> None:
+        registry = MagicMock()
+        registry.submit_default_scene_activation.side_effect = RegistryError(
+            409, "operation_busy", "已有服务或场景操作正在执行"
+        )
+
+        with self.assertRaises(RegistryError) as raised:
+            await _submit_default_scene_when_docker_ready(
+                registry, timeout_seconds=1, retry_interval_seconds=0
+            )
+
+        self.assertEqual(raised.exception.code, "operation_busy")
+
+    async def test_default_scene_timeout_does_not_submit_after_deadline(self) -> None:
+        registry = MagicMock()
+        registry.submit_default_scene_activation.side_effect = RegistryError(
+            409, "docker_handoff_busy",
+            "Docker 正在执行开机或登录会话交接，请稍后重试",
+        )
+
+        with self.assertRaises(RegistryError) as raised:
+            await _submit_default_scene_when_docker_ready(
+                registry, timeout_seconds=0, retry_interval_seconds=10
+            )
+
+        self.assertEqual(raised.exception.code, "docker_handoff_timeout")
+        self.assertEqual(registry.submit_default_scene_activation.call_count, 1)
+
+    async def test_lock_open_error_is_not_reported_as_busy(self) -> None:
+        lock = ManagerInstanceLock(self.database.path)
+        with patch.object(Path, "open", side_effect=PermissionError("denied")):
+            with self.assertRaises(RegistryError) as raised:
+                lock.acquire()
+        self.assertEqual(raised.exception.code, "manager_lock_failed")
+
+    @unittest.skipUnless(os.name == "nt", "需要 Windows 文件共享锁")
+    async def test_dotnet_exclusive_file_share_is_reported_as_busy(self) -> None:
+        lock = ManagerInstanceLock(
+            self.database.path,
+            suffix=".docker-handoff.lock",
+            busy_code="docker_handoff_busy",
+            busy_message="Docker 正在执行开机或登录会话交接，请稍后重试",
+        )
+        command = (
+            "$stream = [System.IO.File]::Open($env:AXIS_TEST_LOCK_PATH, 'OpenOrCreate', "
+            "'ReadWrite', 'None'); "
+            "try { [Console]::Out.WriteLine('READY'); "
+            "[Console]::Out.Flush(); Start-Sleep -Seconds 10 } "
+            "finally { $stream.Dispose() }"
+        )
+        blocker = subprocess.Popen(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            env={**os.environ, "AXIS_TEST_LOCK_PATH": str(lock.path)},
+        )
+        try:
+            self.assertEqual(blocker.stdout.readline().strip(), "READY")
+            self.assertIsNone(blocker.poll())
+            with self.assertRaises(RegistryError) as raised:
+                lock.acquire()
+            self.assertEqual(raised.exception.code, "docker_handoff_busy")
+        finally:
+            lock.release()
+            blocker.terminate()
+            blocker.communicate(timeout=5)
 
     async def test_status_probe_and_action_are_serialized_per_service(self) -> None:
         runner = BlockingStatusRunner()

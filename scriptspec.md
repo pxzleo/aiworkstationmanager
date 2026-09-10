@@ -82,6 +82,7 @@ manage.cmd status
 - 失败时必须返回非零退出码，并优先把简短、明确的失败原因写入标准错误。
 - 默认动作超时时间为 600 秒。
 - 对自有 Windows `portproxy` 的 WSL 服务，`start` 必须先读取目标发行版当前 IPv4，并只刷新该服务固定监听地址和端口的映射；不得因规则名称或监听存在就沿用重启前的旧目标，也不得覆盖形态不符合该服务固定映射的未知规则。
+- 已登记转发目标正确但监听丢失时，管理器及服务公共脚本必须校验归属后仅重建该条映射一次，再验证 IP Helper 实际监听；不得直接返回成功或仅重复检查，也不得重启整个 IP Helper。未知进程、冲突监听、未知目标及查询失败必须明确失败。4090/3090 NInfer、IndexTTS、SenseVoice 与其他显式登记的 WSL 转发遵循同一规则。
 - 动作脚本不能以前台方式永久占用并一直不退出：
   - `start` 应启动后台服务，等待其达到可用状态后退出。
   - `stop` 应等待服务真正停止后退出。
@@ -203,7 +204,27 @@ echo unknown
 exit /b 0
 ```
 
-## 9. 登记信息与脚本的边界
+## 9. Docker Desktop 登录启动脚本
+
+`Start-DockerDesktop.ps1` 同时供开机后台任务和登录界面任务调用，并遵循以下约束：
+
+- `Backend` 模式由 `Docker-Desktop-PreLogon` 以 AtStartup、S4U 运行，直接启动 Docker Desktop 后台并等待 WSL2 Engine；Engine 已可用时直接成功，检测到正在启动的 Docker 进程时只等待，禁止清理正在使用的套接字。
+- `Desktop` 模式由 `Docker-Desktop-Interactive` 以 AtLogOn、Interactive、Highest 运行。若 Engine 位于 Session 0，脚本读取当前固定接入的全部 WSL 模型与小智服务状态，并结合 AXIS 数据库中的 `desired_state` 区分正在启动与正在停止的服务，只记录期望运行的服务，同时记录正在运行的容器；任一服务状态为 `unknown` 或登记状态缺失时拒绝中断后台。随后停止后台实例、清理临时套接字，在当前交互会话启动并等待 Engine，逐项恢复原运行容器，再通过既有服务管理脚本逐项恢复所记录的 WSL 服务及其端口转发；单项失败不阻止其余对象恢复，最终汇总错误并返回失败。Docker 已在当前会话时只请求显示 Dashboard。新增 WSL 服务时必须显式加入固定恢复清单，不能从可写文件或脚本内容动态执行任意路径。
+- 两种模式使用 `data\workstation-manager.docker-handoff.lock` 文件锁跨任务互斥，并在取得锁后重新读取 Engine 和进程状态；AXIS 的服务与场景操作在完整生命周期持有同一锁，避免快速登录任务与场景切换交叉修改服务状态或套接字。
+- 登录交接必须在停止 Session 0 前将容器 ID 与固定服务名称原子写入 `%LOCALAPPDATA%\Docker\axis-handoff.json`；只接受格式正确的容器 ID 和固定白名单服务名。容器恢复后必须由 `docker inspect` 确认为 running，服务恢复后必须由固定脚本的 `status` 确认为 running；全部复核成功后才能删除清单。任务中断或自动重试时继续该清单，恢复动作必须可重复执行。
+- 检测到其他会话 Docker 进程但 Engine 在 150 秒内仍未就绪时必须失败关闭，不得在旧进程仍存在时并行启动当前会话 Docker Desktop。
+- 仅隔离 `%LOCALAPPDATA%\Docker\run` 和 `%LOCALAPPDATA%\docker-secrets-engine` 中名称白名单内的临时 AF_UNIX 套接字；出现未知文件时明确失败。
+- 同一次启动同时处理 Ingest 与 Secrets Engine 临时目录，避免修复一个套接字后在下一个套接字再次失败。
+- 最多等待 150 秒确认 Docker Engine 可响应，成功和失败都写入 `%LOCALAPPDATA%\Docker\axis-startup.log`。
+- 所有 Engine、容器枚举与容器恢复命令必须显式使用本机 `desktop-linux` context，不能受用户当前 Docker context 影响；`docker desktop stop` 仍只管理本机 Docker Desktop。
+- `Start-Manager.ps1` 必须在启动 AXIS Python 进程和提交默认场景前等待本机 `desktop-linux` Engine，最多 210 秒；等待期间不得获取 Docker/AXIS 共享交接锁。这样两个 AtStartup 任务同时触发时，Docker 后台先完成启动，AXIS 才能开始场景操作；超时必须明确失败。
+- AXIS 应用启动后若且仅若默认场景提交返回 `docker_handoff_busy`，必须最多等待 300 秒并每 2 秒重试；这覆盖登录任务在 Engine 短暂就绪后立即开始 Session 0 交接的窗口。其他错误不得重试或隐藏，等待超时必须返回 `docker_handoff_timeout`。
+- AXIS 计划任务失败后每分钟重试，最多 3 次；`Start-Manager.ps1` 的启动阶段异常必须写入 `logs\manager-startup.log` 并保持非零退出码，不能只留下计划任务结果码。
+- 不修改 Docker 镜像、容器、数据盘、WSL 发行版或 restart policy；登录交接只恢复交接前正在运行或启动中的固定依赖服务，不启动交接前已停止的服务。
+
+`Install-DockerDesktopTask.ps1` 安装或更新上述两个固定任务，并在写入后核对触发器、登录类型和登录任务最高权限。任务不保存 Windows 密码。
+
+## 10. 登记信息与脚本的边界
 
 以下信息由用户在管理器页面中填写，不会传给脚本：
 
@@ -219,7 +240,7 @@ exit /b 0
 
 脚本负责真实服务的启动、停止、重启和深度状态判断。GPU 选择、进程管理、依赖检查和服务自身日志等具体实现仍由脚本自行完成。
 
-## 10. 接入前检查清单
+## 11. 接入前检查清单
 
 在登记脚本前，建议在普通 PowerShell 或命令提示符中逐项测试：
 

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
@@ -99,4 +100,31 @@ test('English main README and Chinese README keep previews and script specificat
   assert.ok(chinese.includes('[scriptspec.md](scriptspec.md)'));
   assert.ok(english.includes('[scriptspec.md](scriptspec.md)'));
   assert.ok(english.includes('[简体中文](README.zh-CN.md)'));
+});
+
+test('Docker handoff fails closed and verifies every restored object before clearing its manifest', () => {
+  const script = read('Start-DockerDesktop.ps1');
+  const waitFailure = script.indexOf("throw '其他会话的 Docker 后台在 150 秒内未就绪，拒绝启动并行桌面实例'");
+  const desktopStart = script.indexOf('Start-Process -FilePath $dockerDesktop', waitFailure);
+  assert.ok(waitFailure >= 0, 'Docker handoff must fail when another session never becomes ready');
+  assert.ok(desktopStart > waitFailure, 'the fail-closed check must precede desktop startup');
+
+  const restoreStart = script.indexOf('function Restore-PendingHandoff');
+  const manifestRemoval = script.indexOf('Remove-Item -LiteralPath $handoffPath -Force', restoreStart);
+  const serviceRestoreStart = script.indexOf('function Restore-DependentServices');
+  const serviceVerification = script.indexOf('-File $service.Script status', serviceRestoreStart);
+  const containerVerification = script.indexOf("inspect --format '{{.State.Running}}'", restoreStart);
+  assert.ok(manifestRemoval > restoreStart);
+  assert.ok(containerVerification > restoreStart && containerVerification < manifestRemoval);
+  assert.ok(serviceVerification > serviceRestoreStart && serviceVerification < restoreStart);
+  assert.ok(read('scriptspec.md').includes('全部复核成功后才能删除清单'));
+  assert.ok(read('REQUIREMENTS.md').includes('其他会话 Engine 等待超时必须失败关闭'));
+});
+
+test('Docker handoff PowerShell behavior keeps an unverified recovery manifest', { skip: process.platform !== 'win32' }, () => {
+  const result = spawnSync('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', path.join(root, 'tests', 'start_docker_desktop.test.ps1'),
+  ], { cwd: root, encoding: 'utf8' });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
