@@ -23,5 +23,14 @@
   "manager_log_backup_count": 5,
   "setup_disabled": false,
   "allowed_public_origins": [],
-  "trusted_proxy_ips": []
+  "trusted_proxy_ips": [],
+  "comfyui_base_url": "http://127.0.0.1:8189",
+  "ninfer_base_url": "http://127.0.0.1:8080",
+  "ninfer_model_id": "qwen3.8-27b",
+  "video_output_directory": "outputs/video-jobs",
+  "video_job_poll_interval_seconds": 2,
+  "video_job_idle_timeout_seconds": 3600,
+  "video_job_scene_timeout_seconds": 1200,
+  "video_job_generation_timeout_seconds": 7200,
+  "video_submit_token": "replace-with-a-long-random-local-token"
 }

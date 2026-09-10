@@ -73,10 +73,10 @@ Creating or updating a service requires the complete object. `description`, `gpu
 
 `name` is at most 100 characters, `description` at most 1000, `script_path` is an existing absolute `.ps1`, `.cmd`, or `.bat` path, `gpu_label` is at most 100 characters, `port` is `1..65535`, and `ui_url` is empty or a complete HTTP/HTTPS URL. When `wsl_portproxy_enabled` is enabled, the manager reconciles all declared Windows `portproxy` entries at manager startup and before any service starts or restarts, and removes the old mapping when the registration is disabled, changed, or deleted. It only updates or removes a target recorded by its own previous successful synchronization and refuses to operate on unknown mappings. Success also requires IP Helper to own the actual listener. The listen address must be `0.0.0.0`, loopback, or a private IPv4 address. A missing listen port defaults to the service port, and a missing WSL target port defaults to the listen port.
 
-Creating or updating a scene uses ordered `service_ids` that contain no unknown service. Duplicate IDs are reduced to their first occurrence. `description` is the card's short introduction with a 1,000-character limit; `detailed_description` is a separate detailed usage field with an 8,000-character limit:
+Creating or updating a scene uses ordered `service_ids` that contain no unknown service. Duplicate IDs are reduced to their first occurrence. `description` is the card's short introduction with a 1,000-character limit; `detailed_description` is a separate detailed usage field with an 8,000-character limit. `purpose` is empty, `code_agent`, or `video_gen`; each non-empty purpose can be assigned to only one scene and is selected by the user in the scene editor:
 
 ```json
-{"name":"Development","description":"Development services","detailed_description":"API Base: http://127.0.0.1:8080/v1","service_ids":["service-id-1","service-id-2"]}
+{"name":"Development","description":"Development services","detailed_description":"API Base: http://127.0.0.1:8080/v1","purpose":"code_agent","service_ids":["service-id-1","service-id-2"]}
 ```
 
 Scene reorder `scene_ids` must contain every existing scene ID exactly once:
@@ -146,6 +146,33 @@ When a health endpoint is unreachable, AXIS combines the result with desired sta
 | POST | `/api/v1/operations/{id}/cancel` | Cancel steps that have not started |
 | GET | `/api/v1/audit` | Read audit events |
 
+### Video jobs
+
+| Method | Path | Description |
+| --- | --- | --- |
+| POST | `/api/v1/video-jobs` | Submit a persistent video job from loopback with the dedicated Bearer token; repeated `idempotency_key` values are idempotent |
+| GET | `/api/v1/video-jobs` | List jobs for an authenticated user; `limit` defaults to 100 and ranges from `1..500` |
+| GET | `/api/v1/video-jobs/{id}` | Read one job, phase, `prompt_id`, progress, and output |
+| POST | `/api/v1/video-jobs/{id}/cancel` | Request cancellation of a queued or running job |
+
+The submission body references resources already prepared by OpenCode; AXIS does not create prompts, reference images, audio, or workflows:
+
+```json
+{
+  "idempotency_key": "project-session-video-001",
+  "session_id": "ses_xxx",
+  "workflow_path": "D:\\AIWork\\job\\h3-api-workflow.json",
+  "output_path": "D:\\AIWork\\job\\final.mp4",
+  "callback_url": "http://127.0.0.1:61714",
+  "callback_authorization": "Basic <temporary credential>",
+  "callback_directory": "D:\\AIWork\\job"
+}
+```
+
+`workflow_path` must be an existing absolute JSON path containing the ComfyUI API workflow `prompt` object. Its contents are snapshotted into the persistent job at submission, so later file changes cannot alter queued work. `output_path` is optional; when supplied it must be absolute and existing files are never overwritten, otherwise output is saved below `video_output_directory/<job_id>/`. Video data is streamed into a same-directory temporary file and atomically renamed. `callback_url` must be a loopback base without credentials, path, query, or fragment, and `callback_directory` can preserve the original OpenCode working directory. After cleanup AXIS calls OpenCode 1.17.3 `POST /session/{sessionID}/prompt_async` with up to three bounded retries; `callback_authorization` is omitted from job queries, logs, and audit responses. Submission additionally requires `Authorization: Bearer <video_submit_token>` and is disabled while the token is empty. Listing and cancellation use the AXIS login and CSRF controls.
+
+The scheduler first acquires the exclusive RTX 4090 lease so no new manual scene switch can begin while it waits, then checks both NInfer `/slots` and `/metrics`. It activates the `video_gen` scene only after every slot is idle and both `requests_processing` and `requests_deferred` are zero. It then verifies ComfyUI `/system_stats`, submits `/prompt`, stores `prompt_id`, polls `/queue` and `/history/{prompt_id}`, and collects video through `/view`. Success, failure, and cancellation all restore the `code_agent` scene, then verify NInfer `/health`, `/v1/models`, and a real `/v1/chat/completions` request before asynchronously notifying the original `session_id`. Non-terminal jobs recover after an AXIS restart. If restart occurs between ComfyUI acceptance and durable `prompt_id` storage, AXIS recovers only through the `axis_job_id` marker in queue/history; an indeterminate submission fails explicitly and is never submitted twice.
+
 Action endpoints return asynchronous operations. The frontend uses operation details to show progress. Cancellation does not undo completed service actions. Setting a default scene does not switch immediately; on its next startup the manager submits the normal scene activation as `system/startup`. Startup controls no services when no default is configured, but it runs each read-only `status` action, retries first-pass `unknown` results once, and synchronizes explicit `running`/`stopped` results into desired state; `unhealthy`/`unknown` map desired state to `unknown`.
 
 ### Query parameters and primary responses
@@ -153,7 +180,7 @@ Action endpoints return asynchronous operations. The frontend uses operation det
 - `/api/v1/history` uses a minute-formatted `window`, defaults to `15m`, and accepts `1m..1440m`. `15m` returns raw samples, `1h` uses 15-second buckets, and `24h` uses 60-second buckets. In addition to `samples`, the response still includes `bucket_seconds`, `retention_minutes`, `stored_sample_count`, `stored_since`, and `stored_until` so clients can determine historical coverage; the current resource-monitor UI does not display this metadata.
 - Host history includes CPU load/frequency/temperature, physical/committed/page-file memory, primary physical-adapter traffic, and WSL memory/swap. `gpus` also stores memory-controller and encoder/decoder utilization, while `disks` stores per-physical-disk throughput and average latency. GPU P-State, fan, PCIe, clock-limit reasons, process ownership, and Docker container resources are live-snapshot data only and are not persisted.
 - If resource-history persistence fails, `/api/v1/health` returns `status: "degraded"`, `readiness.resource_history: "degraded"`, and a `history_persistence_error` without the underlying cause. A health-monitor loop failure adds `service_health_monitor_error` and marks `readiness.registered_services` as `degraded`. Live snapshots remain available while background tasks retry.
-- `/api/v1/operations` and `/api/v1/audit` use `limit`, default 100, range `1..500`, and return `operations` or `events` arrays respectively.
+- `/api/v1/operations`, `/api/v1/audit`, and `/api/v1/video-jobs` use `limit`, default 100, range `1..500`, and return `operations`, `events`, or `jobs` arrays respectively.
 - Login and setup return `authenticated`, `csrf_token`, and `expires_at`; `auth/me` returns `username`, `expires_at`, and a new `csrf_token`.
 - Service lists return `{"services":[...],"status_mode":"health"}`. Each service includes `desired_state` and a `status` observation with `state`, `checked_at`, `error`, and `source`. Scene lists return `{"scenes":[...]}`. Create and update endpoints return the complete resulting object.
 - Service actions, stop-all, and scene activation return `{"operation_id":"32-character hexadecimal ID","status":"queued"}`. A successful cancel request returns the same ID and `cancellation_requested`; operation details contain the operation state and step records.
@@ -191,6 +218,15 @@ WM_MANAGER_LOG_BACKUP_COUNT
 WM_SETUP_DISABLED
 WM_ALLOWED_PUBLIC_ORIGINS
 WM_TRUSTED_PROXY_IPS
+WM_COMFYUI_BASE_URL
+WM_NINFER_BASE_URL
+WM_NINFER_MODEL_ID
+WM_VIDEO_OUTPUT_DIRECTORY
+WM_VIDEO_JOB_POLL_INTERVAL_SECONDS
+WM_VIDEO_JOB_IDLE_TIMEOUT_SECONDS
+WM_VIDEO_JOB_SCENE_TIMEOUT_SECONDS
+WM_VIDEO_JOB_GENERATION_TIMEOUT_SECONDS
+WM_VIDEO_SUBMIT_TOKEN
 ```
 
 This list follows `workstation_manager/config.py`. Boolean values use `true/false`; list values use JSON or comma-separated input as required by the configuration parser. Do not commit deployment configuration containing local addresses, user data, or credentials.
@@ -199,6 +235,6 @@ This list follows `workstation_manager/config.py`. Boolean values use `true/fals
 
 ## Data and concurrency
 
-The default database is `data/workstation-manager.db`. The current schema is 22 and migrates automatically at startup. Schema 19 adds the unique scene `is_default` marker. Schema 20 adds the separate scene `detailed_description` field. Schema 21 adds the authoritative operation `total_steps` count. Schema 22 adds explicit WSL `portproxy` configuration to registered services. Existing details remain unchanged when an older client updates a scene without sending the details field. Only one manager instance may use a database at a time, preventing duplicate script execution.
+The default database is `data/workstation-manager.db`. The current schema is 23 and migrates automatically at startup. Schema 19 adds the unique scene `is_default` marker. Schema 20 adds the separate scene `detailed_description` field. Schema 21 adds the authoritative operation `total_steps` count. Schema 22 adds explicit WSL `portproxy` configuration to registered services. Schema 23 adds the user-selected unique scene `purpose`, the persistent `video_jobs` state machine, and RTX 4090 `resource_leases`. Existing details and purposes remain unchanged when an older client omits those fields. Only one manager instance may use a database at a time, preventing duplicate script execution.
 
 The service control plane stores desired and observed states separately. Scenes, the overview, and GPU service summaries use only observed state. SQLite is updated only when the state or error changes, so successful five-second checks do not write continuously. Neither scheduled resource sampling nor health monitoring runs service scripts; explicit deep checks, startup reconciliation without a default scene, and failed-action reconciliation invoke `status`. Resource sampling writes CPU, memory, and per-GPU load, VRAM, temperature, power, and graphics-clock metrics to SQLite and retains 24 hours by default; the in-memory queue remains limited to the latest 15 minutes.

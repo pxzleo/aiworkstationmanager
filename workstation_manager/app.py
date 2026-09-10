@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -29,6 +30,7 @@ from .history import Sampler, parse_window
 from .i18n import localize_error, localize_http_error
 from .manager_logging import configure_manager_logging
 from .registry import RegisteredServiceManager, RegistryError, ScriptRunner
+from .video_jobs import VideoJobError, VideoJobManager
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -71,6 +73,7 @@ class ScenePayload(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=1000)
     detailed_description: str | None = Field(default=None, max_length=8000)
+    purpose: str | None = Field(default=None, pattern=r"^(|code_agent|video_gen)$")
     service_ids: list[str] = Field(default_factory=list, max_length=1000)
 
 
@@ -82,6 +85,17 @@ class SceneOrderPayload(BaseModel):
 class ServiceActionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: str = Field(pattern=r"^(start|stop|restart)$")
+
+
+class VideoJobPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    session_id: str = Field(min_length=1, max_length=200)
+    workflow_path: str = Field(min_length=1, max_length=2048)
+    output_path: str | None = Field(default=None, max_length=2048)
+    callback_url: str = Field(min_length=1, max_length=2048)
+    callback_authorization: str = Field(default="", max_length=4096)
+    callback_directory: str | None = Field(default=None, max_length=2048)
 
 
 class RequestBodyLimitMiddleware:
@@ -167,8 +181,9 @@ def _host_services(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 
 def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
-               database: Database | None = None,
-               registry_manager: RegisteredServiceManager | None = None) -> FastAPI:
+                database: Database | None = None,
+                registry_manager: RegisteredServiceManager | None = None,
+                video_job_manager: VideoJobManager | None = None) -> FastAPI:
     resolved_settings = settings or load_settings()
     resolved_database = database or Database(
         resolved_settings.database_path,
@@ -186,6 +201,17 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         resolved_database,
         ScriptRunner(resolved_settings.script_action_timeout_seconds,
                      resolved_settings.script_status_timeout_seconds),
+    )
+    resolved_video_jobs = video_job_manager or VideoJobManager(
+        resolved_database, resolved_registry,
+        comfyui_base_url=resolved_settings.comfyui_base_url,
+        ninfer_base_url=resolved_settings.ninfer_base_url,
+        ninfer_model_id=resolved_settings.ninfer_model_id,
+        output_directory=resolved_settings.video_output_directory,
+        poll_interval_seconds=resolved_settings.video_job_poll_interval_seconds,
+        idle_timeout_seconds=resolved_settings.video_job_idle_timeout_seconds,
+        scene_timeout_seconds=resolved_settings.video_job_scene_timeout_seconds,
+        generation_timeout_seconds=resolved_settings.video_job_generation_timeout_seconds,
     )
     auth_concurrency = asyncio.Semaphore(resolved_settings.auth_concurrency_limit)
     if resolved_settings.host.lower() != "localhost" and not is_loopback(resolved_settings.host) \
@@ -206,17 +232,21 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         try:
             await resolved_registry.start()
             resolved_registry.submit_default_scene_activation()
+            await resolved_video_jobs.start()
             yield
         finally:
             try:
-                await resolved_registry.shutdown()
+                await resolved_video_jobs.shutdown()
             finally:
                 try:
-                    await resolved_sampler.stop()
+                    await resolved_registry.shutdown()
                 finally:
-                    for handler in list(manager_logger.handlers):
-                        manager_logger.removeHandler(handler)
-                        handler.close()
+                    try:
+                        await resolved_sampler.stop()
+                    finally:
+                        for handler in list(manager_logger.handlers):
+                            manager_logger.removeHandler(handler)
+                            handler.close()
 
     app = FastAPI(title="AXIS AI 工作站管理器", version=__version__, lifespan=lifespan)
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=resolved_settings.request_body_max_bytes)
@@ -226,6 +256,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     app.state.database = resolved_database
     app.state.auth = resolved_auth
     app.state.registry = resolved_registry
+    app.state.video_jobs = resolved_video_jobs
     app.state.manager_logger = manager_logger
 
     @app.exception_handler(AuthError)
@@ -248,6 +279,17 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             "database_error", "持久化操作失败", request.headers.get("accept-language")
         )
         return JSONResponse(_error_body("database_error", message, str(exc)), 500,
+                            headers={"Content-Language": language})
+
+    @app.exception_handler(VideoJobError)
+    async def video_job_error_handler(request: Request, exc: VideoJobError) -> JSONResponse:
+        status = 404 if exc.code == "video_job_not_found" else 401 if exc.code == "video_submit_unauthorized" else 503 if exc.code == "video_submit_disabled" else 409 if exc.code in {
+            "idempotency_conflict", "video_job_finished"
+        } else 422
+        message, language = localize_error(
+            exc.code, str(exc), request.headers.get("accept-language")
+        )
+        return JSONResponse(_error_body(exc.code, message), status,
                             headers={"Content-Language": language})
 
     @app.exception_handler(StarletteHTTPException)
@@ -339,10 +381,11 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         operation_error = resolved_registry.last_operation_error
         health_monitor_error = resolved_registry.last_health_error
         portproxy_error = resolved_registry.last_portproxy_error
+        video_job_error = resolved_video_jobs.last_error
         return {"version": __version__, "schema": {"api": "v1", "database": DATABASE_SCHEMA_VERSION},
                 "status": "healthy" if sampler_running and not sampler_error and not collector_errors
                 and not history_persistence_error and not operation_error
-                and not health_monitor_error and not portproxy_error else "degraded",
+                and not health_monitor_error and not portproxy_error and not video_job_error else "degraded",
                 "sampler_running": sampler_running,
                 "sampler_error": public_sampler_error,
                 "collector_errors": collector_errors,
@@ -350,6 +393,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
                 "service_operation_error": operation_error,
                 "service_health_monitor_error": health_monitor_error,
                 "wsl_portproxy_error": portproxy_error,
+                "video_job_scheduler_error": video_job_error,
                 "service_status_mode": "health",
                 "sampled_at": resolved_sampler.current.get("sampled_at")
                 if resolved_sampler.current else None,
@@ -360,7 +404,8 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
                               else "degraded",
                               "registered_services": "ready"
                               if not operation_error and not health_monitor_error
-                              and not portproxy_error else "degraded"}}
+                              and not portproxy_error else "degraded",
+                              "video_jobs": "ready" if not video_job_error else "degraded"}}
 
     @app.get("/api/v1/auth/status")
     async def auth_status(request: Request) -> dict[str, bool]:
@@ -587,6 +632,50 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     async def operations(limit: int = Query(default=100, ge=1, le=500),
                          _: AuthenticatedSession = Depends(require_session)) -> dict[str, Any]:
         return {"operations": resolved_database.list_operations(limit), "limit": limit}
+
+    @app.post("/api/v1/video-jobs", status_code=202)
+    async def submit_video_job(
+        payload: VideoJobPayload, request: Request, response: Response,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> dict[str, Any]:
+        if not is_loopback(_client_ip(request)):
+            raise VideoJobError("loopback_required", "视频任务只允许从本机提交")
+        expected_token = resolved_settings.video_submit_token
+        if not expected_token:
+            raise VideoJobError("video_submit_disabled", "尚未配置本机视频任务提交令牌")
+        supplied = authorization.removeprefix("Bearer ") if authorization else ""
+        if not hmac.compare_digest(supplied.encode("utf-8"), expected_token.encode("utf-8")):
+            raise VideoJobError("video_submit_unauthorized", "视频任务提交令牌无效")
+        job, created = resolved_video_jobs.submit(payload.model_dump())
+        response.status_code = 202 if created else 200
+        return {"job": job, "created": created}
+
+    @app.get("/api/v1/video-jobs")
+    async def video_jobs(
+        limit: int = Query(default=100, ge=1, le=500),
+        _: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, Any]:
+        return {"jobs": resolved_database.list_video_jobs(limit), "limit": limit}
+
+    @app.get("/api/v1/video-jobs/{job_id}")
+    async def video_job(
+        job_id: str, _: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, Any]:
+        if re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
+            raise VideoJobError("video_job_not_found", "视频任务不存在")
+        job = resolved_database.get_video_job(job_id)
+        if job is None:
+            raise VideoJobError("video_job_not_found", "视频任务不存在")
+        return job
+
+    @app.post("/api/v1/video-jobs/{job_id}/cancel", status_code=202)
+    async def cancel_video_job(
+        job_id: str, request: Request,
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        if re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
+            raise VideoJobError("video_job_not_found", "视频任务不存在")
+        return resolved_video_jobs.cancel(job_id, session.username, _client_ip(request))
 
     @app.get("/api/v1/audit")
     async def audit(limit: int = Query(default=100, ge=1, le=500),

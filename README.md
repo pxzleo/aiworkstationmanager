@@ -32,6 +32,8 @@ AXIS unifies the services of an AI workstation and organizes them into different
 - Start, stop, restart, and deep-check one service, or stop all services
 - Detect external starts, stops, failures, and unexpected exits through lightweight local health checks
 - Create and reorder scenes that switch an ordered group of services
+- Submit, cancel, and monitor every stage of local video generation on a dedicated Video Jobs page
+- Serialize Code Agent and Video Gen scenes with an exclusive GPU lease, then restore and verify NInfer
 - Monitor CPU, memory, and every detected NVIDIA GPU in distinct sections with consistent scales, current/average/peak/minimum values, and key hardware metrics
 - Record service actions and scene-switch steps, times, and results
 - Use Chinese, English, or automatic browser-language detection
@@ -81,6 +83,8 @@ The progress window shows every step and can cancel steps that have not started.
 
 A project can have one optional default scene. Setting it does not switch immediately; AXIS activates it the next time the manager starts. Clearing the default only removes this startup behavior and does not stop current services; on the next startup AXIS performs read-only reconciliation for every registered service without starting or stopping it.
 
+A scene can be marked for general use, `Code Agent`, or `Video Gen`; only one scene may own each specialized purpose. OpenCode can submit a ComfyUI API workflow locally with the dedicated Bearer token to `POST /api/v1/video-jobs`. AXIS persists the job, waits until NInfer has no processing or deferred requests, holds an exclusive GPU lease, switches to the video scene, monitors the ComfyUI `prompt_id`, stores the output, restores the Code Agent scene, verifies NInfer with a real inference request, and finally calls back the original OpenCode session. AXIS never switches while NInfer is busy. Version 1 accepts submissions only from the local machine; an explicit output path wins, otherwise the configured default directory is used.
+
 On a private computer or phone, select **Sign in automatically on this device** to stay signed in for 30 days. AXIS never stores the password in the browser; signing out or changing the password still revokes the session immediately.
 
 ## Common configuration
@@ -103,6 +107,10 @@ Most installations need only these fields:
 | `history_minutes` | `1440` | SQLite resource-history retention in minutes |
 | `script_status_timeout_seconds` | `3` | Per-`status` timeout for Deep Check, startup reconciliation, and failed-action reconciliation |
 | `script_action_timeout_seconds` | `600` | Service-action timeout |
+| `comfyui_base_url` | `http://127.0.0.1:8189` | Local ComfyUI API used for video jobs |
+| `ninfer_base_url` | `http://127.0.0.1:8080` | Local NInfer API used for idle checks and recovery verification |
+| `video_output_directory` | `outputs/video-jobs` | Default directory when a video job omits an output path |
+| `video_submit_token` | empty (submission disabled) | Dedicated local OpenCode submission token; at least 32 characters when enabled |
 
 Resource monitoring writes one SQLite sample every 5 seconds by default and retains the latest 24 hours. The UI supports `15m`, `1h`, and `24h`; longer windows are aggregated by the server before they are returned. For each GPU, aligned charts and a linked pointer compare core load, clock, power, and temperature, while VRAM capacity remains separate. Only the latest 15 minutes remain in memory, so 24-hour history does not create a large in-memory buffer.
 

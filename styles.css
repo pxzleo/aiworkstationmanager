@@ -836,6 +836,8 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .scene-progress-note { color: var(--muted); font-size: 9px; line-height: 1.55; }
 .operation-list { display: grid; gap: 8px; margin-bottom: 14px; }
 .operation-row { display: grid; grid-template-columns: minmax(160px, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 12px; }
+.video-job-row { grid-template-columns: minmax(220px, 1fr) auto auto auto; }
+.video-job-row .operation-summary small { overflow-wrap: anywhere; }
 .operation-row.operation-failed { border-color: rgba(239, 68, 68, .55); background: rgba(239, 68, 68, .06); }
 .operation-row > div { min-width: 0; }
 .operation-row strong, .operation-row small { display: block; }
@@ -854,6 +856,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .control-recovery-warning small { margin-top: 4px; color: #fca5a5; }
 @media (max-width: 720px) {
   .operation-row { grid-template-columns: 1fr auto; }
+  .video-job-row .video-job-cancel { justify-self: start; }
   .operation-row time { grid-column: 1 / -1; }
   .control-dialog form:not(.dialog-shell) { padding: 20px; }
   .dialog-header { min-height: 80px; padding: 18px 18px 16px; }

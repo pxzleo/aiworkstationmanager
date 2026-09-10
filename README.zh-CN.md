@@ -32,6 +32,8 @@ AXIS 将 AI 工作站的各种服务统一管理并整合进不同场景，可�
 - 启动、停止、重启、深度检查单个服务状态，以及一键停止全部服务
 - 通过低开销本机健康接口自动识别外部启停、服务异常和意外退出
 - 创建并拖动排序工作场景，一键切换一组服务
+- 在独立“视频任务”界面提交、取消并监控本地视频生成的完整阶段
+- 通过独占 GPU 租约串行切换 Code Agent 与 Video Gen 场景，完成后恢复并验证 NInfer
 - 按独立分区展示 CPU、内存及每张 NVIDIA GPU，提供统一刻度、当前/平均/峰值/最低值和关键硬件指标
 - 记录服务启停和场景切换的时间、步骤及结果
 - 支持中文、英文和浏览器语言自动检测
@@ -81,6 +83,8 @@ D:\AIWork\example\manage.ps1 status
 
 每个项目可以选择一个“默认场景”。设置后不会立即切换；AXIS 下次启动时会自动执行该场景。取消默认只清除启动设置，不会停止当前服务；下次启动时 AXIS 只读校准全部已登记服务，不会自动启停它们。
 
+场景可以标记为普通用途、`Code Agent` 或 `Video Gen`；后两种用途各只允许一个场景。OpenCode 可从本机携带专用 Bearer 令牌向 `POST /api/v1/video-jobs` 提交 ComfyUI API 工作流。AXIS 会持久化任务、等待 NInfer 完全空闲、独占 GPU、切换到视频场景、监控 ComfyUI `prompt_id`、保存输出，再恢复 Code Agent 场景并用一次真实推理验证 NInfer，最后回调原 OpenCode 会话。若 NInfer 仍有处理或排队请求，AXIS 不会切换场景。第一版只接受本机提交；显式输出路径优先，未提供时使用默认输出目录。
+
 在私人电脑或手机登录时，可以勾选“在该电脑自动登录”保持登录 30 天。AXIS 不会在浏览器中保存密码；主动退出或修改密码仍会立即撤销会话。
 
 ## 常用配置
@@ -103,6 +107,10 @@ Copy-Item .\config\settings.example.json .\config\settings.json
 | `history_minutes` | `1440` | 资源历史的 SQLite 保留时长（分钟） |
 | `script_status_timeout_seconds` | `3` | 深度检查、启动校准及失败动作校准中单个 `status` 的超时 |
 | `script_action_timeout_seconds` | `600` | 启停服务的超时 |
+| `comfyui_base_url` | `http://127.0.0.1:8189` | 视频任务使用的本机 ComfyUI API |
+| `ninfer_base_url` | `http://127.0.0.1:8080` | 空闲检查及恢复验证使用的本机 NInfer API |
+| `video_output_directory` | `outputs/video-jobs` | 视频任务未指定输出路径时的默认目录 |
+| `video_submit_token` | 空（禁用提交） | 本机 OpenCode 提交视频任务的专用令牌，启用时至少 32 字符 |
 
 资源监控默认每 5 秒写入一次 SQLite，保留最近 24 小时；页面可切换 `15m`/`1h`/`24h`，其中长时间范围由服务端聚合后返回。每张 GPU 的核心负载、频率、功率和温度使用对齐曲线与联动指针显示，显存容量单独展示。内存中只保留最近 15 分钟，不会因 24 小时历史持续占用大量内存。
 
