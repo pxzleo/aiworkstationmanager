@@ -150,7 +150,7 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/api/v1/video-jobs` | 仅限本机且需专用 Bearer 令牌提交持久化视频任务；相同 `idempotency_key` 幂等返回 |
+| POST | `/api/v1/video-jobs` | 仅限本机、无需认证地提交持久化视频任务；相同 `idempotency_key` 幂等返回 |
 | GET | `/api/v1/video-jobs` | 已登录用户查看任务列表，`limit` 默认 100、范围 `1..500` |
 | GET | `/api/v1/video-jobs/{id}` | 已登录用户查看单个任务、阶段、`prompt_id`、进度和输出 |
 | POST | `/api/v1/video-jobs/{id}/cancel` | 已登录用户请求取消排队或运行中的任务 |
@@ -164,12 +164,13 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
   "workflow_path": "D:\\AIWork\\job\\h3-api-workflow.json",
   "output_path": "D:\\AIWork\\job\\final.mp4",
   "callback_url": "http://127.0.0.1:61714",
-  "callback_authorization": "Basic <临时凭据>",
   "callback_directory": "D:\\AIWork\\job"
 }
 ```
 
-`workflow_path` 必须是现有 JSON 绝对路径，内容是 ComfyUI API workflow 的 `prompt` 对象；提交时内容会固化进任务记录，之后修改原文件不会改变已排队任务。`output_path` 可省略；指定时必须是绝对路径且不会覆盖现有文件，省略时写入 `video_output_directory/<job_id>/`。视频以分块方式写入同目录临时文件，再原子改名。`callback_url` 只允许无路径、查询、片段或凭据的 loopback 地址，`callback_directory` 可传递原 OpenCode 工作目录。AXIS 在收尾后调用 OpenCode 1.17.3 的 `POST /session/{sessionID}/prompt_async`，瞬时失败最多退避重试三次；`callback_authorization` 不会出现在任务查询、日志或审计响应中。提交接口还必须携带 `Authorization: Bearer <video_submit_token>`；令牌留空时接口禁用。查询和取消使用 AXIS 登录态及 CSRF。
+`workflow_path` 必须是现有 JSON 绝对路径，内容是 ComfyUI API workflow 的 `prompt` 对象；提交时内容会固化进任务记录，之后修改原文件不会改变已排队任务。`output_path` 可省略；指定时必须是绝对路径且不会覆盖现有文件，省略时写入 `video_output_directory/<job_id>/`。视频以分块方式写入同目录临时文件，再原子改名。`callback_url` 只允许无路径、查询、片段或凭据的 loopback 地址，`callback_directory` 可传递原 OpenCode 工作目录。提交和回调均不携带认证信息；AXIS 在收尾后调用 OpenCode 插件的本机回调桥，瞬时失败最多退避重试三次。查询和取消仍使用 AXIS 管理界面的登录态及 CSRF。
+
+`integrations/opencode/plugins/axis-video.ts` 注册 `axis_video_submit` 工具并自动读取当前 `sessionID` 与工作目录，同时在随机 loopback 端口创建无认证回调桥；收到 AXIS 结果后通过 OpenCode 内部客户端继续原会话。运行 `integrations/opencode/Install-AxisVideo.ps1` 可把插件和 `axis-video` Skill 安装到当前用户的 OpenCode 配置目录，重启 OpenCode 后生效。
 
 调度器先获取 RTX 4090 独占租约，阻止等待期间出现新的人工场景切换，再同时检查 NInfer `/slots` 和 `/metrics`；只有所有 slot 空闲且 `requests_processing=0`、`requests_deferred=0` 才切换 `video_gen` 场景。随后验证 ComfyUI `/system_stats`、通过 `/prompt` 获取 `prompt_id`、轮询 `/queue` 与 `/history/{prompt_id}`、通过 `/view` 收集视频。成功、失败和取消都进入 `code_agent` 场景恢复，再验证 NInfer `/health`、`/v1/models` 和真实 `/v1/chat/completions` 请求，最后异步回调原 `session_id`。AXIS 重启时恢复非终态任务；若重启发生在提交请求与 `prompt_id` 落库之间，只从 ComfyUI queue/history 的 `axis_job_id` 恢复，无法确认时明确失败并拒绝重复提交。
 
@@ -226,7 +227,6 @@ WM_VIDEO_JOB_POLL_INTERVAL_SECONDS
 WM_VIDEO_JOB_IDLE_TIMEOUT_SECONDS
 WM_VIDEO_JOB_SCENE_TIMEOUT_SECONDS
 WM_VIDEO_JOB_GENERATION_TIMEOUT_SECONDS
-WM_VIDEO_SUBMIT_TOKEN
 ```
 
 列表与 `workstation_manager/config.py` 保持一致。布尔值使用 `true/false`，列表值按配置解析器要求传入 JSON 或逗号分隔内容。不要在仓库中提交包含本机地址、用户数据或凭据的正式配置。
@@ -235,6 +235,6 @@ WM_VIDEO_SUBMIT_TOKEN
 
 ## 数据与并发
 
-默认数据库是 `data/workstation-manager.db`，当前 schema 为 23，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置；schema 23 增加用户选择且唯一的场景 `purpose`、持久化 `video_jobs` 状态机和 RTX 4090 `resource_leases`。旧客户端更新场景时若未提交详细说明或用途字段，已有值会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
+默认数据库是 `data/workstation-manager.db`，当前 schema 为 24，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置；schema 23 增加用户选择且唯一的场景 `purpose`、持久化 `video_jobs` 状态机和 RTX 4090 `resource_leases`；schema 24 删除视频任务的回调认证字段。旧客户端更新场景时若未提交详细说明或用途字段，已有值会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
 
 服务控制面分别保存期望状态和实际观察状态。场景、总览及 GPU 服务摘要只使用实际观察状态；状态或错误变化时才写入 SQLite，连续成功检查不会每 5 秒写盘。资源监控定时采样和健康监控都不会调用服务脚本；显式深度检查、无默认场景的启动校准及失败动作校准才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留 24 小时；内存队列固定只保留最近 15 分钟。

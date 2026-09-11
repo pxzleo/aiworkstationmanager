@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hmac
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -122,7 +121,6 @@ class VideoJobPayload(BaseModel):
     workflow_path: str = Field(min_length=1, max_length=2048)
     output_path: str | None = Field(default=None, max_length=2048)
     callback_url: str = Field(min_length=1, max_length=2048)
-    callback_authorization: str = Field(default="", max_length=4096)
     callback_directory: str | None = Field(default=None, max_length=2048)
 
 
@@ -311,7 +309,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
 
     @app.exception_handler(VideoJobError)
     async def video_job_error_handler(request: Request, exc: VideoJobError) -> JSONResponse:
-        status = 404 if exc.code == "video_job_not_found" else 401 if exc.code == "video_submit_unauthorized" else 503 if exc.code == "video_submit_disabled" else 409 if exc.code in {
+        status = 404 if exc.code == "video_job_not_found" else 409 if exc.code in {
             "idempotency_conflict", "video_job_finished"
         } else 422
         message, language = localize_error(
@@ -664,16 +662,9 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     @app.post("/api/v1/video-jobs", status_code=202)
     async def submit_video_job(
         payload: VideoJobPayload, request: Request, response: Response,
-        authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> dict[str, Any]:
         if not is_loopback(_client_ip(request)):
             raise VideoJobError("loopback_required", "视频任务只允许从本机提交")
-        expected_token = resolved_settings.video_submit_token
-        if not expected_token:
-            raise VideoJobError("video_submit_disabled", "尚未配置本机视频任务提交令牌")
-        supplied = authorization.removeprefix("Bearer ") if authorization else ""
-        if not hmac.compare_digest(supplied.encode("utf-8"), expected_token.encode("utf-8")):
-            raise VideoJobError("video_submit_unauthorized", "视频任务提交令牌无效")
         job, created = resolved_video_jobs.submit(payload.model_dump())
         response.status_code = 202 if created else 200
         return {"job": job, "created": created}

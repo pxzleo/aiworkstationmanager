@@ -291,8 +291,6 @@ class OpenCodeCallbackClient:
             query = "?" + urlencode({"directory": job["callback_directory"]})
         url = f"{base_url}/session/{quote(job['session_id'], safe='')}/prompt_async{query}"
         headers = {"Content-Type": "application/json"}
-        if job.get("callback_authorization"):
-            headers["Authorization"] = job["callback_authorization"]
         body = json.dumps({"parts": [{"type": "text", "text": message}]}, ensure_ascii=False).encode()
         request = Request(url, data=body, headers=headers, method="POST")
         try:
@@ -386,17 +384,11 @@ class VideoJobManager:
         callback_directory = str(payload.get("callback_directory") or "").strip() or None
         if callback_directory and not Path(callback_directory).is_absolute():
             raise VideoJobError("invalid_callback_directory", "callback_directory 必须是绝对路径")
-        authorization = str(payload.get("callback_authorization") or "")
-        if "\r" in authorization or "\n" in authorization:
-            raise VideoJobError("invalid_callback_authorization", "callback_authorization 不能包含换行")
         canonical = {
             "session_id": session_id, "workflow_path": str(workflow_path.resolve()),
             "output_path": output_text, "callback_url": callback_url,
             "callback_directory": callback_directory,
             "workflow_sha256": workflow_sha256,
-            "callback_authorization_sha256": hashlib.sha256(
-                authorization.encode("utf-8")
-            ).hexdigest(),
         }
         payload_hash = hashlib.sha256(
             json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -407,7 +399,7 @@ class VideoJobManager:
             "workflow_path": canonical["workflow_path"],
             "workflow_json": workflow_json,
             "requested_output_path": output_text or None, "callback_url": callback_url,
-            "callback_authorization": authorization, "callback_directory": callback_directory,
+            "callback_directory": callback_directory,
         })
         if item["payload_hash"] != payload_hash:
             raise VideoJobError(
@@ -547,7 +539,7 @@ class VideoJobManager:
         self, job_id: str, outcome: str, output_path: str | None,
         error_code: str | None, error_summary: str | None,
     ) -> None:
-        job = self.database.get_video_job(job_id, include_secret=True)
+        job = self.database.get_video_job(job_id, include_internal=True)
         if job is None:
             raise DatabaseError("视频任务在回调前消失")
         def callback_message() -> str:
@@ -650,7 +642,7 @@ class VideoJobManager:
         if initial_phase == "collecting_output" and initial_job.get("output_path") \
                 and Path(initial_job["output_path"]).is_file():
             self.database.update_video_job(job_id, result="succeeded")
-            resumed = self.database.get_video_job(job_id, include_secret=True)
+            resumed = self.database.get_video_job(job_id, include_internal=True)
             if resumed is None:
                 raise DatabaseError("视频任务在输出恢复时消失")
             await self._resume_cleanup(resumed)

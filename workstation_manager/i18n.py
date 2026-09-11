@@ -71,9 +71,6 @@ ENGLISH_ERROR_MESSAGES = {
     "validation_error": "The request parameters are invalid.",
     "video_job_finished": "The video job has already finished.",
     "video_job_not_found": "The video job was not found.",
-    "video_submit_disabled": "Local video job submission is disabled until a token is configured.",
-    "video_submit_unauthorized": "The video job submission token is invalid.",
-    "invalid_callback_authorization": "The callback authorization value must not contain newlines.",
     "weak_password": "The password must contain at least 4 characters.",
 }
 

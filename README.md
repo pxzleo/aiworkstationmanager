@@ -83,7 +83,15 @@ The progress window shows every step and can cancel steps that have not started.
 
 A project can have one optional default scene. Setting it does not switch immediately; AXIS activates it the next time the manager starts. Clearing the default only removes this startup behavior and does not stop current services; on the next startup AXIS performs read-only reconciliation for every registered service without starting or stopping it.
 
-A scene can be marked for general use, `Code Agent`, or `Video Gen`; only one scene may own each specialized purpose. OpenCode can submit a ComfyUI API workflow locally with the dedicated Bearer token to `POST /api/v1/video-jobs`. AXIS persists the job, waits until NInfer has no processing or deferred requests, holds an exclusive GPU lease, switches to the video scene, monitors the ComfyUI `prompt_id`, stores the output, restores the Code Agent scene, verifies NInfer with a real inference request, and finally calls back the original OpenCode session. AXIS never switches while NInfer is busy. Version 1 accepts submissions only from the local machine; an explicit output path wins, otherwise the configured default directory is used.
+A scene can be marked for general use, `Code Agent`, or `Video Gen`; only one scene may own each specialized purpose. OpenCode submits a ComfyUI API workflow directly to the local `POST /api/v1/video-jobs` endpoint through the bundled `axis_video_submit` tool, with no token, username, password, or authorization header. AXIS persists the job, waits until NInfer has no processing or deferred requests, holds an exclusive GPU lease, switches to the video scene, monitors the ComfyUI `prompt_id`, stores the output, restores the Code Agent scene, verifies NInfer with a real inference request, and finally calls back through the plugin's loopback bridge to the original OpenCode session. AXIS never switches while NInfer is busy. Version 1 accepts submissions only from the local machine; an explicit output path wins, otherwise the configured default directory is used.
+
+Install the OpenCode integration, then restart OpenCode:
+
+```powershell
+.\integrations\opencode\Install-AxisVideo.ps1
+```
+
+OpenCode can then prepare the ComfyUI API workflow and call `axis_video_submit`. The plugin obtains the current session ID and directory automatically, while the AXIS Video Jobs page shows progress and the final result returns to the original session.
 
 On a private computer or phone, select **Sign in automatically on this device** to stay signed in for 30 days. AXIS never stores the password in the browser; signing out or changing the password still revokes the session immediately.
 
@@ -110,7 +118,6 @@ Most installations need only these fields:
 | `comfyui_base_url` | `http://127.0.0.1:8189` | Local ComfyUI API used for video jobs |
 | `ninfer_base_url` | `http://127.0.0.1:8080` | Local NInfer API used for idle checks and recovery verification |
 | `video_output_directory` | `outputs/video-jobs` | Default directory when a video job omits an output path |
-| `video_submit_token` | empty (submission disabled) | Dedicated local OpenCode submission token; at least 32 characters when enabled |
 
 Resource monitoring writes one SQLite sample every 5 seconds by default and retains the latest 24 hours. The UI supports `15m`, `1h`, and `24h`; longer windows are aggregated by the server before they are returned. For each GPU, aligned charts and a linked pointer compare core load, clock, power, and temperature, while VRAM capacity remains separate. Only the latest 15 minutes remain in memory, so 24-hour history does not create a large in-memory buffer.
 

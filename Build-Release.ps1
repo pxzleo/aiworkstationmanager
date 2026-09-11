@@ -21,7 +21,10 @@ $files = @(
     "scriptspec.md", "SCRIPT_REQUIREMENTS.en.md",
     "requirements.txt", "Start-Manager.ps1", "Start-Manager.cmd", "Install-ManagerTask.ps1",
     "Uninstall-ManagerTask.ps1", "Build-Release.ps1", ".gitignore",
-    "config\settings.example.json"
+    "config\settings.example.json",
+    "integrations\opencode\Install-AxisVideo.ps1",
+    "integrations\opencode\plugins\axis-video.ts",
+    "integrations\opencode\skills\axis-video\SKILL.md"
 )
 $files += Get-ChildItem -LiteralPath (Join-Path $projectRoot "workstation_manager") -Filter "*.py" | ForEach-Object {
     "workstation_manager\$($_.Name)"
