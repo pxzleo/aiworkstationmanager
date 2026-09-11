@@ -85,7 +85,7 @@ D:\AIWork\example\manage.ps1 status
 
 场景不再设置 `Code Agent` 或 `Video Gen` 类型；场景编辑器只提供“默认生成场景”勾选项，且最多勾选一个。OpenCode 通过随项目提供的 `axis_video_submit` 工具向本机 `POST /api/v1/video-jobs` 直接提交 ComfyUI API 工作流，无需配置密钥、用户名、密码或认证头。调用时可指定生成场景名称；未指定时使用默认生成场景。AXIS 会持久化任务、记录当前原场景、等待 NInfer 完全空闲、独占 GPU、切换到生成场景、监控 ComfyUI `prompt_id`、保存输出，再自动恢复原场景，最后通过插件建立的本机回调桥返回原 OpenCode 会话。若 NInfer 仍有处理或排队请求，AXIS 不会切换场景。第一版只接受本机提交；显式输出路径优先，未提供时使用默认输出目录。
 
-安装 OpenCode 集成后重启 OpenCode：
+安装 OpenCode 集成后重启 OpenCode。安装脚本会部署项目内随附的 `axis-video` 调度 Skill、`h3-ref2v-video-pipeline` 工作流 Skill（含去敏 4/8 步基线及构建、提交与收尾脚本）以及 `axis-video` 插件：
 
 ```powershell
 .\integrations\opencode\Install-AxisVideo.ps1

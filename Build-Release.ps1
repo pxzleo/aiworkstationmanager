@@ -24,7 +24,15 @@ $files = @(
     "config\settings.example.json",
     "integrations\opencode\Install-AxisVideo.ps1",
     "integrations\opencode\plugins\axis-video.ts",
-    "integrations\opencode\skills\axis-video\SKILL.md"
+    "integrations\opencode\skills\axis-video\SKILL.md",
+    "integrations\opencode\skills\h3-ref2v-video-pipeline\SKILL.md",
+    "integrations\opencode\skills\h3-ref2v-video-pipeline\assets\h3-ref2v-4step-api.json",
+    "integrations\opencode\skills\h3-ref2v-video-pipeline\assets\h3-ref2v-8step-api.json",
+    "integrations\opencode\skills\h3-ref2v-video-pipeline\scripts\build_api.py",
+    "integrations\opencode\skills\h3-ref2v-video-pipeline\scripts\build_api_batch.py",
+    "integrations\opencode\skills\h3-ref2v-video-pipeline\scripts\finish_video.py",
+    "integrations\opencode\skills\h3-ref2v-video-pipeline\scripts\submit_multi.ps1",
+    "integrations\opencode\skills\h3-ref2v-video-pipeline\scripts\submit_wait.ps1"
 )
 $files += Get-ChildItem -LiteralPath (Join-Path $projectRoot "workstation_manager") -Filter "*.py" | ForEach-Object {
     "workstation_manager\$($_.Name)"

@@ -85,7 +85,7 @@ A project can have one optional default scene. Setting it does not switch immedi
 
 Scenes no longer have `Code Agent` or `Video Gen` types. The scene editor only adds a single **Default generation scene** checkbox, and at most one scene can be selected. OpenCode submits a ComfyUI API workflow directly to the local `POST /api/v1/video-jobs` endpoint through the bundled `axis_video_submit` tool, with no token, username, password, or authorization header. A request may name its generation scene; otherwise AXIS uses the default generation scene. AXIS persists the job and original active scene, waits until NInfer has no processing or deferred requests, holds an exclusive GPU lease, switches to the generation scene, monitors the ComfyUI `prompt_id`, stores the output, restores the original scene, and finally calls back through the plugin's loopback bridge to the original OpenCode session. AXIS never switches while NInfer is busy. Version 1 accepts submissions only from the local machine; an explicit output path wins, otherwise the configured default directory is used.
 
-Install the OpenCode integration, then restart OpenCode:
+Install the OpenCode integration, then restart OpenCode. The installer deploys the bundled `axis-video` scheduling Skill, the `h3-ref2v-video-pipeline` workflow Skill with sanitized 4/8-step baselines and its build/submission/finishing scripts, and the `axis-video` plugin:
 
 ```powershell
 .\integrations\opencode\Install-AxisVideo.ps1
