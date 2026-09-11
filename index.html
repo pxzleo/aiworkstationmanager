@@ -8,7 +8,7 @@
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
   <script src="theme.js?v=20260828-1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260912-4">
+  <link rel="stylesheet" href="styles.css?v=20260912-5">
 </head>
 <body class="auth-pending">
   <svg class="svg-sprite" aria-hidden="true">
@@ -149,8 +149,8 @@
         </section>
 
         <section class="page" id="page-video-jobs" data-title="视频任务">
-          <div class="page-heading"><div><p class="eyebrow">RTX 4090 串行调度</p><h1>视频任务</h1><p>任务仅由本机 OpenCode 提交；这里显示完整阶段、ComfyUI prompt_id、输出和恢复结果，并允许取消。</p></div><div class="heading-actions"><span class="status-label partial" id="videoQueuedSegments" data-i18n-skip>等待处理：0 段</span><button class="button secondary" id="refreshVideoJobsButton">刷新任务</button></div></div>
-          <div class="status-banner" id="videoJobNotice">AXIS 会等待 NInfer 空闲后切换到生成场景；批次逐段串行、每段释放生成显存，批尾统一恢复原场景并回调 OpenCode。</div>
+          <div class="page-heading"><div><p class="eyebrow">RTX 4090 串行调度</p><h1>视频任务</h1><p>任务仅由本机 OpenCode 提交；这里显示生成阶段、输出和恢复结果，并允许取消。</p></div><div class="heading-actions"><span class="status-label partial" id="videoQueuedSegments" data-i18n-skip>等待处理：0 段</span><button class="button secondary" id="refreshVideoJobsButton">刷新任务</button></div></div>
+          <div class="status-banner" id="videoJobNotice">AXIS 会等待开发服务空闲后切换到生成场景；批次逐段处理，完成后自动恢复原场景并通知 OpenCode。</div>
           <section class="operation-list video-job-list" id="videoJobList" aria-live="polite"><p class="empty-state">尚无视频任务。</p></section>
         </section>
 
@@ -311,10 +311,10 @@
       <div class="dialog-actions"><button class="button secondary" id="cancelSceneSwitchButton" type="button">终止切换并返回</button><button class="button primary" id="closeSceneProgressButton" type="button" hidden>返回工作场景</button></div>
     </section>
   </dialog>
-  <script src="i18n.js?v=20260912-4"></script>
+  <script src="i18n.js?v=20260912-5"></script>
   <script src="request-guard.js?v=20260827-5"></script>
   <script src="gpu-layout.js?v=20260828-1"></script>
   <script src="monitor-chart.js?v=20260828-6"></script>
-  <script src="app.js?v=20260912-4"></script>
+  <script src="app.js?v=20260912-5"></script>
 </body>
 </html>
