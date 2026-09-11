@@ -848,6 +848,11 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .video-job-progress small { margin: 0; }
 .video-job-progress > i { height: 5px; overflow: hidden; border-radius: 999px; background: rgba(148, 163, 184, .18); }
 .video-job-progress > i > b { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .25s ease; }
+.video-job-realtime { display: grid; gap: 4px; margin-top: 4px; padding-top: 7px; border-top: 1px solid rgba(148, 163, 184, .16); }
+.video-job-realtime > span { display: flex; justify-content: space-between; gap: 12px; color: var(--text); font-size: 11px; }
+.video-job-realtime > i { height: 5px; overflow: hidden; border-radius: 999px; background: rgba(56, 189, 248, .14); }
+.video-job-realtime > i > b { display: block; height: 100%; border-radius: inherit; background: #38bdf8; transition: width .2s linear; }
+.video-job-realtime .video-job-realtime-unavailable { color: var(--muted); }
 .operation-row.operation-failed { border-color: rgba(239, 68, 68, .55); background: rgba(239, 68, 68, .06); }
 .operation-row > div { min-width: 0; }
 .operation-row strong, .operation-row small { display: block; }

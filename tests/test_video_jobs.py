@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from workstation_manager.app import create_app
 from workstation_manager.config import Settings
-from workstation_manager.database import Database
+from workstation_manager.database import Database, DatabaseError
 from workstation_manager.history import Sampler
 from workstation_manager.registry import RegisteredServiceManager, RegistryError
 from workstation_manager.video_jobs import (
@@ -74,6 +75,42 @@ class CompletedComfy:
 
     def release_memory(self) -> None:
         self.release_calls += 1
+
+
+class RealtimeComfy(CompletedComfy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.status_calls = 0
+
+    def status(self, prompt_id: str) -> dict:
+        self.status_calls += 1
+        if self.status_calls == 1:
+            return {"state": "running", "queue_position": 0}
+        return super().status(prompt_id)
+
+    async def progress_events(self, job_id: str, prompt_id: str):
+        yield {
+            "available": True, "kind": "sampling", "node_id": "3",
+            "value": 5, "max": 8, "percent": 62.5,
+        }
+        await asyncio.Future()
+
+
+class RecordingProgressConnection:
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+
+class PreconnectedComfy(CompletedComfy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.connection = RecordingProgressConnection()
+
+    async def connect_progress(self, job_id: str):
+        return self.connection
 
 
 class RecordingCallback:
@@ -445,6 +482,66 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         running.http = QueueHttp(running=True)
         running.cancel("prompt-1")
         self.assertEqual(running.http.calls, [("POST", "/interrupt")])
+
+    def test_comfy_progress_event_is_prompt_scoped_and_validated(self) -> None:
+        event = ComfyUIClient._progress_event(json.dumps({
+            "type": "progress", "data": {
+                "prompt_id": "prompt-1", "node": "3", "value": 5, "max": 8,
+            },
+        }), "prompt-1")
+        self.assertEqual(event, {
+            "available": True, "kind": "sampling", "node_id": "3",
+            "value": 5, "max": 8, "percent": 62.5,
+        })
+        self.assertIsNone(ComfyUIClient._progress_event(json.dumps({
+            "type": "progress", "data": {
+                "prompt_id": "other", "node": "3", "value": 5, "max": 8,
+            },
+        }), "prompt-1"))
+        self.assertIsNone(ComfyUIClient._progress_event(json.dumps({
+            "type": "progress", "data": {"node": "3", "value": 5, "max": 8},
+        }), "prompt-1"))
+        self.assertIsNone(ComfyUIClient._progress_event(json.dumps({
+            "type": "progress", "data": {
+                "prompt_id": "prompt-1", "node": "3", "value": 9, "max": 8,
+            },
+        }), "prompt-1"))
+        self.assertIsNone(ComfyUIClient._progress_event(json.dumps({
+            "type": "progress", "data": {
+                "prompt_id": "prompt-1", "node": "3", "value": 1,
+                "max": int("9" * 4000),
+            },
+        }), "prompt-1"))
+
+    async def test_monitor_persists_realtime_sampling_and_compact_completion(self) -> None:
+        comfy = RealtimeComfy()
+        manager = self.manager(comfy=comfy)
+        manager.poll_interval_seconds = 0.05
+        job, _ = manager.submit(self.payload("realtime-progress"))
+        record = await manager._monitor_prompt(
+            job["id"], "prompt-1", {"3": "H3 采样器"},
+        )
+        self.assertIn("outputs", record)
+        progress = self.database.get_video_job(job["id"])["progress"]
+        self.assertEqual(progress["state"], "completed")
+        self.assertNotIn("record", progress)
+        self.assertEqual(progress["realtime"], {
+            "available": True, "kind": "sampling", "node_id": "3",
+            "node_name": "H3 采样器", "value": 5, "max": 8, "percent": 62.5,
+            "updated_at": progress["realtime"]["updated_at"],
+        })
+
+    async def test_preconnected_progress_closes_when_prompt_persistence_fails(self) -> None:
+        comfy = PreconnectedComfy()
+        manager = self.manager(comfy=comfy)
+        with patch.object(
+            self.database, "update_video_job", side_effect=DatabaseError("write failed"),
+        ):
+            with self.assertRaises(DatabaseError):
+                await manager._submit_and_monitor_prompt(
+                    "a" * 32, {"1": {"class_type": "Test"}}, {},
+                )
+        self.assertEqual(comfy.connection.close_calls, 1)
 
     async def test_success_waits_for_idle_collects_output_restores_and_callbacks(self) -> None:
         ninfer = IdleNInfer([

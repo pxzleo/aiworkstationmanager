@@ -4,14 +4,19 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import re
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
+
+from websockets.asyncio.client import connect as websocket_connect
+from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
 
 from .database import Database, DatabaseError, utc_now
 from .registry import RegisteredServiceManager, RegistryError
@@ -144,6 +149,77 @@ class ComfyUIClient:
         if not isinstance(prompt_id, str) or not prompt_id:
             raise VideoJobError("comfy_prompt_missing", "ComfyUI 提交响应缺少 prompt_id")
         return prompt_id
+
+    @staticmethod
+    def _progress_event(message: str, prompt_id: str) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(message)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+            return None
+        data = payload["data"]
+        event_prompt_id = data.get("prompt_id")
+        if event_prompt_id is None or str(event_prompt_id) != prompt_id:
+            return None
+        event_type = str(payload.get("type") or "")
+        node_id = str(data["node"]) if data.get("node") is not None else None
+        if event_type == "progress":
+            value = data.get("value")
+            maximum = data.get("max")
+            if isinstance(value, bool) or isinstance(maximum, bool) \
+                    or not isinstance(value, (int, float)) \
+                    or not isinstance(maximum, (int, float)) \
+                    or isinstance(value, float) and not math.isfinite(value) \
+                    or isinstance(maximum, float) and not math.isfinite(maximum) \
+                    or not 0 <= value <= maximum <= 1_000_000_000 \
+                    or maximum <= 0:
+                return None
+            return {
+                "available": True, "kind": "sampling", "node_id": node_id,
+                "value": value, "max": maximum,
+                "percent": round(value / maximum * 100, 1),
+            }
+        if event_type == "executing" and node_id is not None:
+            return {"available": True, "kind": "node", "node_id": node_id}
+        return None
+
+    def _websocket_url(self, job_id: str) -> str:
+        parsed = urlsplit(self.http.base_url)
+        scheme = "wss" if parsed.scheme == "https" else "ws"
+        client_id = quote(f"axis-{job_id}", safe="")
+        return f"{scheme}://{parsed.netloc}/ws?clientId={client_id}"
+
+    async def connect_progress(self, job_id: str):
+        return await websocket_connect(
+            self._websocket_url(job_id), open_timeout=self.http.timeout_seconds,
+            close_timeout=2, ping_interval=20, ping_timeout=20,
+            max_size=1024 * 1024,
+        )
+
+    async def progress_events(self, job_id: str, prompt_id: str, connection=None):
+        pending_connection = connection
+        while True:
+            try:
+                websocket = pending_connection or await self.connect_progress(job_id)
+                pending_connection = None
+                try:
+                    yield {"available": True, "kind": "connected"}
+                    async for message in websocket:
+                        if not isinstance(message, str):
+                            continue
+                        event = self._progress_event(message, prompt_id)
+                        if event is not None:
+                            yield event
+                finally:
+                    await websocket.close()
+                yield {"available": False, "kind": "disconnected"}
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionClosed, InvalidHandshake, InvalidURI, OSError, TimeoutError):
+                yield {"available": False, "kind": "disconnected"}
+                await asyncio.sleep(1)
 
     @staticmethod
     def _queue_entry_prompt_id(entry: Any) -> str | None:
@@ -631,6 +707,23 @@ class VideoJobManager:
                 "一个 H3 工作流只允许一个生成分支；请将各视频段拆成独立任务，由 AXIS 串行执行",
             )
 
+    @staticmethod
+    def _workflow_node_names(workflow_json: str) -> dict[str, str]:
+        try:
+            workflow = json.loads(workflow_json)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        if not isinstance(workflow, dict):
+            return {}
+        names: dict[str, str] = {}
+        for node_id, node in workflow.items():
+            if not isinstance(node, dict):
+                continue
+            meta = node.get("_meta")
+            title = meta.get("title") if isinstance(meta, dict) else None
+            names[str(node_id)] = str(title or node.get("class_type") or node_id)
+        return names
+
     def _check_resource_headroom(self) -> None:
         if self.resource_snapshot is None:
             raise VideoJobError(
@@ -705,20 +798,112 @@ class VideoJobManager:
             return path / Path(filename).name
         return path
 
-    async def _monitor_prompt(self, job_id: str, prompt_id: str) -> dict[str, Any]:
+    async def _monitor_prompt(
+        self, job_id: str, prompt_id: str, node_names: dict[str, str],
+        progress_connection=None,
+    ) -> dict[str, Any]:
         deadline = asyncio.get_running_loop().time() + self.generation_timeout_seconds
-        while True:
-            if await self._cancel_requested(job_id):
-                await asyncio.to_thread(self.comfy.cancel, prompt_id)
-                raise VideoJobError("cancelled", "用户取消了视频任务")
-            status = await asyncio.to_thread(self.comfy.status, prompt_id)
-            self.database.update_video_job(job_id, progress=status)
-            if status["state"] == "completed":
-                return status["record"]
-            if asyncio.get_running_loop().time() >= deadline:
-                await asyncio.to_thread(self.comfy.cancel, prompt_id)
-                raise VideoJobError("generation_timeout", "ComfyUI 视频生成超时并已请求取消")
-            await asyncio.sleep(self.poll_interval_seconds)
+        realtime: dict[str, Any] = {
+            "available": False, "kind": "connecting", "updated_at": utc_now(),
+        }
+        last_status: dict[str, Any] = {"state": "running"}
+        events: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1)
+        progress_events = getattr(self.comfy, "progress_events", None)
+
+        async def listen() -> None:
+            if not callable(progress_events):
+                await events.put({"available": False, "kind": "unsupported"})
+                return
+            try:
+                args = (job_id, prompt_id, progress_connection) \
+                    if progress_connection is not None else (job_id, prompt_id)
+                async for event in progress_events(*args):
+                    if events.full():
+                        with suppress(asyncio.QueueEmpty):
+                            events.get_nowait()
+                    events.put_nowait(event)
+            except asyncio.CancelledError:
+                raise
+            except (VideoJobError, OSError, ValueError, TypeError):
+                if events.full():
+                    with suppress(asyncio.QueueEmpty):
+                        events.get_nowait()
+                events.put_nowait({"available": False, "kind": "disconnected"})
+
+        listener = asyncio.create_task(listen())
+        loop = asyncio.get_running_loop()
+        next_poll = loop.time()
+        last_realtime_write = 0.0
+        try:
+            while True:
+                if await self._cancel_requested(job_id):
+                    await asyncio.to_thread(self.comfy.cancel, prompt_id)
+                    raise VideoJobError("cancelled", "用户取消了视频任务")
+                now = loop.time()
+                if now >= next_poll:
+                    status = await asyncio.to_thread(self.comfy.status, prompt_id)
+                    if status["state"] == "completed":
+                        self.database.update_video_job(
+                            job_id, progress={"state": "completed", "realtime": realtime},
+                        )
+                        return status["record"]
+                    last_status = status
+                    self.database.update_video_job(
+                        job_id, progress={**last_status, "realtime": realtime},
+                    )
+                    next_poll = loop.time() + self.poll_interval_seconds
+                if loop.time() >= deadline:
+                    await asyncio.to_thread(self.comfy.cancel, prompt_id)
+                    raise VideoJobError("generation_timeout", "ComfyUI 视频生成超时并已请求取消")
+                wait_seconds = max(0.01, min(next_poll - loop.time(), deadline - loop.time()))
+                try:
+                    event = await asyncio.wait_for(events.get(), timeout=wait_seconds)
+                except asyncio.TimeoutError:
+                    continue
+                node_id = event.get("node_id")
+                if node_id is not None:
+                    event["node_name"] = node_names.get(str(node_id), str(node_id))
+                previous = {key: value for key, value in realtime.items() if key != "updated_at"}
+                changed = event != previous
+                availability_changed = event.get("available") != realtime.get("available")
+                realtime = {**event, "updated_at": utc_now()}
+                should_write = changed and (
+                    availability_changed or event.get("value") == event.get("max")
+                    or loop.time() - last_realtime_write >= 0.25
+                )
+                if should_write:
+                    self.database.update_video_job(
+                        job_id, progress={**last_status, "realtime": realtime},
+                    )
+                    last_realtime_write = loop.time()
+        finally:
+            listener.cancel()
+            with suppress(asyncio.CancelledError):
+                await listener
+
+    async def _submit_and_monitor_prompt(
+        self, job_id: str, workflow: dict[str, Any], node_names: dict[str, str],
+    ) -> tuple[str, dict[str, Any]]:
+        progress_connection = None
+        try:
+            connect_progress = getattr(self.comfy, "connect_progress", None)
+            if callable(connect_progress):
+                try:
+                    progress_connection = await connect_progress(job_id)
+                except (ConnectionClosed, InvalidHandshake, InvalidURI, OSError, TimeoutError):
+                    progress_connection = None
+            prompt_id = await asyncio.to_thread(self.comfy.submit, workflow, job_id)
+            self.database.update_video_job(
+                job_id, status="running", phase="monitoring_comfy", prompt_id=prompt_id,
+            )
+            record = await self._monitor_prompt(
+                job_id, prompt_id, node_names, progress_connection,
+            )
+            return prompt_id, record
+        finally:
+            if progress_connection is not None:
+                with suppress(ConnectionClosed, OSError, TimeoutError):
+                    await progress_connection.close()
 
     async def _deliver_callback_and_finish(
         self, job_id: str, outcome: str, output_path: str | None,
@@ -969,15 +1154,16 @@ class VideoJobManager:
                     raise VideoJobError("workflow_snapshot_invalid", "持久化工作流快照格式无效")
                 self._validate_workflow_safety(workflow)
                 self.database.update_video_job(job_id, status="submitting", phase="submitting")
-                prompt_id = await asyncio.to_thread(self.comfy.submit, workflow, job_id)
-                self.database.update_video_job(
-                    job_id, status="running", phase="monitoring_comfy", prompt_id=prompt_id
+                node_names = self._workflow_node_names(initial_job.get("workflow_json", ""))
+                prompt_id, record = await self._submit_and_monitor_prompt(
+                    job_id, workflow, node_names,
                 )
             else:
                 self.database.update_video_job(
                     job_id, status="running", phase="restart_monitoring_comfy", prompt_id=prompt_id
                 )
-            record = await self._monitor_prompt(job_id, prompt_id)
+                node_names = self._workflow_node_names(initial_job.get("workflow_json", ""))
+                record = await self._monitor_prompt(job_id, prompt_id, node_names)
             if await self._cancel_requested(job_id):
                 raise VideoJobError("cancelled", "用户在输出收集前取消了视频任务")
             descriptor = self.comfy.output_descriptor(record)

@@ -178,7 +178,7 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 
 `integrations/opencode/plugins/axis-video.ts` 注册单任务 `axis_video_submit` 和多段 `axis_video_submit_batch` 工具并自动读取当前 `sessionID` 与工作目录，同时在随机 loopback 端口创建无认证回调桥；收到 AXIS 汇总结果后通过 OpenCode 内部客户端继续原会话。运行 `integrations/opencode/Install-AxisVideo.ps1` 可把插件和 `axis-video` Skill 安装到当前用户的 OpenCode 配置目录，重启 OpenCode 后输入“使用场景切换技能生成视频”即可触发。
 
-调度器先获取 RTX 4090 独占租约并持久化当前完整激活的原场景，阻止等待期间出现新的人工场景切换，再同时检查 NInfer `/slots` 和 `/metrics`；只有所有 slot 空闲且 `requests_processing=0`、`requests_deferred=0` 才切换到请求指定的生成场景，未指定时切换到默认生成场景。随后验证 ComfyUI `/system_stats`、通过 `/prompt` 获取 `prompt_id`、轮询 `/queue` 与 `/history/{prompt_id}`、通过 `/view` 收集视频。成功、失败和取消都恢复持久化的原场景，最后异步回调原 `session_id`。AXIS 重启时恢复非终态任务；若重启发生在提交请求与 `prompt_id` 落库之间，只从 ComfyUI queue/history 的 `axis_job_id` 恢复，无法确认时明确失败并拒绝重复提交。
+调度器先获取 RTX 4090 独占租约并持久化当前完整激活的原场景，阻止等待期间出现新的人工场景切换，再同时检查 NInfer `/slots` 和 `/metrics`；只有所有 slot 空闲且 `requests_processing=0`、`requests_deferred=0` 才切换到请求指定的生成场景，未指定时切换到默认生成场景。随后验证 ComfyUI `/system_stats`、通过 `/prompt` 获取 `prompt_id`，使用任务专属 `client_id` 连接 `/ws` 接收按 `prompt_id` 过滤的当前节点和真实 `value/max` 采样进度，同时继续轮询 `/queue` 与 `/history/{prompt_id}`作为完成、失败及断线兜底，最后通过 `/view` 收集视频。成功、失败和取消都恢复持久化的原场景，最后异步回调原 `session_id`。AXIS 重启时恢复非终态任务；若重启发生在提交请求与 `prompt_id` 落库之间，只从 ComfyUI queue/history 的 `axis_job_id` 恢复，无法确认时明确失败并拒绝重复提交。
 
 动作接口返回异步操作；前端通过操作详情展示进度。取消不会撤销已经完成的服务动作。设置默认场景本身不会立即切换；管理器下次启动后以 `system/startup` 提交普通场景切换操作。没有默认场景时启动过程不控制任何服务，但会逐个执行只读 `status` 并对第一轮的 `unknown` 重试一次，再把明确的 `running`/`stopped` 同步为期望状态；`unhealthy`/`unknown` 对应期望状态 `unknown`。
 
