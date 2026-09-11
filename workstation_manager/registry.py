@@ -963,14 +963,24 @@ class RegisteredServiceManager:
             return None
         return scene
 
+    def _scene_managed_service_ids(self) -> set[str]:
+        return {
+            service_id
+            for scene in self.database.list_scenes()
+            for service_id in scene["service_ids"]
+        }
+
     def _scene_with_state(self, scene: dict[str, Any] | None) -> dict[str, Any]:
         if scene is None:
             raise RegistryError(404, "scene_not_found", "场景不存在")
         target = set(scene["service_ids"])
+        managed = self._scene_managed_service_ids()
         services = self.database.list_registered_services()
         matches = True
         target_running = False
         for service in services:
+            if service["id"] not in managed:
+                continue
             state = self.statuses.get(service["id"], {}).get("state", "unknown")
             if service["id"] in target:
                 matches = matches and state == "running"
@@ -1239,10 +1249,12 @@ class RegisteredServiceManager:
         before = {key: value.get("state", "unknown") for key, value in self.statuses.items()}
         target_ids = list(scene["service_ids"])
         target = set(target_ids)
+        managed = self._scene_managed_service_ids()
         services = {item["id"]: item for item in self.database.list_registered_services()}
         stop_targets = [
             service for service in services.values()
-            if service["id"] not in target
+            if service["id"] in managed
+            and service["id"] not in target
             and self.statuses.get(service["id"], {}).get("state") != "stopped"
         ]
         start_targets = [
@@ -1261,7 +1273,7 @@ class RegisteredServiceManager:
             if cancel_event.is_set():
                 cancelled = True
                 break
-            if service["id"] not in target and self.statuses.get(
+            if service["id"] in managed and service["id"] not in target and self.statuses.get(
                 service["id"], {}
             ).get("state") != "stopped":
                 sequence += 1

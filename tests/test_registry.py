@@ -930,6 +930,10 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
              "service_ids": [third["id"], second["id"], stopped["id"]]},
             "admin", "local",
         )
+        self.manager.create_scene(
+            {"name": "旧场景", "description": "", "service_ids": [first["id"]]},
+            "admin", "local",
+        )
         self.runner.calls.clear()
         operation = self.manager.submit_scene_activation(scene["id"], "admin", "local")
         result = await self.wait_operation(operation)
@@ -967,6 +971,10 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         scene = manager.create_scene(
             {"name": "状态变化场景", "description": "",
              "service_ids": [initially_running["id"], initially_stopped["id"]]},
+            "admin", "local",
+        )
+        manager.create_scene(
+            {"name": "外部服务场景", "description": "", "service_ids": [outside["id"]]},
             "admin", "local",
         )
         runner.calls.clear()
@@ -1026,6 +1034,11 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
             {"name": "目标场景", "description": "", "service_ids": [target["id"]]},
             "admin", "local",
         )
+        self.manager.create_scene(
+            {"name": "异常服务场景", "description": "",
+             "service_ids": [unhealthy["id"], unknown["id"]]},
+            "admin", "local",
+        )
         self.runner.calls.clear()
 
         result = await self.wait_operation(
@@ -1038,6 +1051,26 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
             action_calls,
             [("异常.ps1", "stop"), ("未知.ps1", "stop"), ("目标.ps1", "start")],
         )
+        self.assertEqual(self.manager.list_scenes()[0]["state"], "active")
+
+    async def test_scene_ignores_unassigned_unhealthy_service(self) -> None:
+        target = await self.add_service("目标")
+        unassigned = await self.add_service("未加入场景的异常服务")
+        self.runner.states[unassigned["script_path"]] = "unhealthy"
+        await self.manager.refresh_status(unassigned)
+        scene = self.manager.create_scene(
+            {"name": "目标场景", "description": "", "service_ids": [target["id"]]},
+            "admin", "local",
+        )
+        self.runner.calls.clear()
+
+        result = await self.wait_operation(
+            self.manager.submit_scene_activation(scene["id"], "admin", "local")
+        )
+        action_calls = [call for call in self.runner.calls if call[1] in {"start", "stop"}]
+
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(action_calls, [("目标.ps1", "start")])
         self.assertEqual(self.manager.list_scenes()[0]["state"], "active")
 
     async def test_scene_exposes_service_status_and_ui(self) -> None:
@@ -1080,7 +1113,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(scene["state"], "partial")
 
-    async def test_scene_is_partial_when_unrelated_service_is_running(self) -> None:
+    async def test_scene_ignores_unassigned_running_service_in_state(self) -> None:
         target = await self.add_service("目标")
         unrelated = await self.add_service("其他")
         self.runner.states[target["script_path"]] = "running"
@@ -1092,9 +1125,30 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
             "admin", "local",
         )
 
-        self.assertEqual(scene["state"], "partial")
+        self.assertEqual(scene["state"], "active")
 
-    async def test_empty_scene_keeps_existing_state_rules(self) -> None:
+    async def test_scene_is_partial_when_other_scene_service_is_running(self) -> None:
+        target = await self.add_service("目标")
+        other = await self.add_service("其他场景服务")
+        self.runner.states[target["script_path"]] = "running"
+        self.runner.states[other["script_path"]] = "running"
+        await self.manager.refresh_status(target)
+        await self.manager.refresh_status(other)
+        scene = self.manager.create_scene(
+            {"name": "目标场景", "description": "", "service_ids": [target["id"]]},
+            "admin", "local",
+        )
+        self.manager.create_scene(
+            {"name": "其他场景", "description": "", "service_ids": [other["id"]]},
+            "admin", "local",
+        )
+
+        self.assertEqual(
+            next(item for item in self.manager.list_scenes() if item["id"] == scene["id"])["state"],
+            "partial",
+        )
+
+    async def test_empty_scene_ignores_unassigned_running_service(self) -> None:
         running = await self.add_service("运行中")
         scene = self.manager.create_scene(
             {"name": "空场景", "description": "", "service_ids": []},
@@ -1105,7 +1159,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.runner.states[running["script_path"]] = "running"
         await self.manager.refresh_status(running)
 
-        self.assertEqual(self.manager.list_scenes()[0]["state"], "partial")
+        self.assertEqual(self.manager.list_scenes()[0]["state"], "active")
 
     async def test_stop_all_services_records_each_step(self) -> None:
         first = await self.add_service("A")
@@ -1223,6 +1277,11 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.runner.failures.add(("旧A.ps1", "stop"))
         scene = self.manager.create_scene(
             {"name": "目标场景", "description": "", "service_ids": [target["id"]]},
+            "admin", "local",
+        )
+        self.manager.create_scene(
+            {"name": "旧场景", "description": "",
+             "service_ids": [old_a["id"], old_b["id"]]},
             "admin", "local",
         )
         self.runner.calls.clear()

@@ -77,7 +77,7 @@ See [Script Requirements](SCRIPT_REQUIREMENTS.en.md) for the full contract and e
 
 ## Use scenes
 
-Create a scene in Work Scenes and select its registered services. Before switching, AXIS refreshes lightweight observed health, stops only actually running services outside the target, and starts only target services that are not already running. Target startup begins only after every required stop succeeds.
+Create a scene in Work Scenes and select its registered services. Only services assigned to at least one scene participate in scene switching. Registered services that belong to no scene remain monitored and manually controllable, but scene switching neither controls them nor includes them in scene state. Before switching, AXIS refreshes lightweight observed health, stops only running scene-managed services outside the target, and starts only target services that are not already running. Target startup begins only after every required stop succeeds.
 
 The progress window shows every step and can cancel steps that have not started. Completed service actions are not rolled back automatically.
 
