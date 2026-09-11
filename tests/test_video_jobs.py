@@ -40,6 +40,7 @@ class IdleNInfer:
 class CompletedComfy:
     def __init__(self) -> None:
         self.submit_calls = 0
+        self.release_calls = 0
         self.recovered_prompt_id: str | None = None
         self.cancel_calls: list[str] = []
 
@@ -69,6 +70,9 @@ class CompletedComfy:
 
     def cancel(self, prompt_id: str) -> None:
         self.cancel_calls.append(prompt_id)
+
+    def release_memory(self) -> None:
+        self.release_calls += 1
 
 
 class RecordingCallback:
@@ -166,7 +170,9 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def manager(self, *, ninfer=None, comfy=None, callback=None) -> VideoJobManager:
+    def manager(
+        self, *, ninfer=None, comfy=None, callback=None, resource_snapshot=None,
+    ) -> VideoJobManager:
         return VideoJobManager(
             self.database, self.registry, comfyui_base_url="http://127.0.0.1:8189",
             ninfer_base_url="http://127.0.0.1:8080", ninfer_model_id="qwen3.8-27b",
@@ -174,6 +180,13 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             idle_timeout_seconds=1, scene_timeout_seconds=1, generation_timeout_seconds=1,
             ninfer=ninfer or IdleNInfer(), comfy=comfy or CompletedComfy(),
             callback=callback or RecordingCallback(),
+            resource_snapshot=resource_snapshot or (lambda: {
+                "host": {"memory": {
+                    "available_bytes": 32 * 1024 ** 3,
+                    "commit_used_bytes": 32 * 1024 ** 3,
+                    "commit_limit_bytes": 128 * 1024 ** 3,
+                }},
+            }),
         )
 
     def payload(self, key: str = "job-key") -> dict:
@@ -284,6 +297,38 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             manager.submit(conflict)
         self.assertEqual(raised.exception.code, "idempotency_conflict")
 
+    def test_submit_rejects_multiple_h3_generation_branches(self) -> None:
+        self.workflow.write_text(json.dumps({
+            "1": {"class_type": "MiniMaxH3ReferenceToVideo"},
+            "2": {"class_type": "SamplerCustomAdvanced"},
+            "3": {"class_type": "SamplerCustomAdvanced"},
+        }), encoding="utf-8")
+
+        with self.assertRaises(VideoJobError) as raised:
+            self.manager().submit(self.payload("multi-h3"))
+
+        self.assertEqual(raised.exception.code, "h3_multi_segment_workflow")
+
+    async def test_execution_rechecks_persisted_h3_workflow_safety(self) -> None:
+        manager = self.manager()
+        job, _ = manager.submit(self.payload("persisted-multi-h3"))
+        unsafe = json.dumps({
+            "1": {"class_type": "MiniMaxH3ImageToVideo"},
+            "2": {"class_type": "SamplerCustomAdvanced"},
+            "3": {"class_type": "SamplerCustomAdvanced"},
+        })
+        with self.database.connect() as connection:
+            with connection:
+                connection.execute(
+                    "UPDATE video_jobs SET workflow_json=? WHERE id=?", (unsafe, job["id"])
+                )
+
+        await manager._process(self.database.next_video_job())
+
+        finished = self.database.get_video_job(job["id"])
+        self.assertEqual(finished["status"], "failed")
+        self.assertEqual(finished["error_code"], "h3_multi_segment_workflow")
+
     def test_ninfer_activity_requires_slots_and_queue_to_be_idle(self) -> None:
         client = NInferClient("http://127.0.0.1:8080", "qwen3.8-27b")
         client.http = FakeHttp()
@@ -334,6 +379,7 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished["prompt_id"], "prompt-1")
         self.assertTrue(Path(finished["output_path"]).is_file())
         self.assertEqual(comfy.submit_calls, 1)
+        self.assertEqual(comfy.release_calls, 1)
         self.assertEqual(comfy.last_workflow, {"1": {"class_type": "Test"}})
         self.assertEqual(ninfer.verify_calls, 0)
         self.assertEqual(finished["generation_scene_name"], "Video")
@@ -344,6 +390,30 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("已完成", callback.messages[0])
         self.assertIsNone(self.database.resource_lease_owner("gpu:4090"))
+
+    async def test_insufficient_host_memory_blocks_comfy_submission(self) -> None:
+        comfy = CompletedComfy()
+        callback = RecordingCallback()
+        manager = self.manager(
+            comfy=comfy,
+            callback=callback,
+            resource_snapshot=lambda: {
+                "host": {"memory": {
+                    "available_bytes": 8 * 1024 ** 3,
+                    "commit_used_bytes": 120 * 1024 ** 3,
+                    "commit_limit_bytes": 144 * 1024 ** 3,
+                }},
+            },
+        )
+        job, _ = manager.submit(self.payload("low-memory"))
+
+        await manager._process(self.database.next_video_job())
+
+        finished = self.database.get_video_job(job["id"])
+        self.assertEqual(finished["status"], "failed")
+        self.assertEqual(finished["error_code"], "insufficient_available_memory")
+        self.assertEqual(comfy.submit_calls, 0)
+        self.assertIn("可用物理内存", callback.messages[0])
 
     async def test_restart_recovers_prompt_without_duplicate_submit(self) -> None:
         comfy = CompletedComfy()
@@ -378,6 +448,20 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished["status"], "succeeded")
         self.assertEqual(finished["output_path"], str(output))
         self.assertEqual(comfy.submit_calls, 0)
+        self.assertEqual(comfy.release_calls, 1)
+
+    async def test_invalid_resource_snapshot_fails_without_submitting(self) -> None:
+        comfy = CompletedComfy()
+        manager = self.manager(comfy=comfy, resource_snapshot=lambda: {"host": None})
+        job, _ = manager.submit(self.payload("invalid-resource-snapshot"))
+
+        await manager._process(self.database.next_video_job())
+
+        finished = self.database.get_video_job(job["id"])
+        self.assertEqual(finished["status"], "failed")
+        self.assertEqual(finished["error_code"], "resource_metrics_unavailable")
+        self.assertEqual(comfy.submit_calls, 0)
+        self.assertIsNone(self.database.resource_lease_owner("gpu:4090"))
 
     async def test_callback_retries_are_bounded_and_visible(self) -> None:
         callback = FailingCallback()

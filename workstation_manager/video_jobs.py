@@ -8,7 +8,7 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
@@ -22,6 +22,8 @@ TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
 METRIC_RE = re.compile(r"^(?:llamacpp|ninfer):requests_(processing|deferred)\s+([0-9]+(?:\.[0-9]+)?)$")
 MAX_VIDEO_BYTES = 16 * 1024 * 1024 * 1024
+MIN_AVAILABLE_MEMORY_BYTES = 24 * 1024 * 1024 * 1024
+MIN_COMMIT_HEADROOM_BYTES = 48 * 1024 * 1024 * 1024
 
 
 class VideoJobError(RuntimeError):
@@ -223,6 +225,12 @@ class ComfyUIClient:
             return
         raise VideoJobError("comfy_cancel_unknown", "目标 prompt_id 不在 ComfyUI 队列中，拒绝全局中断")
 
+    def release_memory(self) -> None:
+        self.http.request(
+            "POST", "/free", {"unload_models": True, "free_memory": True},
+            expected=(200, 204),
+        )
+
     @staticmethod
     def output_descriptor(record: dict[str, Any]) -> dict[str, str]:
         outputs = record.get("outputs", {})
@@ -315,12 +323,14 @@ class VideoJobManager:
         scene_timeout_seconds: float = 1200.0, generation_timeout_seconds: float = 7200.0,
         comfy: ComfyUIClient | None = None, ninfer: NInferClient | None = None,
         callback: OpenCodeCallbackClient | None = None,
+        resource_snapshot: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         self.database = database
         self.registry = registry
         self.comfy = comfy or ComfyUIClient(comfyui_base_url)
         self.ninfer = ninfer or NInferClient(ninfer_base_url, ninfer_model_id)
         self.callback = callback or OpenCodeCallbackClient()
+        self.resource_snapshot = resource_snapshot
         self.output_directory = Path(output_directory)
         self.poll_interval_seconds = poll_interval_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
@@ -375,6 +385,7 @@ class VideoJobManager:
         if not workflow_path.is_file():
             raise VideoJobError("workflow_not_found", f"工作流文件不存在: {workflow_path}")
         workflow = self._load_workflow(str(workflow_path))
+        self._validate_workflow_safety(workflow)
         workflow_json = json.dumps(workflow, ensure_ascii=False, separators=(",", ":"))
         workflow_sha256 = hashlib.sha256(workflow_json.encode("utf-8")).hexdigest()
         output_text = str(payload.get("output_path") or "").strip()
@@ -538,6 +549,76 @@ class VideoJobManager:
             raise VideoJobError("workflow_invalid", "工作流 JSON 根节点必须是非空对象")
         return value
 
+    @staticmethod
+    def _validate_workflow_safety(workflow: dict[str, Any]) -> None:
+        class_types = [
+            str(node.get("class_type") or "")
+            for node in workflow.values() if isinstance(node, dict)
+        ]
+        if not any(class_type.startswith("MiniMaxH3") for class_type in class_types):
+            return
+        h3_conditioning = sum(
+            class_type.startswith("MiniMaxH3") and class_type.endswith("ToVideo")
+            for class_type in class_types
+        )
+        h3_native_samplers = sum(
+            class_type.startswith("MiniMaxH3") and "Sampler" in class_type
+            for class_type in class_types
+        )
+        advanced_samplers = class_types.count("SamplerCustomAdvanced")
+        if max(h3_conditioning, h3_native_samplers, advanced_samplers) > 1:
+            raise VideoJobError(
+                "h3_multi_segment_workflow",
+                "一个 H3 工作流只允许一个生成分支；请将各视频段拆成独立任务，由 AXIS 串行执行",
+            )
+
+    def _check_resource_headroom(self) -> None:
+        if self.resource_snapshot is None:
+            raise VideoJobError(
+                "resource_metrics_unavailable", "未配置主机资源快照，拒绝提交 H3 工作流"
+            )
+        try:
+            snapshot = self.resource_snapshot()
+        except (OSError, RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            raise VideoJobError(
+                "resource_metrics_unavailable", f"读取主机资源快照失败: {exc}"
+            ) from exc
+        if not isinstance(snapshot, dict):
+            raise VideoJobError(
+                "resource_metrics_unavailable", "主机资源快照不可用，拒绝提交 H3 工作流"
+            )
+        stale_collectors = snapshot.get("stale_collectors", {})
+        if not isinstance(stale_collectors, dict) or "snapshot" in stale_collectors:
+            raise VideoJobError(
+                "resource_metrics_unavailable", "主机资源快照已经过期，拒绝提交 H3 工作流"
+            )
+        host = snapshot.get("host")
+        memory = host.get("memory") if isinstance(host, dict) else None
+        if not isinstance(memory, dict):
+            raise VideoJobError(
+                "resource_metrics_unavailable", "主机内存资源快照格式无效，拒绝提交 H3 工作流"
+            )
+        available = memory.get("available_bytes")
+        commit_used = memory.get("commit_used_bytes")
+        commit_limit = memory.get("commit_limit_bytes")
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in (
+            available, commit_used, commit_limit,
+        )):
+            raise VideoJobError(
+                "resource_metrics_unavailable", "主机内存或提交量指标缺失，拒绝提交 H3 工作流"
+            )
+        if available < MIN_AVAILABLE_MEMORY_BYTES:
+            raise VideoJobError(
+                "insufficient_available_memory",
+                f"可用物理内存不足 24 GiB（当前 {available / 1024 ** 3:.1f} GiB），拒绝提交 H3 工作流",
+            )
+        commit_headroom = commit_limit - commit_used
+        if commit_headroom < MIN_COMMIT_HEADROOM_BYTES:
+            raise VideoJobError(
+                "insufficient_commit_headroom",
+                f"系统提交余量不足 48 GiB（当前 {commit_headroom / 1024 ** 3:.1f} GiB），拒绝提交 H3 工作流",
+            )
+
     def _target_path(self, job: dict[str, Any], filename: str) -> Path:
         requested = job.get("requested_output_path")
         if not requested:
@@ -677,7 +758,18 @@ class VideoJobManager:
             return
         if initial_phase == "collecting_output" and initial_job.get("output_path") \
                 and Path(initial_job["output_path"]).is_file():
-            self.database.update_video_job(job_id, result="succeeded")
+            outcome = "cancelled" if await self._cancel_requested(job_id) else "succeeded"
+            error_code = None
+            error_summary = None
+            try:
+                await asyncio.to_thread(self.comfy.release_memory)
+            except VideoJobError as exc:
+                outcome = "failed"
+                error_code = exc.code
+                error_summary = str(exc)
+            self.database.update_video_job(
+                job_id, result=outcome, error_code=error_code, error_summary=error_summary,
+            )
             resumed = self.database.get_video_job(job_id, include_internal=True)
             if resumed is None:
                 raise DatabaseError("视频任务在输出恢复时消失")
@@ -736,12 +828,16 @@ class VideoJobManager:
                     raise VideoJobError("cancelled", "用户在场景切换后取消了视频任务")
                 self.database.update_video_job(job_id, status="checking_comfy", phase="checking_comfy")
                 await asyncio.to_thread(self.comfy.health)
+                self._check_resource_headroom()
                 if await self._cancel_requested(job_id):
                     raise VideoJobError("cancelled", "用户在 ComfyUI 提交前取消了视频任务")
                 try:
                     workflow = json.loads(initial_job["workflow_json"])
                 except (KeyError, TypeError, json.JSONDecodeError) as exc:
                     raise VideoJobError("workflow_snapshot_invalid", "持久化工作流快照损坏") from exc
+                if not isinstance(workflow, dict) or not workflow:
+                    raise VideoJobError("workflow_snapshot_invalid", "持久化工作流快照格式无效")
+                self._validate_workflow_safety(workflow)
                 self.database.update_video_job(job_id, status="submitting", phase="submitting")
                 prompt_id = await asyncio.to_thread(self.comfy.submit, workflow, job_id)
                 self.database.update_video_job(
@@ -764,6 +860,7 @@ class VideoJobManager:
                 output_path=output_path,
             )
             await asyncio.to_thread(self.comfy.download_output, descriptor, target)
+            await asyncio.to_thread(self.comfy.release_memory)
             outcome = "cancelled" if await self._cancel_requested(job_id) else "succeeded"
         except asyncio.CancelledError:
             raise

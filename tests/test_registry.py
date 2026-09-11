@@ -1014,7 +1014,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cleared["is_default"], 0)
         self.assertIsNone(self.manager.submit_default_scene_activation())
 
-    async def test_scene_does_not_stop_unhealthy_or_unknown_services(self) -> None:
+    async def test_scene_stops_unselected_unhealthy_or_unknown_services(self) -> None:
         target = await self.add_service("目标")
         unhealthy = await self.add_service("异常")
         unknown = await self.add_service("未知")
@@ -1034,9 +1034,10 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         action_calls = [call for call in self.runner.calls if call[1] in {"start", "stop"}]
 
         self.assertEqual(result["status"], "succeeded")
-        self.assertEqual(action_calls, [("目标.ps1", "start")])
-        self.assertNotIn(("异常.ps1", "stop"), action_calls)
-        self.assertNotIn(("未知.ps1", "stop"), action_calls)
+        self.assertEqual(
+            action_calls,
+            [("异常.ps1", "stop"), ("未知.ps1", "stop"), ("目标.ps1", "start")],
+        )
         self.assertEqual(self.manager.list_scenes()[0]["state"], "active")
 
     async def test_scene_exposes_service_status_and_ui(self) -> None:

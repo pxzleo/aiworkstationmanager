@@ -1243,7 +1243,7 @@ class RegisteredServiceManager:
         stop_targets = [
             service for service in services.values()
             if service["id"] not in target
-            and self.statuses.get(service["id"], {}).get("state") == "running"
+            and self.statuses.get(service["id"], {}).get("state") != "stopped"
         ]
         start_targets = [
             services[service_id] for service_id in target_ids
@@ -1263,7 +1263,7 @@ class RegisteredServiceManager:
                 break
             if service["id"] not in target and self.statuses.get(
                 service["id"], {}
-            ).get("state") == "running":
+            ).get("state") != "stopped":
                 sequence += 1
                 stop_ok = await self._run_script_action(
                     operation_id, sequence, "stop_unselected", service, "stop"

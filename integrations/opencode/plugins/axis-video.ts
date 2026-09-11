@@ -47,7 +47,7 @@ export const AxisVideoPlugin: Plugin = async ({ client }) => {
       axis_video_submit: tool({
         description: "使用场景切换技能生成视频：将已准备好的 ComfyUI API 工作流提交给本机 AXIS，自动绑定当前 OpenCode 会话并异步回传结果。",
         args: {
-          workflow_path: tool.schema.string().describe("现有 ComfyUI API workflow JSON 的绝对路径"),
+          workflow_path: tool.schema.string().describe("仅包含一个 H3 生成分支的 ComfyUI API workflow JSON 绝对路径；多段视频需拆成多个任务，由 AXIS 串行执行"),
           output_path: tool.schema.string().optional().describe("可选的绝对输出文件路径；省略时使用 AXIS 默认目录"),
           scene_name: tool.schema.string().optional().describe("可选的生成场景名称；省略时使用 AXIS 默认生成场景"),
         },

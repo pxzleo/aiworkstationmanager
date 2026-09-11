@@ -239,6 +239,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         idle_timeout_seconds=resolved_settings.video_job_idle_timeout_seconds,
         scene_timeout_seconds=resolved_settings.video_job_scene_timeout_seconds,
         generation_timeout_seconds=resolved_settings.video_job_generation_timeout_seconds,
+        resource_snapshot=lambda: resolved_sampler.current,
     )
     auth_concurrency = asyncio.Semaphore(resolved_settings.auth_concurrency_limit)
     if resolved_settings.host.lower() != "localhost" and not is_loopback(resolved_settings.host) \
