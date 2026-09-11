@@ -14,6 +14,7 @@
     '生成场景': 'Generation scene', '原场景': 'Original scene', '等待记录': 'Pending capture',
     '等待调度': 'Waiting for scheduler', '等待 NInfer 空闲': 'Waiting for NInfer idle',
     '等待内存释放': 'Waiting for memory release',
+    'AXIS 会等待 NInfer 空闲后切换到生成场景；批次逐段串行、每段释放生成显存，批尾统一恢复原场景并回调 OpenCode。': 'AXIS waits for NInfer to become idle before switching scenes. Batch segments run serially and release generation memory after every segment; AXIS restores the original scene and calls OpenCode once at the end.',
     '切换生成场景': 'Switching generation scene', '检查 ComfyUI': 'Checking ComfyUI',
     '提交工作流': 'Submitting workflow', 'ComfyUI 生成中': 'Generating in ComfyUI',
     '收集输出': 'Collecting output', '恢复原场景': 'Restoring original scene',
