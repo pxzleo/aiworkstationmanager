@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -10,7 +11,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 
 class DatabaseError(RuntimeError):
@@ -26,6 +27,16 @@ def utc_now() -> str:
 
 
 class Database:
+    VIDEO_JOB_LIST_COLUMNS = ",".join((
+        "id", "idempotency_key", "payload_hash", "session_id", "workflow_path",
+        "video_spec", "requested_output_path", "callback_url", "callback_directory",
+        "status", "phase", "prompt_id", "output_path", "result", "progress",
+        "error_code", "error_summary", "cancel_requested", "callback_attempts",
+        "created_at", "updated_at", "started_at", "finished_at",
+        "generation_scene_id", "generation_scene_name", "original_scene_id",
+        "original_scene_name", "batch_id", "batch_index", "batch_size",
+    ))
+
     def __init__(
         self,
         path: Path,
@@ -109,6 +120,7 @@ class Database:
                         24: self._migrate_to_24,
                         25: self._migrate_to_25,
                         26: self._migrate_to_26,
+                        27: self._migrate_to_27,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -529,6 +541,7 @@ class Database:
                 session_id TEXT NOT NULL,
                 workflow_path TEXT NOT NULL,
                 workflow_json TEXT NOT NULL,
+                video_spec TEXT NOT NULL DEFAULT '{}',
                 requested_output_path TEXT,
                 callback_url TEXT NOT NULL,
                 callback_authorization TEXT NOT NULL DEFAULT '',
@@ -685,6 +698,24 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_video_jobs_batch_index "
             "ON video_jobs(batch_id,batch_index)"
         )
+
+    @classmethod
+    def _migrate_to_27(cls, connection: sqlite3.Connection) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_jobs'"
+        ).fetchone()
+        if table is None:
+            return
+        cls._ensure_column(connection, "video_jobs", "video_spec", "TEXT NOT NULL DEFAULT '{}'")
+        cursor = connection.execute("SELECT id,workflow_json FROM video_jobs")
+        while rows := cursor.fetchmany(8):
+            connection.executemany(
+                "UPDATE video_jobs SET video_spec=? WHERE id=?",
+                [
+                    (json.dumps(cls._video_spec(row["workflow_json"]), separators=(",", ":")), row["id"])
+                    for row in rows
+                ],
+            )
 
     @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
@@ -1669,9 +1700,74 @@ class Database:
             raise DatabaseError(f"保存场景排序失败: {exc}") from exc
 
     @staticmethod
+    def _video_spec(workflow_json: str) -> dict[str, Any]:
+        try:
+            workflow = json.loads(workflow_json)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        if not isinstance(workflow, dict):
+            return {}
+
+        video_inputs: dict[str, Any] = {}
+        fps: float | None = None
+        steps: int | None = None
+        for node in workflow.values():
+            if not isinstance(node, dict):
+                continue
+            class_type = str(node.get("class_type") or "")
+            inputs = node.get("inputs")
+            if not isinstance(inputs, dict):
+                continue
+            if class_type.startswith("MiniMaxH3") and all(
+                name in inputs for name in ("width", "height", "length")
+            ):
+                video_inputs = inputs
+            if class_type == "CreateVideo":
+                fps = Database._finite_number(inputs.get("fps"), 0, 1000)
+            elif class_type == "VHS_VideoCombine":
+                fps = Database._finite_number(inputs.get("frame_rate"), 0, 1000)
+            if class_type == "BasicScheduler" or class_type.startswith("MiniMaxH3") \
+                    and "Sampler" in class_type:
+                steps = Database._bounded_int(inputs.get("steps"), 1, 10_000)
+
+        def positive_int(name: str) -> int | None:
+            maximum = 1_000_000 if name == "length" else 16_384
+            return Database._bounded_int(video_inputs.get(name), 1, maximum)
+
+        width = positive_int("width")
+        height = positive_int("height")
+        frames = positive_int("length")
+        duration_value = frames / fps if frames is not None and fps else None
+        duration = round(duration_value, 3) \
+            if duration_value is not None and math.isfinite(duration_value) else None
+        return {
+            "width": width, "height": height, "frames": frames,
+            "fps": fps, "duration_seconds": duration, "steps": steps,
+        }
+
+    @staticmethod
+    def _finite_number(value: Any, minimum: float, maximum: float) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        try:
+            number = float(value)
+        except OverflowError:
+            return None
+        return number if math.isfinite(number) and minimum < number <= maximum else None
+
+    @staticmethod
+    def _bounded_int(value: Any, minimum: int, maximum: int) -> int | None:
+        return value if isinstance(value, int) and not isinstance(value, bool) \
+            and minimum <= value <= maximum else None
+
+    @staticmethod
     def _decode_video_job(row: sqlite3.Row, *, include_internal: bool = False) -> dict[str, Any]:
         item = dict(row)
         item["cancel_requested"] = bool(item["cancel_requested"])
+        try:
+            item["video_spec"] = json.loads(item.get("video_spec") or "{}")
+        except json.JSONDecodeError as exc:
+            raise DatabaseError(f"视频任务规格数据损坏: {exc}") from exc
         if item.get("progress"):
             try:
                 item["progress"] = json.loads(item["progress"])
@@ -1697,14 +1793,15 @@ class Database:
                         return self._decode_video_job(existing), False
                     connection.execute(
                         """INSERT INTO video_jobs(
-                               id,idempotency_key,payload_hash,session_id,workflow_path,workflow_json,
+                               id,idempotency_key,payload_hash,session_id,workflow_path,workflow_json,video_spec,
                                requested_output_path,callback_url,callback_directory,
                                generation_scene_id,generation_scene_name,
                                status,phase,created_at,updated_at
-                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             item["id"], item["idempotency_key"], item["payload_hash"],
                             item["session_id"], item["workflow_path"], item["workflow_json"],
+                            json.dumps(self._video_spec(item["workflow_json"]), separators=(",", ":")),
                              item.get("requested_output_path"), item["callback_url"],
                              item.get("callback_directory"),
                              item["generation_scene_id"], item["generation_scene_name"],
@@ -1744,13 +1841,14 @@ class Database:
                         connection.execute(
                             """INSERT INTO video_jobs(
                                    id,idempotency_key,payload_hash,session_id,workflow_path,
-                                   workflow_json,requested_output_path,callback_url,
+                                   workflow_json,video_spec,requested_output_path,callback_url,
                                    callback_directory,generation_scene_id,generation_scene_name,
                                    batch_id,batch_index,batch_size,status,phase,created_at,updated_at
-                               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                             (
                                 item["id"], item["idempotency_key"], item["payload_hash"],
                                 item["session_id"], item["workflow_path"], item["workflow_json"],
+                                json.dumps(self._video_spec(item["workflow_json"]), separators=(",", ":")),
                                 item.get("requested_output_path"), item["callback_url"],
                                 item.get("callback_directory"), item["generation_scene_id"],
                                 item["generation_scene_name"], item["batch_id"],
@@ -1783,7 +1881,8 @@ class Database:
         try:
             with self.connect() as connection:
                 rows = connection.execute(
-                    "SELECT * FROM video_jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+                    f"SELECT {self.VIDEO_JOB_LIST_COLUMNS} FROM video_jobs "
+                    "ORDER BY created_at DESC LIMIT ?", (limit,)
                 ).fetchall()
             return [self._decode_video_job(row) for row in rows]
         except sqlite3.Error as exc:

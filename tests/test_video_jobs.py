@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -253,6 +254,68 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             }
         self.assertNotIn("callback_authorization", columns)
         self.assertTrue({"batch_id", "batch_index", "batch_size"}.issubset(columns))
+
+    def test_video_job_exposes_workflow_video_spec(self) -> None:
+        self.workflow.write_text(json.dumps({
+            "1": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+                "width": 768, "height": 1344, "length": 175,
+            }},
+            "2": {"class_type": "CreateVideo", "inputs": {"fps": 24.0}},
+            "3": {"class_type": "BasicScheduler", "inputs": {"steps": 8}},
+        }), encoding="utf-8")
+        job, _ = self.manager().submit(self.payload("video-spec"))
+        self.assertEqual(job["video_spec"], {
+            "width": 768, "height": 1344, "frames": 175,
+            "fps": 24.0, "duration_seconds": 7.292, "steps": 8,
+        })
+
+    def test_video_job_exposes_t8_workflow_video_spec(self) -> None:
+        self.workflow.write_text(json.dumps({
+            "1": {"class_type": "MiniMaxH3AudioConditioningT8", "inputs": {
+                "width": 1280, "height": 720, "length": 241,
+            }},
+            "2": {"class_type": "VHS_VideoCombine", "inputs": {"frame_rate": 24}},
+            "3": {"class_type": "MiniMaxH3DualClockSamplerT8", "inputs": {"steps": 16}},
+        }), encoding="utf-8")
+        job, _ = self.manager().submit(self.payload("video-spec-t8"))
+        self.assertEqual(job["video_spec"], {
+            "width": 1280, "height": 720, "frames": 241,
+            "fps": 24.0, "duration_seconds": 10.042, "steps": 16,
+        })
+
+    def test_video_spec_ignores_non_finite_and_out_of_range_values(self) -> None:
+        spec = Database._video_spec(json.dumps({
+            "1": {"class_type": "MiniMaxH3AudioConditioningT8", "inputs": {
+                "width": 10 ** 1000, "height": -1, "length": 1_000_000,
+            }},
+            "2": {"class_type": "CreateVideo", "inputs": {"fps": 5e-324}},
+            "3": {"class_type": "BasicScheduler", "inputs": {"steps": 10001}},
+        }))
+        self.assertEqual(spec, {
+            "width": None, "height": None, "frames": 1_000_000,
+            "fps": 5e-324, "duration_seconds": None, "steps": None,
+        })
+
+    def test_video_job_list_does_not_load_full_workflow_json(self) -> None:
+        self.manager().submit(self.payload("list-without-workflow"))
+        statements: list[str] = []
+        original_connect = self.database.connect
+
+        @contextmanager
+        def traced_connect():
+            with original_connect() as connection:
+                connection.set_trace_callback(statements.append)
+                yield connection
+
+        with patch.object(self.database, "connect", traced_connect):
+            jobs = self.database.list_video_jobs()
+        select = next(statement for statement in statements if "FROM video_jobs" in statement)
+        self.assertNotIn("workflow_json", select)
+        self.assertNotIn("SELECT *", select)
+        self.assertEqual(jobs[0]["video_spec"], {
+            "width": None, "height": None, "frames": None,
+            "fps": None, "duration_seconds": None, "steps": None,
+        })
 
     def test_schema_25_migrates_legacy_scene_purposes_and_job_route(self) -> None:
         job_id = "d" * 32
