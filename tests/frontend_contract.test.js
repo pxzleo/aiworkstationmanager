@@ -290,9 +290,9 @@ test('scene editor and management log remain wired', () => {
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260911-1'));
-  assert.ok(html.includes('i18n.js?v=20260911-1'));
-  assert.ok(html.includes('app.js?v=20260911-1'));
+  assert.ok(html.includes('styles.css?v=20260911-2'));
+  assert.ok(html.includes('i18n.js?v=20260911-2'));
+  assert.ok(html.includes('app.js?v=20260911-2'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -403,9 +403,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260911-1'));
-  assert.ok(html.includes('i18n.js?v=20260911-1'));
-  assert.ok(html.includes('app.js?v=20260911-1'));
+  assert.ok(html.includes('styles.css?v=20260911-2'));
+  assert.ok(html.includes('i18n.js?v=20260911-2'));
+  assert.ok(html.includes('app.js?v=20260911-2'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
