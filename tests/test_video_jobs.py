@@ -83,6 +83,18 @@ class RecordingCallback:
         self.messages.append(message)
 
 
+class CountingNInfer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def activity(self) -> dict:
+        self.calls += 1
+        return {"processing": 0, "deferred": 0, "active_slots": [], "idle": True}
+
+    def verify(self) -> None:
+        return None
+
+
 class FailingCallback:
     def __init__(self) -> None:
         self.calls = 0
@@ -197,6 +209,18 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             "callback_directory": str(self.root),
         }
 
+    def batch_payload(self, key: str = "batch-key", count: int = 3) -> dict:
+        workflows = []
+        for index in range(count):
+            path = self.root / f"workflow-{index + 1}.json"
+            path.write_text(json.dumps({str(index + 1): {"class_type": "Test"}}), encoding="utf-8")
+            workflows.append({"workflow_path": str(path), "output_path": None})
+        payload = self.payload(key)
+        payload.pop("workflow_path")
+        payload.pop("output_path")
+        payload["workflows"] = workflows
+        return payload
+
     def test_default_generation_scene_is_unique_and_user_selected(self) -> None:
         scene = self.database.get_default_generation_scene()
         self.assertEqual(scene["id"], "b" * 32)
@@ -228,6 +252,7 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
                 row["name"] for row in connection.execute("PRAGMA table_info(video_jobs)")
             }
         self.assertNotIn("callback_authorization", columns)
+        self.assertTrue({"batch_id", "batch_index", "batch_size"}.issubset(columns))
 
     def test_schema_25_migrates_legacy_scene_purposes_and_job_route(self) -> None:
         job_id = "d" * 32
@@ -533,6 +558,14 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             legacy = self.payload("api-legacy")
             legacy["callback_authorization"] = "Basic obsolete"
             self.assertEqual(client.post("/api/v1/video-jobs", json=legacy).status_code, 422)
+            batch = client.post(
+                "/api/v1/video-job-batches", json=self.batch_payload("api-batch", 2)
+            )
+            self.assertEqual(batch.status_code, 202, batch.text)
+            self.assertEqual(len(batch.json()["jobs"]), 2)
+            self.assertEqual(
+                self.database.video_job_queue_summary()["nonterminal_segments"], 3
+            )
         remote_sampler = Sampler(settings, collector=lambda _: {
             "sampled_at": "2099-01-01T00:00:00+00:00",
             "host": {"cpu": {}, "memory": {}, "disks": []}, "gpus": [],
@@ -547,3 +580,101 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             rejected = client.post("/api/v1/video-jobs", json=self.payload("api-2"))
             self.assertEqual(rejected.status_code, 422)
             self.assertEqual(rejected.json()["error"]["code"], "loopback_required")
+
+    def test_batch_submit_is_atomic_idempotent_and_reports_queue_summary(self) -> None:
+        manager = self.manager()
+        jobs, created = manager.submit_batch(self.batch_payload("atomic", 3))
+        repeated, created_again = manager.submit_batch(self.batch_payload("atomic", 3))
+
+        self.assertTrue(created)
+        self.assertFalse(created_again)
+        self.assertEqual([job["id"] for job in jobs], [job["id"] for job in repeated])
+        self.assertEqual([job["batch_index"] for job in jobs], [1, 2, 3])
+        self.assertTrue(all(job["batch_id"] == jobs[0]["batch_id"] for job in jobs))
+        self.assertTrue(all(job["batch_size"] == 3 for job in jobs))
+        self.assertEqual(self.database.video_job_queue_summary(), {
+            "queued_segments": 3, "active_segments": 0, "nonterminal_segments": 3,
+        })
+
+    async def test_explicit_batch_releases_each_segment_and_callbacks_once(self) -> None:
+        ninfer = CountingNInfer()
+        comfy = CompletedComfy()
+        callback = RecordingCallback()
+        manager = self.manager(ninfer=ninfer, comfy=comfy, callback=callback)
+        jobs, _ = manager.submit_batch(self.batch_payload("batch-a", 3))
+
+        await manager._process(self.database.next_video_job())
+
+        finished_a = self.database.get_video_job(jobs[0]["id"])
+        self.assertEqual(finished_a["status"], "succeeded")
+        self.assertEqual(self.registry.active_scene()["id"], "b" * 32)
+        self.assertEqual(comfy.release_calls, 1)
+        self.assertEqual(ninfer.calls, 1)
+        self.assertEqual(callback.messages, [])
+        self.assertIsNone(self.database.resource_lease_owner("gpu:4090"))
+
+        await manager._process(self.database.next_video_job())
+
+        finished_b = self.database.get_video_job(jobs[1]["id"])
+        self.assertEqual(finished_b["status"], "succeeded")
+        self.assertEqual(finished_b["original_scene_id"], "a" * 32)
+        self.assertEqual(comfy.release_calls, 2)
+        self.assertEqual(ninfer.calls, 1)
+        self.assertEqual(callback.messages, [])
+
+        await manager._process(self.database.next_video_job())
+
+        finished_c = self.database.get_video_job(jobs[2]["id"])
+        self.assertEqual(finished_c["status"], "succeeded")
+        self.assertEqual(self.registry.active_scene()["id"], "a" * 32)
+        self.assertEqual(comfy.release_calls, 3)
+        self.assertEqual(ninfer.calls, 1)
+        self.assertEqual(len(callback.messages), 1)
+        self.assertIn("3 段", callback.messages[0])
+        self.assertIn("已恢复场景", callback.messages[0])
+        self.assertIsNone(self.database.resource_lease_owner("gpu:4090"))
+
+    async def test_failed_batch_aborts_remaining_jobs_and_restores_once(self) -> None:
+        comfy = CompletedComfy()
+        callback = RecordingCallback()
+        manager = self.manager(comfy=comfy, callback=callback)
+        jobs, _ = manager.submit_batch(self.batch_payload("fail-a", 3))
+
+        await manager._process(self.database.next_video_job())
+        self.assertEqual(self.registry.active_scene()["id"], "b" * 32)
+        self.assertEqual(callback.messages, [])
+
+        blocked = self.root / "outputs" / jobs[1]["id"] / "result.mp4"
+        blocked.parent.mkdir(parents=True, exist_ok=True)
+        blocked.write_bytes(b"video")
+
+        await manager._process(self.database.next_video_job())
+
+        finished_b = self.database.get_video_job(jobs[1]["id"])
+        self.assertEqual(finished_b["status"], "failed")
+        self.assertEqual(finished_b["error_code"], "output_exists")
+        self.assertEqual(self.registry.active_scene()["id"], "a" * 32)
+        self.assertEqual(comfy.release_calls, 2)
+        self.assertEqual(self.database.get_video_job(jobs[2]["id"])["status"], "cancelled")
+        self.assertEqual(len(callback.messages), 1)
+        self.assertIn("第 2 / 3 段失败", callback.messages[0])
+
+    async def test_restart_continues_explicit_batch_from_database(self) -> None:
+        comfy = CompletedComfy()
+        callback = RecordingCallback()
+        manager = self.manager(comfy=comfy, callback=callback)
+        jobs, _ = manager.submit_batch(self.batch_payload("restart-a", 2))
+
+        await manager._process(self.database.next_video_job())
+
+        self.assertEqual(self.registry.active_scene()["id"], "b" * 32)
+
+        restarted_manager = self.manager(comfy=comfy, callback=callback)
+        await restarted_manager._process(self.database.next_video_job())
+
+        finished_b = self.database.get_video_job(jobs[1]["id"])
+        self.assertEqual(finished_b["status"], "succeeded")
+        self.assertEqual(finished_b["original_scene_id"], "a" * 32)
+        self.assertEqual(self.registry.active_scene()["id"], "a" * 32)
+        self.assertEqual(comfy.release_calls, 2)
+        self.assertEqual(comfy.submit_calls, 2)

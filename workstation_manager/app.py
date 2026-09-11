@@ -125,6 +125,22 @@ class VideoJobPayload(BaseModel):
     callback_directory: str | None = Field(default=None, max_length=2048)
 
 
+class VideoBatchWorkflowPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workflow_path: str = Field(min_length=1, max_length=2048)
+    output_path: str | None = Field(default=None, max_length=2048)
+
+
+class VideoJobBatchPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    session_id: str = Field(min_length=1, max_length=200)
+    workflows: list[VideoBatchWorkflowPayload] = Field(min_length=1, max_length=100)
+    scene_name: str | None = Field(default=None, max_length=100)
+    callback_url: str = Field(min_length=1, max_length=2048)
+    callback_directory: str | None = Field(default=None, max_length=2048)
+
+
 class RequestBodyLimitMiddleware:
     def __init__(self, app: ASGIApp, max_bytes: int) -> None:
         self.app = app
@@ -671,12 +687,25 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         response.status_code = 202 if created else 200
         return {"job": job, "created": created}
 
+    @app.post("/api/v1/video-job-batches", status_code=202)
+    async def submit_video_job_batch(
+        payload: VideoJobBatchPayload, request: Request, response: Response,
+    ) -> dict[str, Any]:
+        if not is_loopback(_client_ip(request)):
+            raise VideoJobError("loopback_required", "视频任务只允许从本机提交")
+        jobs, created = resolved_video_jobs.submit_batch(payload.model_dump())
+        response.status_code = 202 if created else 200
+        return {"jobs": jobs, "batch_id": jobs[0]["batch_id"], "created": created}
+
     @app.get("/api/v1/video-jobs")
     async def video_jobs(
         limit: int = Query(default=100, ge=1, le=500),
         _: AuthenticatedSession = Depends(require_session),
     ) -> dict[str, Any]:
-        return {"jobs": resolved_database.list_video_jobs(limit), "limit": limit}
+        return {
+            "jobs": resolved_database.list_video_jobs(limit), "limit": limit,
+            "queue_summary": resolved_database.video_job_queue_summary(),
+        }
 
     @app.get("/api/v1/video-jobs/{job_id}")
     async def video_job(

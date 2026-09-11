@@ -13,6 +13,7 @@
     '尚无视频任务。': 'No video jobs.', '取消任务': 'Cancel Job',
     '生成场景': 'Generation scene', '原场景': 'Original scene', '等待记录': 'Pending capture',
     '等待调度': 'Waiting for scheduler', '等待 NInfer 空闲': 'Waiting for NInfer idle',
+    '等待内存释放': 'Waiting for memory release',
     '切换生成场景': 'Switching generation scene', '检查 ComfyUI': 'Checking ComfyUI',
     '提交工作流': 'Submitting workflow', 'ComfyUI 生成中': 'Generating in ComfyUI',
     '收集输出': 'Collecting output', '恢复原场景': 'Restoring original scene',

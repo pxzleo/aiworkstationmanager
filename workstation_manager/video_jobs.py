@@ -340,6 +340,12 @@ class VideoJobManager:
         self._wake = asyncio.Event()
         self.last_error: str | None = None
 
+    def _generation_scene_active(self, generation_scene_id: str) -> bool:
+        if not generation_scene_id:
+            return False
+        active = self.registry.active_scene()
+        return active is not None and active["id"] == generation_scene_id
+
     async def start(self) -> None:
         if self._task is not None:
             return
@@ -372,8 +378,11 @@ class VideoJobManager:
             raise VideoJobError("callback_loopback_required", f"{field} 只允许 loopback 地址")
         return value.rstrip("/")
 
-    def submit(self, payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-        idempotency_key = str(payload.get("idempotency_key") or "").strip()
+    def _prepare_submission(
+        self, payload: dict[str, Any], *, idempotency_key: str,
+        batch_id: str | None = None, batch_index: int | None = None,
+        batch_size: int | None = None,
+    ) -> tuple[dict[str, Any], str]:
         session_id = str(payload.get("session_id") or "").strip()
         if not 1 <= len(idempotency_key) <= 200:
             raise VideoJobError("invalid_idempotency_key", "idempotency_key 长度必须为 1..200")
@@ -418,7 +427,7 @@ class VideoJobManager:
         payload_hash = hashlib.sha256(
             json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest()
-        item, created = self.database.create_video_job({
+        item = {
             "id": uuid.uuid4().hex, "idempotency_key": idempotency_key,
             "payload_hash": payload_hash, "session_id": session_id,
             "workflow_path": canonical["workflow_path"],
@@ -427,7 +436,16 @@ class VideoJobManager:
             "callback_directory": callback_directory,
             "generation_scene_id": generation_scene["id"],
             "generation_scene_name": generation_scene["name"],
-        })
+            "batch_id": batch_id, "batch_index": batch_index, "batch_size": batch_size,
+        }
+        return item, payload_hash
+
+    def submit(self, payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        idempotency_key = str(payload.get("idempotency_key") or "").strip()
+        item_data, payload_hash = self._prepare_submission(
+            payload, idempotency_key=idempotency_key,
+        )
+        item, created = self.database.create_video_job(item_data)
         if item["payload_hash"] != payload_hash:
             raise VideoJobError(
                 "idempotency_conflict", "相同 idempotency_key 已用于不同的视频任务参数"
@@ -435,11 +453,51 @@ class VideoJobManager:
         if created:
             self.database.append_audit(
                 "local", "management.video_job.submit", "success",
-                {"job_id": item["id"], "session_id": session_id,
+                {"job_id": item["id"], "session_id": item_data["session_id"],
                  "idempotency_key": idempotency_key},
             )
             self._wake.set()
         return item, created
+
+    def submit_batch(self, payload: dict[str, Any]) -> tuple[list[dict[str, Any]], bool]:
+        batch_key = str(payload.get("idempotency_key") or "").strip()
+        workflows = payload.get("workflows")
+        if not isinstance(workflows, list) or not 1 <= len(workflows) <= 100:
+            raise VideoJobError("invalid_batch", "workflows 必须包含 1..100 个有序工作流")
+        batch_id = hashlib.sha256(f"axis-video-batch:{batch_key}".encode("utf-8")).hexdigest()[:32]
+        segment_key_prefix = hashlib.sha256(batch_key.encode("utf-8")).hexdigest()
+        items: list[dict[str, Any]] = []
+        hashes: list[str] = []
+        for offset, workflow in enumerate(workflows):
+            if not isinstance(workflow, dict):
+                raise VideoJobError("invalid_batch", "每个批次工作流必须是对象")
+            segment_payload = {
+                **payload,
+                "workflow_path": workflow.get("workflow_path"),
+                "output_path": workflow.get("output_path"),
+            }
+            segment_payload.pop("workflows", None)
+            item, payload_hash = self._prepare_submission(
+                segment_payload, idempotency_key=f"batch:{segment_key_prefix}:{offset + 1}",
+                batch_id=batch_id, batch_index=offset + 1, batch_size=len(workflows),
+            )
+            items.append(item)
+            hashes.append(payload_hash)
+        jobs, created = self.database.create_video_job_batch(items)
+        if len(jobs) != len(items) or any(
+            job["payload_hash"] != hashes[index] for index, job in enumerate(jobs)
+        ):
+            raise VideoJobError(
+                "idempotency_conflict", "相同 idempotency_key 已用于不同的视频任务批次参数"
+            )
+        if created:
+            self.database.append_audit(
+                "local", "management.video_job_batch.submit", "success",
+                {"batch_id": batch_id, "session_id": items[0]["session_id"],
+                 "segment_count": len(items), "idempotency_key": batch_key},
+            )
+            self._wake.set()
+        return jobs, created
 
     def cancel(self, job_id: str, username: str, source_ip: str) -> dict[str, Any]:
         result = self.database.request_video_job_cancel(job_id)
@@ -486,6 +544,7 @@ class VideoJobManager:
         if scene is None:
             raise VideoJobError(missing_code, missing_message)
         if self.registry._scene_with_state(scene)["state"] == "active":
+            self.database.set_last_activated_scene(scene_id)
             return
         deadline = asyncio.get_running_loop().time() + self.scene_timeout_seconds
         while True:
@@ -619,6 +678,24 @@ class VideoJobManager:
                 f"系统提交余量不足 48 GiB（当前 {commit_headroom / 1024 ** 3:.1f} GiB），拒绝提交 H3 工作流",
             )
 
+    async def _wait_for_resource_headroom(self, job_id: str) -> None:
+        deadline = asyncio.get_running_loop().time() + self.idle_timeout_seconds
+        while True:
+            if await self._cancel_requested(job_id):
+                raise VideoJobError("cancelled", "用户在等待内存释放时取消了视频任务")
+            try:
+                self._check_resource_headroom()
+                return
+            except VideoJobError as exc:
+                if exc.code not in {"insufficient_available_memory", "insufficient_commit_headroom"}:
+                    raise
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise
+                self.database.update_video_job(
+                    job_id, status="waiting_for_memory", phase="waiting_for_memory",
+                )
+                await asyncio.sleep(self.poll_interval_seconds)
+
     def _target_path(self, job: dict[str, Any], filename: str) -> Path:
         requested = job.get("requested_output_path")
         if not requested:
@@ -652,6 +729,27 @@ class VideoJobManager:
             raise DatabaseError("视频任务在回调前消失")
         original_scene_name = str(job.get("original_scene_name") or "原场景")
         def callback_message() -> str:
+            batch_id = str(job.get("batch_id") or "")
+            if batch_id:
+                batch = self.database.video_jobs_in_batch(batch_id)
+                outputs = [item["output_path"] for item in batch if item.get("output_path")]
+                if outcome == "succeeded":
+                    return (
+                        f"AXIS 视频批次 {batch_id} 的 {len(batch)} 段已全部完成，"
+                        f"输出文件：{'；'.join(outputs)}。已恢复场景 {original_scene_name}，"
+                        "请继续原任务。"
+                    )
+                index = int(job.get("batch_index") or 1)
+                if outcome == "cancelled":
+                    return (
+                        f"AXIS 视频批次 {batch_id} 已在第 {index} / {len(batch)} 段取消，"
+                        f"后续段已终止，已尝试恢复场景 {original_scene_name}，请继续原任务。"
+                    )
+                return (
+                    f"AXIS 视频批次 {batch_id} 第 {index} / {len(batch)} 段失败："
+                    f"{error_code}: {error_summary}。后续段已终止，已尝试恢复场景 "
+                    f"{original_scene_name}，请继续处理失败。"
+                )
             if outcome == "succeeded":
                 return (
                     f"AXIS 视频任务 {job_id} 已完成，输出文件：{output_path}。"
@@ -753,6 +851,8 @@ class VideoJobManager:
                 initial_job.get("error_summary"),
             )
             return
+        if initial_phase == "scene_held":
+            initial_phase = "restoring_scene"
         if initial_phase in {"restoring_code", "restoring_scene", "verifying_ninfer"}:
             await self._resume_cleanup(initial_job)
             return
@@ -773,28 +873,52 @@ class VideoJobManager:
             resumed = self.database.get_video_job(job_id, include_internal=True)
             if resumed is None:
                 raise DatabaseError("视频任务在输出恢复时消失")
+            if resumed.get("batch_id") and int(resumed.get("batch_index") or 1) \
+                    < int(resumed.get("batch_size") or 1) and outcome == "succeeded":
+                self.database.finish_video_job_with_audit(
+                    job_id, "succeeded", "succeeded", resumed.get("output_path"),
+                    None, None, GPU_4090_LEASE,
+                )
+                return
             await self._resume_cleanup(resumed)
             return
         outcome = "failed"
         error_code: str | None = None
         error_summary: str | None = None
         output_path: str | None = initial_job.get("output_path")
+        keep_scene = False
+        generation_scene_id = str(initial_job.get("generation_scene_id") or "")
         try:
             if not initial_job.get("original_scene_id"):
-                await self._wait_for_registry_idle(job_id)
-                original_scene = self.registry.active_scene()
-                if original_scene is None:
-                    raise VideoJobError(
-                        "active_scene_missing", "当前没有已记录且完整激活的场景，无法在生成后恢复"
-                    )
+                batch_id = str(initial_job.get("batch_id") or "")
+                batch_index = int(initial_job.get("batch_index") or 1)
+                if batch_id and batch_index > 1:
+                    batch = self.database.video_jobs_in_batch(batch_id)
+                    first = batch[0] if batch else None
+                    if first is None or not first.get("original_scene_id"):
+                        raise VideoJobError(
+                            "batch_anchor_missing", "视频批次缺少首段记录的原场景"
+                        )
+                    anchor = {
+                        "id": str(first["original_scene_id"]),
+                        "name": str(first.get("original_scene_name") or "原场景"),
+                    }
+                else:
+                    await self._wait_for_registry_idle(job_id)
+                    original_scene = self.registry.active_scene()
+                    if original_scene is None:
+                        raise VideoJobError(
+                            "active_scene_missing", "当前没有已记录且完整激活的场景，无法在生成后恢复"
+                        )
+                    anchor = original_scene
                 self.database.update_video_job(
-                    job_id, original_scene_id=original_scene["id"],
-                    original_scene_name=original_scene["name"],
+                    job_id, original_scene_id=anchor["id"],
+                    original_scene_name=anchor["name"],
                 )
                 initial_job = {
                     **initial_job,
-                    "original_scene_id": original_scene["id"],
-                    "original_scene_name": original_scene["name"],
+                    "original_scene_id": anchor["id"],
+                    "original_scene_name": anchor["name"],
                 }
             started_at = initial_job.get("started_at") or utc_now()
             self.database.update_video_job(
@@ -811,24 +935,30 @@ class VideoJobManager:
                     )
                 self.database.update_video_job(job_id, prompt_id=prompt_id)
             if prompt_id is None:
-                await self._wait_for_ninfer_idle(job_id)
-                self.database.update_video_job(
-                    job_id, status="switching_to_video", phase="switching_to_video", progress=None
-                )
-                generation_scene_id = str(initial_job.get("generation_scene_id") or "")
                 if not generation_scene_id:
                     raise VideoJobError(
                         "generation_scene_not_found", "视频任务没有可用的生成场景"
                     )
-                await self._activate_scene(
-                    generation_scene_id, job_id,
-                    "generation_scene_not_found", "视频任务指定的生成场景已不存在",
+                scene_already_active = self._generation_scene_active(generation_scene_id)
+                continuing_video_scene = bool(
+                    scene_already_active and initial_job.get("original_scene_id")
+                    and str(initial_job.get("original_scene_id")) != generation_scene_id
                 )
-                if await self._cancel_requested(job_id):
-                    raise VideoJobError("cancelled", "用户在场景切换后取消了视频任务")
+                if not continuing_video_scene:
+                    await self._wait_for_ninfer_idle(job_id)
+                if not scene_already_active:
+                    self.database.update_video_job(
+                        job_id, status="switching_to_video", phase="switching_to_video", progress=None
+                    )
+                    await self._activate_scene(
+                        generation_scene_id, job_id,
+                        "generation_scene_not_found", "视频任务指定的生成场景已不存在",
+                    )
+                    if await self._cancel_requested(job_id):
+                        raise VideoJobError("cancelled", "用户在场景切换后取消了视频任务")
                 self.database.update_video_job(job_id, status="checking_comfy", phase="checking_comfy")
                 await asyncio.to_thread(self.comfy.health)
-                self._check_resource_headroom()
+                await self._wait_for_resource_headroom(job_id)
                 if await self._cancel_requested(job_id):
                     raise VideoJobError("cancelled", "用户在 ComfyUI 提交前取消了视频任务")
                 try:
@@ -860,27 +990,53 @@ class VideoJobManager:
                 output_path=output_path,
             )
             await asyncio.to_thread(self.comfy.download_output, descriptor, target)
-            await asyncio.to_thread(self.comfy.release_memory)
             outcome = "cancelled" if await self._cancel_requested(job_id) else "succeeded"
+            keep_scene = (
+                outcome == "succeeded"
+                and self._generation_scene_active(generation_scene_id)
+                and bool(initial_job.get("batch_id"))
+                and int(initial_job.get("batch_index") or 1)
+                    < int(initial_job.get("batch_size") or 1)
+            )
+            await asyncio.to_thread(self.comfy.release_memory)
         except asyncio.CancelledError:
             raise
         except VideoJobError as exc:
             outcome = "cancelled" if exc.code == "cancelled" else "failed"
             error_code = exc.code
             error_summary = str(exc)
+        keep_scene = keep_scene and outcome == "succeeded"
+        if outcome != "succeeded" and initial_job.get("batch_id"):
+            self.database.abort_remaining_batch_jobs(
+                str(initial_job["batch_id"]), int(initial_job.get("batch_index") or 1),
+                f"批次在第 {int(initial_job.get('batch_index') or 1)} 段终止："
+                f"{error_code}: {error_summary}",
+            )
+            try:
+                await asyncio.to_thread(self.comfy.release_memory)
+            except VideoJobError as exc:
+                error_code = error_code or exc.code
+                error_summary = "; ".join(filter(None, [error_summary, str(exc)]))
         try:
             self.database.update_video_job(
-                job_id, status="restoring_scene", phase="restoring_scene",
+                job_id, status="restoring_scene",
+                phase="batch_waiting" if keep_scene else "restoring_scene",
                 output_path=output_path, result=outcome,
                 error_code=error_code, error_summary=error_summary,
             )
-            original_scene_id = str(initial_job.get("original_scene_id") or "")
-            if not original_scene_id:
-                raise VideoJobError("original_scene_missing", "视频任务没有可恢复的原场景")
-            await self._activate_scene(
-                original_scene_id, job_id, "original_scene_missing",
-                "视频任务的原场景已不存在，无法恢复",
-            )
+            if keep_scene:
+                self.database.finish_video_job_with_audit(
+                    job_id, "succeeded", "succeeded", output_path, None, None, GPU_4090_LEASE,
+                )
+                return
+            else:
+                original_scene_id = str(initial_job.get("original_scene_id") or "")
+                if not original_scene_id:
+                    raise VideoJobError("original_scene_missing", "视频任务没有可恢复的原场景")
+                await self._activate_scene(
+                    original_scene_id, job_id, "original_scene_missing",
+                    "视频任务的原场景已不存在，无法恢复",
+                )
         except asyncio.CancelledError:
             raise
         except (VideoJobError, RegistryError, DatabaseError) as exc:
@@ -891,5 +1047,5 @@ class VideoJobManager:
             error_summary = "; ".join(filter(None, [error_summary, restore_message]))
 
         await self._deliver_callback_and_finish(
-            job_id, outcome, output_path, error_code, error_summary
+            job_id, outcome, output_path, error_code, error_summary,
         )

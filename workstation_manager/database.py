@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 
 class DatabaseError(RuntimeError):
@@ -108,6 +108,7 @@ class Database:
                         23: self._migrate_to_23,
                         24: self._migrate_to_24,
                         25: self._migrate_to_25,
+                        26: self._migrate_to_26,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -669,6 +670,21 @@ class Database:
                        original_scene_name=COALESCE(original_scene_name,?)""",
                 (legacy_code["id"], legacy_code["name"]),
             )
+
+    @classmethod
+    def _migrate_to_26(cls, connection: sqlite3.Connection) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_jobs'"
+        ).fetchone()
+        if table is None:
+            return
+        cls._ensure_column(connection, "video_jobs", "batch_id", "TEXT")
+        cls._ensure_column(connection, "video_jobs", "batch_index", "INTEGER")
+        cls._ensure_column(connection, "video_jobs", "batch_size", "INTEGER")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_video_jobs_batch_index "
+            "ON video_jobs(batch_id,batch_index)"
+        )
 
     @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
@@ -1706,6 +1722,51 @@ class Database:
         except (sqlite3.Error, KeyError) as exc:
             raise DatabaseError(f"创建视频任务失败: {exc}") from exc
 
+    def create_video_job_batch(self, items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+        if not items:
+            raise DatabaseError("视频任务批次不能为空")
+        now = utc_now()
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    keys = [item["idempotency_key"] for item in items]
+                    placeholders = ",".join("?" for _ in keys)
+                    existing = connection.execute(
+                        f"SELECT * FROM video_jobs WHERE idempotency_key IN ({placeholders}) "
+                        "ORDER BY batch_index", keys,
+                    ).fetchall()
+                    if existing:
+                        if len(existing) != len(items):
+                            raise DatabaseError("视频任务批次幂等记录不完整，拒绝补写部分批次")
+                        return [self._decode_video_job(row) for row in existing], False
+                    for item in items:
+                        connection.execute(
+                            """INSERT INTO video_jobs(
+                                   id,idempotency_key,payload_hash,session_id,workflow_path,
+                                   workflow_json,requested_output_path,callback_url,
+                                   callback_directory,generation_scene_id,generation_scene_name,
+                                   batch_id,batch_index,batch_size,status,phase,created_at,updated_at
+                               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            (
+                                item["id"], item["idempotency_key"], item["payload_hash"],
+                                item["session_id"], item["workflow_path"], item["workflow_json"],
+                                item.get("requested_output_path"), item["callback_url"],
+                                item.get("callback_directory"), item["generation_scene_id"],
+                                item["generation_scene_name"], item["batch_id"],
+                                item["batch_index"], item["batch_size"], "queued", "queued", now, now,
+                            ),
+                        )
+                    rows = connection.execute(
+                        "SELECT * FROM video_jobs WHERE batch_id=? ORDER BY batch_index",
+                        (items[0]["batch_id"],),
+                    ).fetchall()
+            return [self._decode_video_job(row) for row in rows], True
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError(f"视频任务批次标识无效或冲突: {exc}") from exc
+        except (sqlite3.Error, KeyError) as exc:
+            raise DatabaseError(f"创建视频任务批次失败: {exc}") from exc
+
     def get_video_job(self, job_id: str, *, include_internal: bool = False) -> dict[str, Any] | None:
         try:
             with self.connect() as connection:
@@ -1734,11 +1795,59 @@ class Database:
                 row = connection.execute(
                     """SELECT * FROM video_jobs
                        WHERE status NOT IN ('succeeded','failed','cancelled')
-                       ORDER BY created_at,id LIMIT 1"""
+                       ORDER BY created_at,COALESCE(batch_index,1),id LIMIT 1"""
                 ).fetchone()
             return None if row is None else self._decode_video_job(row, include_internal=True)
         except sqlite3.Error as exc:
             raise DatabaseError(f"读取待处理视频任务失败: {exc}") from exc
+
+    def video_jobs_in_batch(
+        self, batch_id: str, *, include_internal: bool = False,
+    ) -> list[dict[str, Any]]:
+        try:
+            with self.connect() as connection:
+                rows = connection.execute(
+                    "SELECT * FROM video_jobs WHERE batch_id=? ORDER BY batch_index", (batch_id,)
+                ).fetchall()
+            return [self._decode_video_job(row, include_internal=include_internal) for row in rows]
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取视频任务批次失败: {exc}") from exc
+
+    def video_job_queue_summary(self) -> dict[str, int]:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    """SELECT
+                           SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) AS queued,
+                           SUM(CASE WHEN status NOT IN ('queued','succeeded','failed','cancelled')
+                               THEN 1 ELSE 0 END) AS active,
+                           SUM(CASE WHEN status NOT IN ('succeeded','failed','cancelled')
+                               THEN 1 ELSE 0 END) AS nonterminal
+                       FROM video_jobs"""
+                ).fetchone()
+            return {
+                "queued_segments": int(row["queued"] or 0),
+                "active_segments": int(row["active"] or 0),
+                "nonterminal_segments": int(row["nonterminal"] or 0),
+            }
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取视频任务队列统计失败: {exc}") from exc
+
+    def abort_remaining_batch_jobs(self, batch_id: str, after_index: int, reason: str) -> int:
+        now = utc_now()
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        """UPDATE video_jobs SET status='cancelled',phase='finished',
+                               result='cancelled',error_code='batch_aborted',error_summary=?,
+                               finished_at=?,updated_at=?
+                           WHERE batch_id=? AND batch_index>? AND status='queued'""",
+                        (reason, now, now, batch_id, after_index),
+                    )
+                    return cursor.rowcount
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"终止视频任务批次失败: {exc}") from exc
 
     def update_video_job(self, job_id: str, **fields: Any) -> None:
         allowed = {

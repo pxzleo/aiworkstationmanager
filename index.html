@@ -149,8 +149,8 @@
         </section>
 
         <section class="page" id="page-video-jobs" data-title="视频任务">
-          <div class="page-heading"><div><p class="eyebrow">RTX 4090 串行调度</p><h1>视频任务</h1><p>任务仅由本机 OpenCode 提交；这里显示完整阶段、ComfyUI prompt_id、输出和恢复结果，并允许取消。</p></div><button class="button secondary" id="refreshVideoJobsButton">刷新任务</button></div>
-          <div class="status-banner" id="videoJobNotice">AXIS 会等待 NInfer processing 与 deferred 同时为 0，再切换到指定或默认生成场景，完成后恢复原场景。</div>
+          <div class="page-heading"><div><p class="eyebrow">RTX 4090 串行调度</p><h1>视频任务</h1><p>任务仅由本机 OpenCode 提交；这里显示完整阶段、ComfyUI prompt_id、输出和恢复结果，并允许取消。</p></div><div class="heading-actions"><span class="status-label partial" id="videoQueuedSegments" data-i18n-skip>等待处理：0 段</span><button class="button secondary" id="refreshVideoJobsButton">刷新任务</button></div></div>
+          <div class="status-banner" id="videoJobNotice">AXIS 会等待 NInfer 空闲后切换到生成场景；批次逐段串行、每段释放生成显存，批尾统一恢复原场景并回调 OpenCode。</div>
           <section class="operation-list video-job-list" id="videoJobList" aria-live="polite"><p class="empty-state">尚无视频任务。</p></section>
         </section>
 

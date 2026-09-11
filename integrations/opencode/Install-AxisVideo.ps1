@@ -11,4 +11,4 @@ Copy-Item -LiteralPath (Join-Path $integrationRoot "plugins\axis-video.ts") `
 Copy-Item -LiteralPath (Join-Path $integrationRoot "skills\axis-video\SKILL.md") `
     -Destination (Join-Path $skillDirectory "SKILL.md") -Force
 
-Write-Host "AXIS Video 已安装到 OpenCode。请重启 OpenCode 以加载 axis_video_submit 工具。"
+Write-Host "AXIS Video 已安装到 OpenCode。请重启 OpenCode 以加载单任务和批次视频工具。"
