@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -11,7 +12,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 
 class DatabaseError(RuntimeError):
@@ -121,6 +122,7 @@ class Database:
                         25: self._migrate_to_25,
                         26: self._migrate_to_26,
                         27: self._migrate_to_27,
+                        28: self._migrate_to_28,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -707,6 +709,19 @@ class Database:
         if table is None:
             return
         cls._ensure_column(connection, "video_jobs", "video_spec", "TEXT NOT NULL DEFAULT '{}'")
+        cls._backfill_video_specs(connection)
+
+    @classmethod
+    def _migrate_to_28(cls, connection: sqlite3.Connection) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_jobs'"
+        ).fetchone()
+        if table is None:
+            return
+        cls._backfill_video_specs(connection)
+
+    @classmethod
+    def _backfill_video_specs(cls, connection: sqlite3.Connection) -> None:
         cursor = connection.execute("SELECT id,workflow_json FROM video_jobs")
         while rows := cursor.fetchmany(8):
             connection.executemany(
@@ -1741,9 +1756,84 @@ class Database:
         duration = round(duration_value, 3) \
             if duration_value is not None and math.isfinite(duration_value) else None
         return {
+            "title": Database._video_title(workflow),
             "width": width, "height": height, "frames": frames,
             "fps": fps, "duration_seconds": duration, "steps": steps,
         }
+
+    @staticmethod
+    def _video_title(workflow: dict[str, Any]) -> str | None:
+        video_extensions = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
+        for node in workflow.values():
+            if not isinstance(node, dict) or "loadvideo" not in str(
+                node.get("class_type") or ""
+            ).lower():
+                continue
+            inputs = node.get("inputs")
+            if not isinstance(inputs, dict):
+                continue
+            for value in inputs.values():
+                if isinstance(value, str) and value.lower().endswith(video_extensions):
+                    title = Database._source_video_title(value)
+                    if title:
+                        return title
+
+        for node in workflow.values():
+            if not isinstance(node, dict):
+                continue
+            if not str(node.get("class_type") or "").startswith("MiniMaxH3"):
+                continue
+            inputs = node.get("inputs")
+            if not isinstance(inputs, dict):
+                continue
+            prompt = inputs.get("prompt")
+            if not isinstance(prompt, str):
+                continue
+            match = re.search(r"(?im)^\s*summary\s*:\s*(.+)$", prompt)
+            if match:
+                return Database._compact_video_title(match.group(1))
+        return None
+
+    @staticmethod
+    def _source_video_title(value: str) -> str | None:
+        parts = [part.strip() for part in re.split(r"[\\/]", value) if part.strip()]
+        if not parts:
+            return None
+        stem = re.sub(r"\.[^.]+$", "", parts[-1]).strip()
+        cleaned_stem = re.sub(
+            r"(?i)^(?:source|src|input|video|original)[_\-\s]+|"
+            r"[_\-\s]+(?:source|src|input|video|original|原片|源片|素材)$",
+            "",
+            stem,
+        ).strip(" _-")
+        if cleaned_stem and not Database._is_generic_video_label(cleaned_stem):
+            return Database._compact_video_title(cleaned_stem)
+
+        for parent in reversed(parts[:-1]):
+            if Database._is_generic_video_label(parent):
+                continue
+            cleaned_parent = re.sub(
+                r"(?:[_\-\s]*(?:工作流交接|下载))+$", "", parent
+            ).strip(" _-")
+            if cleaned_parent and not Database._is_generic_video_label(cleaned_parent):
+                return Database._compact_video_title(cleaned_parent)
+        return None
+
+    @staticmethod
+    def _is_generic_video_label(value: str) -> bool:
+        normalized = re.sub(r"[_\-\s]+", "", value).lower()
+        return normalized in {
+            "source", "src", "input", "video", "original", "sourcevideo", "videosource",
+            "originalvideo", "asset", "assets", "media", "material", "materials", "videos",
+            "原片", "源片", "素材", "原视频", "视频素材",
+        }
+
+    @staticmethod
+    def _compact_video_title(value: str) -> str | None:
+        compact = re.sub(r"\s+", " ", value).strip()
+        if not compact:
+            return None
+        return compact if len(compact) <= 96 else f"{compact[:95].rstrip()}…"
 
     @staticmethod
     def _finite_number(value: Any, minimum: float, maximum: float) -> float | None:

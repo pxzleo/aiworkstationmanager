@@ -290,9 +290,9 @@ test('scene editor and management log remain wired', () => {
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260912-2'));
-  assert.ok(html.includes('i18n.js?v=20260912-2'));
-  assert.ok(html.includes('app.js?v=20260912-2'));
+  assert.ok(html.includes('styles.css?v=20260912-3'));
+  assert.ok(html.includes('i18n.js?v=20260912-3'));
+  assert.ok(html.includes('app.js?v=20260912-3'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -303,6 +303,9 @@ test('video job page monitors every scheduler stage and exposes cancellation', (
   assert.ok(!html.includes('id="scenePurpose"'));
   assert.ok(js.includes("api('/video-jobs?limit=100'"));
   assert.ok(js.includes('function renderVideoJobs'));
+  assert.ok(js.includes('function videoJobTitle'));
+  assert.ok(js.includes('job.video_spec?.title'));
+  assert.ok(js.includes("'任务号'"));
   assert.ok(html.includes('id="videoQueuedSegments"'));
   assert.ok(js.includes('result.queue_summary'));
   assert.ok(js.includes('job.batch_index'));
@@ -410,9 +413,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260912-2'));
-  assert.ok(html.includes('i18n.js?v=20260912-2'));
-  assert.ok(html.includes('app.js?v=20260912-2'));
+  assert.ok(html.includes('styles.css?v=20260912-3'));
+  assert.ok(html.includes('i18n.js?v=20260912-3'));
+  assert.ok(html.includes('app.js?v=20260912-3'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

@@ -302,6 +302,7 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         }), encoding="utf-8")
         job, _ = self.manager().submit(self.payload("video-spec"))
         self.assertEqual(job["video_spec"], {
+            "title": None,
             "width": 768, "height": 1344, "frames": 175,
             "fps": 24.0, "duration_seconds": 7.292, "steps": 8,
         })
@@ -316,6 +317,7 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         }), encoding="utf-8")
         job, _ = self.manager().submit(self.payload("video-spec-t8"))
         self.assertEqual(job["video_spec"], {
+            "title": None,
             "width": 1280, "height": 720, "frames": 241,
             "fps": 24.0, "duration_seconds": 10.042, "steps": 16,
         })
@@ -329,6 +331,7 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             "3": {"class_type": "BasicScheduler", "inputs": {"steps": 10001}},
         }))
         self.assertEqual(spec, {
+            "title": None,
             "width": None, "height": None, "frames": 1_000_000,
             "fps": 5e-324, "duration_seconds": None, "steps": None,
         })
@@ -350,9 +353,65 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("workflow_json", select)
         self.assertNotIn("SELECT *", select)
         self.assertEqual(jobs[0]["video_spec"], {
+            "title": None,
             "width": None, "height": None, "frames": None,
             "fps": None, "duration_seconds": None, "steps": None,
         })
+
+    def test_video_title_prefers_source_filename_and_cleans_technical_affixes(self) -> None:
+        workflow = {
+            "1": {"class_type": "VHS_LoadVideoPath", "inputs": {
+                "video": r"D:\共享\这又是谁的白月光_src.mp4",
+            }},
+            "2": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+                "prompt": "summary: This fallback should not be used.",
+            }},
+        }
+        self.assertEqual(Database._video_title(workflow), "这又是谁的白月光")
+
+    def test_video_title_uses_project_directory_for_generic_source_name(self) -> None:
+        paths = (
+            r"D:\共享\和这个夏天说再见吧_全裸_工作流交接\src\source.mp4",
+            r"D:\共享\和这个夏天说再见吧_全裸_工作流交接\source_video.mp4",
+            r"D:\共享\和这个夏天说再见吧_全裸_工作流交接\video-source.mp4",
+            r"D:\共享\和这个夏天说再见吧_全裸_工作流交接\assets\source.mp4",
+            r"D:\共享\和这个夏天说再见吧_全裸_工作流交接\素材\原视频.mp4",
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                workflow = {
+                    "1": {"class_type": "VHS_LoadVideoPath", "inputs": {"video": path}},
+                }
+                self.assertEqual(
+                    Database._video_title(workflow), "和这个夏天说再见吧_全裸"
+                )
+
+    def test_video_title_falls_back_to_prompt_summary(self) -> None:
+        workflow = {
+            "1": {"class_type": "MiniMaxH3TextToVideo", "inputs": {
+                "prompt": "subject_definitions:\nA dancer.\n\nsummary: A dancer crosses a snowy stage.\n",
+            }},
+        }
+        self.assertEqual(Database._video_title(workflow), "A dancer crosses a snowy stage.")
+
+    def test_schema_28_backfills_existing_video_titles(self) -> None:
+        self.workflow.write_text(json.dumps({
+            "1": {"class_type": "VHS_LoadVideoPath", "inputs": {
+                "video": r"D:\共享\雪场_全裸_工作流交接\源片.mp4",
+            }},
+        }), encoding="utf-8")
+        job, _ = self.manager().submit(self.payload("title-backfill"))
+        with self.database.connect() as connection:
+            with connection:
+                connection.execute(
+                    "UPDATE video_jobs SET video_spec='{}' WHERE id=?", (job["id"],)
+                )
+                connection.execute("UPDATE schema_version SET version=27")
+
+        migrated = Database(self.database.path)
+        self.assertEqual(
+            migrated.get_video_job(job["id"])["video_spec"]["title"], "雪场_全裸"
+        )
 
     def test_schema_25_migrates_legacy_scene_purposes_and_job_route(self) -> None:
         job_id = "d" * 32
