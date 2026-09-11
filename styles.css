@@ -841,6 +841,9 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .operation-row { display: grid; grid-template-columns: minmax(160px, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 12px; }
 .video-job-row { grid-template-columns: minmax(220px, 1fr) auto auto auto; }
 .video-job-row .operation-summary small { overflow-wrap: anywhere; }
+.video-job-time { display: grid; grid-template-columns: auto auto; gap: 3px 8px; align-items: baseline; min-width: 130px; font-variant-numeric: tabular-nums; }
+.video-job-time small { color: var(--muted); font-size: 8px; }
+.video-job-time b { color: var(--text); font-size: 10px; font-weight: 600; white-space: nowrap; }
 .video-job-specs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .video-job-specs span { padding: 3px 7px; border: 1px solid rgba(var(--accent-rgb), .28); border-radius: 999px; color: var(--accent); background: rgba(var(--accent-rgb), .08); font-size: 11px; line-height: 1.2; }
 .video-job-progress { display: grid; gap: 4px; max-width: 440px; margin-top: 8px; }
@@ -872,7 +875,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
 @media (max-width: 720px) {
   .operation-row { grid-template-columns: 1fr auto; }
   .video-job-row .video-job-cancel { justify-self: start; }
-  .operation-row time { grid-column: 1 / -1; }
+  .operation-row time, .video-job-time { grid-column: 1 / -1; }
   .control-dialog form:not(.dialog-shell) { padding: 20px; }
   .dialog-header { min-height: 80px; padding: 18px 18px 16px; }
   .scene-editor-scroll, .scene-detail-scroll { padding: 18px; }
