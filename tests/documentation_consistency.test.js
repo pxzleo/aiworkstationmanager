@@ -70,6 +70,13 @@ test('release contains runtime language assets and both documentation languages'
   const schema = /SCHEMA_VERSION = (\d+)/.exec(read('workstation_manager/database.py'))[1];
   assert.ok(read('DEVELOPMENT.md').includes(`schema 为 ${schema}`));
   assert.ok(read('DEVELOPMENT.en.md').includes(`schema is ${schema}`));
+  for (const file of [
+    'integrations\\opencode\\Install-AxisVideo.ps1',
+    'integrations\\opencode\\plugins\\axis-video.ts',
+    'integrations\\opencode\\skills\\axis-video\\SKILL.md',
+  ]) {
+    assert.ok(release.includes(`"${file}"`), `release is missing ${file}`);
+  }
 });
 
 test('application version is semantic and documented as the single UI source', () => {

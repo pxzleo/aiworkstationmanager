@@ -150,7 +150,7 @@ When a health endpoint is unreachable, AXIS combines the result with desired sta
 
 | Method | Path | Description |
 | --- | --- | --- |
-| POST | `/api/v1/video-jobs` | Submit a persistent video job from loopback with the dedicated Bearer token; repeated `idempotency_key` values are idempotent |
+| POST | `/api/v1/video-jobs` | Submit a persistent video job from loopback without authentication; repeated `idempotency_key` values are idempotent |
 | GET | `/api/v1/video-jobs` | List jobs for an authenticated user; `limit` defaults to 100 and ranges from `1..500` |
 | GET | `/api/v1/video-jobs/{id}` | Read one job, phase, `prompt_id`, progress, and output |
 | POST | `/api/v1/video-jobs/{id}/cancel` | Request cancellation of a queued or running job |
@@ -164,12 +164,13 @@ The submission body references resources already prepared by OpenCode; AXIS does
   "workflow_path": "D:\\AIWork\\job\\h3-api-workflow.json",
   "output_path": "D:\\AIWork\\job\\final.mp4",
   "callback_url": "http://127.0.0.1:61714",
-  "callback_authorization": "Basic <temporary credential>",
   "callback_directory": "D:\\AIWork\\job"
 }
 ```
 
-`workflow_path` must be an existing absolute JSON path containing the ComfyUI API workflow `prompt` object. Its contents are snapshotted into the persistent job at submission, so later file changes cannot alter queued work. `output_path` is optional; when supplied it must be absolute and existing files are never overwritten, otherwise output is saved below `video_output_directory/<job_id>/`. Video data is streamed into a same-directory temporary file and atomically renamed. `callback_url` must be a loopback base without credentials, path, query, or fragment, and `callback_directory` can preserve the original OpenCode working directory. After cleanup AXIS calls OpenCode 1.17.3 `POST /session/{sessionID}/prompt_async` with up to three bounded retries; `callback_authorization` is omitted from job queries, logs, and audit responses. Submission additionally requires `Authorization: Bearer <video_submit_token>` and is disabled while the token is empty. Listing and cancellation use the AXIS login and CSRF controls.
+`workflow_path` must be an existing absolute JSON path containing the ComfyUI API workflow `prompt` object. Its contents are snapshotted into the persistent job at submission, so later file changes cannot alter queued work. `output_path` is optional; when supplied it must be absolute and existing files are never overwritten, otherwise output is saved below `video_output_directory/<job_id>/`. Video data is streamed into a same-directory temporary file and atomically renamed. `callback_url` must be a loopback base without credentials, path, query, or fragment, and `callback_directory` can preserve the original OpenCode working directory. Submission and callback carry no authentication information. After cleanup AXIS calls the OpenCode plugin's loopback bridge with up to three bounded retries. Listing and cancellation continue to use the AXIS management UI session and CSRF controls.
+
+`integrations/opencode/plugins/axis-video.ts` registers the `axis_video_submit` tool, obtains the current `sessionID` and directory automatically, and creates an unauthenticated callback bridge on a random loopback port. It resumes the original session through OpenCode's internal client when AXIS reports the result. Run `integrations/opencode/Install-AxisVideo.ps1` to install the plugin and `axis-video` Skill for the current user, then restart OpenCode.
 
 The scheduler first acquires the exclusive RTX 4090 lease so no new manual scene switch can begin while it waits, then checks both NInfer `/slots` and `/metrics`. It activates the `video_gen` scene only after every slot is idle and both `requests_processing` and `requests_deferred` are zero. It then verifies ComfyUI `/system_stats`, submits `/prompt`, stores `prompt_id`, polls `/queue` and `/history/{prompt_id}`, and collects video through `/view`. Success, failure, and cancellation all restore the `code_agent` scene, then verify NInfer `/health`, `/v1/models`, and a real `/v1/chat/completions` request before asynchronously notifying the original `session_id`. Non-terminal jobs recover after an AXIS restart. If restart occurs between ComfyUI acceptance and durable `prompt_id` storage, AXIS recovers only through the `axis_job_id` marker in queue/history; an indeterminate submission fails explicitly and is never submitted twice.
 
@@ -226,7 +227,6 @@ WM_VIDEO_JOB_POLL_INTERVAL_SECONDS
 WM_VIDEO_JOB_IDLE_TIMEOUT_SECONDS
 WM_VIDEO_JOB_SCENE_TIMEOUT_SECONDS
 WM_VIDEO_JOB_GENERATION_TIMEOUT_SECONDS
-WM_VIDEO_SUBMIT_TOKEN
 ```
 
 This list follows `workstation_manager/config.py`. Boolean values use `true/false`; list values use JSON or comma-separated input as required by the configuration parser. Do not commit deployment configuration containing local addresses, user data, or credentials.
@@ -235,6 +235,6 @@ This list follows `workstation_manager/config.py`. Boolean values use `true/fals
 
 ## Data and concurrency
 
-The default database is `data/workstation-manager.db`. The current schema is 23 and migrates automatically at startup. Schema 19 adds the unique scene `is_default` marker. Schema 20 adds the separate scene `detailed_description` field. Schema 21 adds the authoritative operation `total_steps` count. Schema 22 adds explicit WSL `portproxy` configuration to registered services. Schema 23 adds the user-selected unique scene `purpose`, the persistent `video_jobs` state machine, and RTX 4090 `resource_leases`. Existing details and purposes remain unchanged when an older client omits those fields. Only one manager instance may use a database at a time, preventing duplicate script execution.
+The default database is `data/workstation-manager.db`. The current schema is 24 and migrates automatically at startup. Schema 19 adds the unique scene `is_default` marker. Schema 20 adds the separate scene `detailed_description` field. Schema 21 adds the authoritative operation `total_steps` count. Schema 22 adds explicit WSL `portproxy` configuration to registered services. Schema 23 adds the user-selected unique scene `purpose`, the persistent `video_jobs` state machine, and RTX 4090 `resource_leases`. Schema 24 removes the video-job callback authorization field. Existing details and purposes remain unchanged when an older client omits those fields. Only one manager instance may use a database at a time, preventing duplicate script execution.
 
 The service control plane stores desired and observed states separately. Scenes, the overview, and GPU service summaries use only observed state. SQLite is updated only when the state or error changes, so successful five-second checks do not write continuously. Neither scheduled resource sampling nor health monitoring runs service scripts; explicit deep checks, startup reconciliation without a default scene, and failed-action reconciliation invoke `status`. Resource sampling writes CPU, memory, and per-GPU load, VRAM, temperature, power, and graphics-clock metrics to SQLite and retains 24 hours by default; the in-memory queue remains limited to the latest 15 minutes.

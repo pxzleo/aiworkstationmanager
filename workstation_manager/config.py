@@ -62,7 +62,6 @@ class Settings:
     video_job_idle_timeout_seconds: float = 3600.0
     video_job_scene_timeout_seconds: float = 1200.0
     video_job_generation_timeout_seconds: float = 7200.0
-    video_submit_token: str = ""
 
     @property
     def history_capacity(self) -> int:
@@ -331,7 +330,6 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         "WM_VIDEO_JOB_IDLE_TIMEOUT_SECONDS": "video_job_idle_timeout_seconds",
         "WM_VIDEO_JOB_SCENE_TIMEOUT_SECONDS": "video_job_scene_timeout_seconds",
         "WM_VIDEO_JOB_GENERATION_TIMEOUT_SECONDS": "video_job_generation_timeout_seconds",
-        "WM_VIDEO_SUBMIT_TOKEN": "video_submit_token",
     }
     for env_name, key in env_mapping.items():
         if env_name in env:
@@ -346,9 +344,6 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         MIN_HISTORY_MINUTES,
         MAX_HISTORY_MINUTES,
     )
-    video_submit_token = str(data.get("video_submit_token", ""))
-    if video_submit_token and len(video_submit_token) < 32:
-        raise ConfigError("video_submit_token 留空表示禁用提交，启用时至少需要 32 个字符")
     return Settings(
         host=host,
         port=_port(data.get("port", 19100), "port"),
@@ -450,5 +445,4 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
             data.get("video_job_generation_timeout_seconds", 7200),
             "video_job_generation_timeout_seconds", 1, 7 * 24 * 60 * 60,
         ),
-        video_submit_token=video_submit_token,
     )

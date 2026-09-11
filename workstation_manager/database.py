@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 
 class DatabaseError(RuntimeError):
@@ -106,6 +106,7 @@ class Database:
                         21: self._migrate_to_21,
                         22: self._migrate_to_22,
                         23: self._migrate_to_23,
+                        24: self._migrate_to_24,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -557,6 +558,19 @@ class Database:
                 acquired_at TEXT NOT NULL
             )"""
         )
+
+    @staticmethod
+    def _migrate_to_24(connection: sqlite3.Connection) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_jobs'"
+        ).fetchone()
+        if table is None:
+            return
+        columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(video_jobs)")
+        }
+        if "callback_authorization" in columns:
+            connection.execute("ALTER TABLE video_jobs DROP COLUMN callback_authorization")
 
     @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
@@ -1492,7 +1506,7 @@ class Database:
             raise DatabaseError(f"按用途读取场景失败: {exc}") from exc
 
     @staticmethod
-    def _decode_video_job(row: sqlite3.Row, *, include_secret: bool = False) -> dict[str, Any]:
+    def _decode_video_job(row: sqlite3.Row, *, include_internal: bool = False) -> dict[str, Any]:
         item = dict(row)
         item["cancel_requested"] = bool(item["cancel_requested"])
         if item.get("progress"):
@@ -1502,8 +1516,7 @@ class Database:
                 raise DatabaseError(f"视频任务进度数据损坏: {exc}") from exc
         else:
             item["progress"] = None
-        if not include_secret:
-            item.pop("callback_authorization", None)
+        if not include_internal:
             item.pop("workflow_json", None)
         return item
 
@@ -1522,14 +1535,14 @@ class Database:
                     connection.execute(
                         """INSERT INTO video_jobs(
                                id,idempotency_key,payload_hash,session_id,workflow_path,workflow_json,
-                               requested_output_path,callback_url,callback_authorization,callback_directory,
+                               requested_output_path,callback_url,callback_directory,
                                status,phase,created_at,updated_at
-                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             item["id"], item["idempotency_key"], item["payload_hash"],
                             item["session_id"], item["workflow_path"], item["workflow_json"],
                             item.get("requested_output_path"), item["callback_url"],
-                            item.get("callback_authorization", ""), item.get("callback_directory"),
+                            item.get("callback_directory"),
                             "queued", "queued", now, now,
                         ),
                     )
@@ -1544,14 +1557,14 @@ class Database:
         except (sqlite3.Error, KeyError) as exc:
             raise DatabaseError(f"创建视频任务失败: {exc}") from exc
 
-    def get_video_job(self, job_id: str, *, include_secret: bool = False) -> dict[str, Any] | None:
+    def get_video_job(self, job_id: str, *, include_internal: bool = False) -> dict[str, Any] | None:
         try:
             with self.connect() as connection:
                 row = connection.execute(
                     "SELECT * FROM video_jobs WHERE id=?", (job_id,)
                 ).fetchone()
             return None if row is None else self._decode_video_job(
-                row, include_secret=include_secret
+                row, include_internal=include_internal
             )
         except sqlite3.Error as exc:
             raise DatabaseError(f"读取视频任务失败: {exc}") from exc
@@ -1574,7 +1587,7 @@ class Database:
                        WHERE status NOT IN ('succeeded','failed','cancelled')
                        ORDER BY created_at,id LIMIT 1"""
                 ).fetchone()
-            return None if row is None else self._decode_video_job(row, include_secret=True)
+            return None if row is None else self._decode_video_job(row, include_internal=True)
         except sqlite3.Error as exc:
             raise DatabaseError(f"读取待处理视频任务失败: {exc}") from exc
 

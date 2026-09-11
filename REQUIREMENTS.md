@@ -835,7 +835,7 @@ Web UI / HTTP API
 - SQLite 使用按版本顺序执行的可迁移 schema，升级时补齐表/列并保留旧数据。数据库保存多个同权限管理用户、有期会话、登录失败计数、只追加审计事件、脚本发现结果与每次扫描元数据；默认数据文件位于项目 `data/` 且不进入版本库。
 - 首次管理员设置和新增用户仅允许 loopback 操作，密码最少 4 个字符。密码使用 PBKDF2-HMAC-SHA256、每用户独立随机 salt 和常量时间比较；会话必须关联实际登录用户，仅在数据库保存 token 哈希，Cookie 使用 `HttpOnly` / `SameSite=Strict` 并可配置 `Secure`。
 - 未初始化管理员时禁止绑定非 loopback 地址。登录请求限制输入长度，并对同一来源 5 分钟内连续 5 次失败的后续尝试返回限速错误与安全审计。
-- 管理员完成初始化后，除 health、auth status、setup 和 login 外的 `/api/v1` 路由均需登录；除 setup/login 外的状态修改请求还需校验与会话绑定的 CSRF header。未初始化时，原有只读 API 仅供 loopback 验收。
+- 管理员完成初始化后，除 health、auth status、setup、login 和仅限 loopback 的 OpenCode 视频任务提交外，其他 `/api/v1` 路由均需登录；除 setup/login 和该本机视频任务提交外的状态修改请求还需校验与会话绑定的 CSRF header。未初始化时，原有只读 API 仅供 loopback 验收。
 - setup、login 成功/失败、logout 和每次脚本扫描记录时间、来源 IP、事件、结果与安全摘要；审计不得保存密码、会话 token 或 CSRF 明文。
 - 脚本扫描只识别 `.cmd` / `.bat` / `.ps1` / `.lnk`，仅读取元数据与文本。`.lnk` 允许使用固定 PowerShell COM 查询目标、参数和工作目录，必须 `shell=False`、固定查询程序且有超时；不得运行任何脚本、快捷方式或它们引用的程序。
 - 启动时扫描失败不得阻止管理器启动；文本解码或单个快捷方式失败必须作为该条目的结构化错误返回，不得中断其他条目。
@@ -1003,10 +1003,10 @@ Web UI / HTTP API
 - AXIS 是唯一后台调度所有者。OpenCode Skill/插件只准备提示词、参考图、音频和 ComfyUI API workflow JSON，使用本机接口提交任务、传递原 `session_id`，不保持模型进程常驻等待。
 - 场景增加由用户选择的 `purpose` 字段，取值为空、`code_agent` 或 `video_gen`；两个非空用途各只能分配给一个场景。任务调度按用途定位场景，不依赖可改名的场景名称或硬编码数据库 ID。
 - 视频任务使用独立持久化状态机和固定 RTX 4090 独占租约，支持幂等提交、超时、取消、进度、明确错误、AXIS 重启恢复和串行执行。租约存在时，普通服务/场景控制和登记修改必须拒绝执行；内部任务仅可用自己的任务 ID 完成 Video Gen 与 Code Agent 切换。
-- 提交接口首版只允许本机 loopback 直连，并要求至少 32 字符的专用 Bearer capability token；令牌未配置时关闭提交接口。`workflow_path` 必须指向已经存在的 ComfyUI API workflow JSON，提交时将已校验内容固化进任务，排队后修改或删除原文件不得改变实际执行载荷；调用者可明确指定绝对 `output_path`，未指定时写入 AXIS 默认视频输出目录。现有文件不得静默覆盖，视频必须分块写入同目录临时文件后原子改名。
+- 提交接口首版只允许本机 loopback 直连，不要求密钥、用户名、密码或认证头。`workflow_path` 必须指向已经存在的 ComfyUI API workflow JSON，提交时将已校验内容固化进任务，排队后修改或删除原文件不得改变实际执行载荷；调用者可明确指定绝对 `output_path`，未指定时写入 AXIS 默认视频输出目录。现有文件不得静默覆盖，视频必须分块写入同目录临时文件后原子改名。
 - 在切换到 Video Gen 前，AXIS 必须同时检查 NInfer `/slots` 与 `/metrics`。只要任何 slot 仍在处理、`requests_processing` 非零或 `requests_deferred` 非零，就保持等待且不提交场景切换；读取或解析失败时关闭失败，禁止把未知状态当作空闲。现有 NInfer 停止脚本最长约 540 秒的 processing+deferred 排空和拒绝强停边界保持不变。
 - 空闲后复用现有场景切换、operations、desired_state/observed_state、固定登记服务脚本和安全健康检查；不得另建第二套服务生命周期控制器。Video Gen 场景真正激活且 ComfyUI `/system_stats` 健康后，才向本机 `127.0.0.1:8189` 标准 `POST /prompt` 提交并持久化 `prompt_id`。
 - AXIS 轮询 ComfyUI `/queue` 与 `/history/{prompt_id}`，记录排队位置、执行状态、失败和输出。取消时必须先核对目标 `prompt_id` 的队列归属：排队任务只从 `/queue` 删除，只有目标任务确实处于 running 时才允许调用全局 `/interrupt`；未知归属关闭失败。AXIS 在提交请求与 `prompt_id` 落库之间重启时，只能根据提交携带的 `axis_job_id` 从 queue/history 恢复；无法确认时必须明确失败，禁止重复提交。
 - 成功、失败、取消及重启恢复都必须进入明确收尾：恢复 `code_agent` 场景，检查 NInfer `/health`、现有 4090 模型 `qwen3.8-27b` 的 `/v1/models`，并完成一次真实 OpenAI 兼容 `/v1/chat/completions` 请求。恢复或验证失败必须成为可见任务错误，不能把视频产出存在等同于任务成功。
-- 收尾成功后通过 loopback OpenCode 回调桥调用已核实的 `POST /session/{sessionID}/prompt_async`，向原会话发送完成、失败或取消结果，让模型继续原任务；瞬时失败进行有限退避重试，只有 HTTP 204 才记为已送达，重试耗尽形成明确失败终态。回调地址只允许 loopback；回调认证值不得出现在任务查询、日志或审计响应中。
+- OpenCode 插件必须提供 `axis_video_submit` 工具，自动读取当前 `sessionID` 和工作目录，并在随机 loopback 端口建立无认证回调桥；用户无需填写 AXIS/OpenCode 密钥、用户名、密码或认证头。收尾成功后 AXIS 向该桥发送完成、失败或取消结果，由插件通过 OpenCode 内部客户端继续原会话；瞬时失败进行有限退避重试，只有 HTTP 204 才记为已送达，重试耗尽形成明确失败终态。回调地址只允许 loopback。
 - AXIS 提供独立“视频任务”页面，持续显示排队、等待 NInfer、场景切换、ComfyUI 健康、`prompt_id`、生成/排队进度、输出收集、Code Agent 恢复、NInfer 验证和 OpenCode 回调阶段，并允许已登录用户取消非终态任务。

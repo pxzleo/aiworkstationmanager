@@ -179,7 +179,7 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             "idempotency_key": key, "session_id": "ses_test",
             "workflow_path": str(self.workflow), "output_path": None,
             "callback_url": "http://127.0.0.1:61714",
-            "callback_authorization": "Basic secret", "callback_directory": str(self.root),
+            "callback_directory": str(self.root),
         }
 
     def test_scene_purpose_is_unique_and_user_selected(self) -> None:
@@ -191,24 +191,25 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
                 "purpose": "video_gen", "service_ids": [],
             })
 
-    def test_idempotent_submit_redacts_callback_secret(self) -> None:
+    def test_database_schema_contains_no_callback_authorization_column(self) -> None:
+        with self.database.connect() as connection:
+            columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(video_jobs)")
+            }
+        self.assertNotIn("callback_authorization", columns)
+
+    def test_idempotent_submit_uses_non_secret_payload(self) -> None:
         manager = self.manager()
         first, created = manager.submit(self.payload())
         second, created_again = manager.submit(self.payload())
         self.assertTrue(created)
         self.assertFalse(created_again)
         self.assertEqual(first["id"], second["id"])
-        self.assertNotIn("callback_authorization", first)
         conflict = self.payload()
         conflict["session_id"] = "ses_other"
         with self.assertRaises(VideoJobError) as raised:
             manager.submit(conflict)
         self.assertEqual(raised.exception.code, "idempotency_conflict")
-        changed_secret = self.payload()
-        changed_secret["callback_authorization"] = "Basic replacement"
-        with self.assertRaises(VideoJobError) as secret_raised:
-            manager.submit(changed_secret)
-        self.assertEqual(secret_raised.exception.code, "idempotency_conflict")
 
     def test_ninfer_activity_requires_slots_and_queue_to_be_idle(self) -> None:
         client = NInferClient("http://127.0.0.1:8080", "qwen3.8-27b")
@@ -344,11 +345,10 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             self.registry.submit_scene_activation("a" * 32, "admin", "local")
         self.assertEqual(raised.exception.code, "gpu_4090_leased")
 
-    def test_video_submit_api_requires_dedicated_bearer_token(self) -> None:
-        token = "t" * 32
+    def test_video_submit_api_accepts_unauthenticated_loopback_only(self) -> None:
         settings = Settings(
             database_path=self.database.path, manager_log_path=self.root / "manager.log",
-            sample_interval_seconds=60, video_submit_token=token,
+            sample_interval_seconds=60,
         )
         sampler = Sampler(settings, collector=lambda _: {
             "sampled_at": "2099-01-01T00:00:00+00:00",
@@ -360,15 +360,23 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             create_app(settings, sampler, self.database, self.registry, manager),
             client=("127.0.0.1", 50000),
         ) as client:
-            self.assertEqual(client.post("/api/v1/video-jobs", json=self.payload("api-1")).status_code, 401)
-            self.assertEqual(client.post(
-                "/api/v1/video-jobs", json=self.payload("api-2"),
-                headers={"Authorization": "Bearer wrong"},
-            ).status_code, 401)
-            accepted = client.post(
-                "/api/v1/video-jobs", json=self.payload("api-3"),
-                headers={"Authorization": f"Bearer {token}"},
-            )
+            accepted = client.post("/api/v1/video-jobs", json=self.payload("api-1"))
             self.assertEqual(accepted.status_code, 202, accepted.text)
-            self.assertNotIn("callback_authorization", accepted.json()["job"])
             self.assertNotIn("workflow_json", accepted.json()["job"])
+            legacy = self.payload("api-legacy")
+            legacy["callback_authorization"] = "Basic obsolete"
+            self.assertEqual(client.post("/api/v1/video-jobs", json=legacy).status_code, 422)
+        remote_sampler = Sampler(settings, collector=lambda _: {
+            "sampled_at": "2099-01-01T00:00:00+00:00",
+            "host": {"cpu": {}, "memory": {}, "disks": []}, "gpus": [],
+            "docker": {"containers": []}, "ports": [], "collector_errors": [],
+        })
+        with TestClient(
+            create_app(
+                settings, remote_sampler, self.database, self.registry, self.manager()
+            ),
+            client=("192.0.2.10", 50000),
+        ) as client:
+            rejected = client.post("/api/v1/video-jobs", json=self.payload("api-2"))
+            self.assertEqual(rejected.status_code, 422)
+            self.assertEqual(rejected.json()["error"]["code"], "loopback_required")
