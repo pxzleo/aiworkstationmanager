@@ -2023,10 +2023,12 @@ class ApiRegistryTests(unittest.TestCase):
                 scene = client.post("/api/v1/scenes", headers=headers, json={
                     "name": "API 场景", "description": "简短介绍",
                     "detailed_description": "API Base：http://127.0.0.1:8080/v1",
+                    "is_default_generation": True,
                     "service_ids": [service_id],
                 })
                 self.assertEqual(scene.status_code, 201, scene.text)
                 self.assertEqual(scene.json()["description"], "简短介绍")
+                self.assertEqual(scene.json()["is_default_generation"], 1)
                 self.assertEqual(
                     scene.json()["detailed_description"],
                     "API Base：http://127.0.0.1:8080/v1",
@@ -2043,6 +2045,7 @@ class ApiRegistryTests(unittest.TestCase):
                     legacy_update.json()["detailed_description"],
                     "API Base：http://127.0.0.1:8080/v1",
                 )
+                self.assertEqual(legacy_update.json()["is_default_generation"], 1)
                 reordered = client.post(
                     "/api/v1/scenes/reorder", headers=headers, json={"scene_ids": [scene.json()["id"]]}
                 )
