@@ -150,7 +150,7 @@
 
         <section class="page" id="page-video-jobs" data-title="视频任务">
           <div class="page-heading"><div><p class="eyebrow">RTX 4090 串行调度</p><h1>视频任务</h1><p>任务仅由本机 OpenCode 提交；这里显示完整阶段、ComfyUI prompt_id、输出和恢复结果，并允许取消。</p></div><button class="button secondary" id="refreshVideoJobsButton">刷新任务</button></div>
-          <div class="status-banner" id="videoJobNotice">AXIS 会等待 NInfer processing 与 deferred 同时为 0，之后才允许切换到 Video Gen。</div>
+          <div class="status-banner" id="videoJobNotice">AXIS 会等待 NInfer processing 与 deferred 同时为 0，再切换到指定或默认生成场景，完成后恢复原场景。</div>
           <section class="operation-list video-job-list" id="videoJobList" aria-live="polite"><p class="empty-state">尚无视频任务。</p></section>
         </section>
 
@@ -266,7 +266,7 @@
         <label>场景名称<input id="sceneName" maxlength="100" required></label>
         <label>简短介绍<textarea id="sceneDescription" maxlength="1000"></textarea></label>
         <label>详细使用说明<textarea id="sceneDetailedDescription" class="scene-detailed-description" maxlength="8000" placeholder="填写外部 URL、协议、模型名和调用注意事项"></textarea></label>
-        <label>场景用途<select id="scenePurpose"><option value="">普通场景</option><option value="code_agent">Code Agent</option><option value="video_gen">Video Gen</option></select><small>Code Agent 与 Video Gen 各只能指定一个场景，供视频调度器安全切换。</small></label>
+        <label class="scene-default-generation"><input id="sceneDefaultGeneration" type="checkbox"><span>默认生成场景<br><small>OpenCode 未指定生成场景名称时使用此场景。</small></span></label>
         <div class="scene-service-editor"><strong>需要启动的服务</strong><small>使用箭头调整启动顺序</small><div id="sceneServiceChoices"></div></div>
       </div>
       <footer class="dialog-footer"><p class="auth-error" id="sceneFormError" role="alert"></p><div class="dialog-footer-actions"><button class="button secondary" type="button" data-close="sceneDialog">取消</button><button class="button primary dialog-save" type="submit"><svg><use href="#i-save"/></svg><span>保存场景</span></button></div></footer>

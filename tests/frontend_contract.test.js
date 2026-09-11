@@ -292,13 +292,13 @@ test('scene editor and management log remain wired', () => {
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
   assert.ok(html.includes('data-page="video-jobs"'));
   assert.ok(html.includes('id="videoJobList"'));
-  assert.ok(html.includes('id="scenePurpose"'));
-  assert.ok(html.includes('<option value="code_agent">'));
-  assert.ok(html.includes('<option value="video_gen">'));
+  assert.ok(html.includes('id="sceneDefaultGeneration"'));
+  assert.ok(html.includes('默认生成场景'));
+  assert.ok(!html.includes('id="scenePurpose"'));
   assert.ok(js.includes("api('/video-jobs?limit=100'"));
   assert.ok(js.includes('function renderVideoJobs'));
   assert.ok(js.includes('function cancelVideoJob'));
-  for (const stage of ['等待 NInfer 空闲', '切换 Video Gen', '检查 ComfyUI', '提交工作流', 'ComfyUI 生成中', '收集输出', '恢复 Code Agent', '验证 NInfer', '回调 OpenCode']) {
+  for (const stage of ['等待 NInfer 空闲', '切换生成场景', '检查 ComfyUI', '提交工作流', 'ComfyUI 生成中', '收集输出', '恢复原场景', '回调 OpenCode']) {
     assert.ok(js.includes(stage), `missing video stage ${stage}`);
   }
 });

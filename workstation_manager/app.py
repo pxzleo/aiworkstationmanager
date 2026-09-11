@@ -100,7 +100,7 @@ class ScenePayload(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=1000)
     detailed_description: str | None = Field(default=None, max_length=8000)
-    purpose: str | None = Field(default=None, pattern=r"^(|code_agent|video_gen)$")
+    is_default_generation: bool = False
     service_ids: list[str] = Field(default_factory=list, max_length=1000)
 
 
@@ -120,6 +120,7 @@ class VideoJobPayload(BaseModel):
     session_id: str = Field(min_length=1, max_length=200)
     workflow_path: str = Field(min_length=1, max_length=2048)
     output_path: str | None = Field(default=None, max_length=2048)
+    scene_name: str | None = Field(default=None, max_length=100)
     callback_url: str = Field(min_length=1, max_length=2048)
     callback_directory: str | None = Field(default=None, max_length=2048)
 

@@ -33,7 +33,7 @@ AXIS unifies the services of an AI workstation and organizes them into different
 - Detect external starts, stops, failures, and unexpected exits through lightweight local health checks
 - Create and reorder scenes that switch an ordered group of services
 - Submit, cancel, and monitor every stage of local video generation on a dedicated Video Jobs page
-- Serialize Code Agent and Video Gen scenes with an exclusive GPU lease, then restore and verify NInfer
+- Switch to a named or default generation scene under an exclusive GPU lease, then restore the original scene
 - Monitor CPU, memory, and every detected NVIDIA GPU in distinct sections with consistent scales, current/average/peak/minimum values, and key hardware metrics
 - Record service actions and scene-switch steps, times, and results
 - Use Chinese, English, or automatic browser-language detection
@@ -83,7 +83,7 @@ The progress window shows every step and can cancel steps that have not started.
 
 A project can have one optional default scene. Setting it does not switch immediately; AXIS activates it the next time the manager starts. Clearing the default only removes this startup behavior and does not stop current services; on the next startup AXIS performs read-only reconciliation for every registered service without starting or stopping it.
 
-A scene can be marked for general use, `Code Agent`, or `Video Gen`; only one scene may own each specialized purpose. OpenCode submits a ComfyUI API workflow directly to the local `POST /api/v1/video-jobs` endpoint through the bundled `axis_video_submit` tool, with no token, username, password, or authorization header. AXIS persists the job, waits until NInfer has no processing or deferred requests, holds an exclusive GPU lease, switches to the video scene, monitors the ComfyUI `prompt_id`, stores the output, restores the Code Agent scene, verifies NInfer with a real inference request, and finally calls back through the plugin's loopback bridge to the original OpenCode session. AXIS never switches while NInfer is busy. Version 1 accepts submissions only from the local machine; an explicit output path wins, otherwise the configured default directory is used.
+Scenes no longer have `Code Agent` or `Video Gen` types. The scene editor only adds a single **Default generation scene** checkbox, and at most one scene can be selected. OpenCode submits a ComfyUI API workflow directly to the local `POST /api/v1/video-jobs` endpoint through the bundled `axis_video_submit` tool, with no token, username, password, or authorization header. A request may name its generation scene; otherwise AXIS uses the default generation scene. AXIS persists the job and original active scene, waits until NInfer has no processing or deferred requests, holds an exclusive GPU lease, switches to the generation scene, monitors the ComfyUI `prompt_id`, stores the output, restores the original scene, and finally calls back through the plugin's loopback bridge to the original OpenCode session. AXIS never switches while NInfer is busy. Version 1 accepts submissions only from the local machine; an explicit output path wins, otherwise the configured default directory is used.
 
 Install the OpenCode integration, then restart OpenCode:
 
@@ -91,7 +91,7 @@ Install the OpenCode integration, then restart OpenCode:
 .\integrations\opencode\Install-AxisVideo.ps1
 ```
 
-In OpenCode, enter `使用场景切换技能生成视频` (use the scene-switching skill to generate a video). OpenCode then prepares the ComfyUI API workflow and calls `axis_video_submit`. The plugin obtains the current session ID and directory automatically, while the AXIS Video Jobs page shows progress and the final result returns to the original session.
+In OpenCode, enter `使用场景切换技能生成视频` (use the scene-switching skill to generate a video), optionally naming the generation scene in the same request. OpenCode prepares the ComfyUI API workflow and calls `axis_video_submit`; without a name, AXIS uses the default generation scene. The plugin obtains the current session ID and directory automatically, while the AXIS Video Jobs page shows progress, restores the original scene, and returns the final result to the original session.
 
 On a private computer or phone, select **Sign in automatically on this device** to stay signed in for 30 days. AXIS never stores the password in the browser; signing out or changing the password still revokes the session immediately.
 

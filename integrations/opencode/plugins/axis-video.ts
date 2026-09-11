@@ -49,6 +49,7 @@ export const AxisVideoPlugin: Plugin = async ({ client }) => {
         args: {
           workflow_path: tool.schema.string().describe("现有 ComfyUI API workflow JSON 的绝对路径"),
           output_path: tool.schema.string().optional().describe("可选的绝对输出文件路径；省略时使用 AXIS 默认目录"),
+          scene_name: tool.schema.string().optional().describe("可选的生成场景名称；省略时使用 AXIS 默认生成场景"),
         },
         async execute(args, context) {
           const identity = JSON.stringify({
@@ -56,6 +57,7 @@ export const AxisVideoPlugin: Plugin = async ({ client }) => {
             messageID: context.messageID,
             workflowPath: args.workflow_path,
             outputPath: args.output_path || null,
+            sceneName: args.scene_name || null,
           })
           const idempotencyKey = `opencode-${createHash("sha256").update(identity).digest("hex")}`
           const payload = {
@@ -63,6 +65,7 @@ export const AxisVideoPlugin: Plugin = async ({ client }) => {
             session_id: context.sessionID,
             workflow_path: args.workflow_path,
             output_path: args.output_path || null,
+            scene_name: args.scene_name || null,
             callback_url: `http://127.0.0.1:${callback.port}`,
             callback_directory: context.directory,
           }

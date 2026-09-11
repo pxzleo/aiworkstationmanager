@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 
 class DatabaseError(RuntimeError):
@@ -107,6 +107,7 @@ class Database:
                         22: self._migrate_to_22,
                         23: self._migrate_to_23,
                         24: self._migrate_to_24,
+                        25: self._migrate_to_25,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -571,6 +572,103 @@ class Database:
         }
         if "callback_authorization" in columns:
             connection.execute("ALTER TABLE video_jobs DROP COLUMN callback_authorization")
+
+    @classmethod
+    def _migrate_to_25(cls, connection: sqlite3.Connection) -> None:
+        legacy_video = None
+        legacy_code = None
+        scenes_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='scenes'"
+        ).fetchone()
+        if scenes_table is not None:
+            cls._ensure_column(
+                connection, "scenes", "is_default_generation", "INTEGER NOT NULL DEFAULT 0"
+            )
+            cls._ensure_column(
+                connection, "scenes", "is_last_activated", "INTEGER NOT NULL DEFAULT 0"
+            )
+            connection.execute(
+                "UPDATE scenes SET is_default_generation=0 "
+                "WHERE is_default_generation NOT IN (0, 1)"
+            )
+            legacy_video = connection.execute(
+                "SELECT id,name FROM scenes WHERE purpose='video_gen' "
+                "ORDER BY updated_at DESC,id LIMIT 1"
+            ).fetchone()
+            legacy_code = connection.execute(
+                "SELECT id,name FROM scenes WHERE purpose='code_agent' "
+                "ORDER BY updated_at DESC,id LIMIT 1"
+            ).fetchone()
+            defaults = connection.execute(
+                "SELECT id FROM scenes WHERE is_default_generation=1 "
+                "ORDER BY updated_at DESC,id"
+            ).fetchall()
+            if not defaults and legacy_video is not None:
+                connection.execute(
+                    "UPDATE scenes SET is_default_generation=1 WHERE id=?",
+                    (legacy_video["id"],),
+                )
+                defaults = [legacy_video]
+            for row in defaults[1:]:
+                connection.execute(
+                    "UPDATE scenes SET is_default_generation=0 WHERE id=?", (row["id"],)
+                )
+            last_activated = connection.execute(
+                "SELECT id FROM scenes WHERE is_last_activated=1 ORDER BY updated_at DESC,id"
+            ).fetchall()
+            if not last_activated:
+                operations_table = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='operations'"
+                ).fetchone()
+                if operations_table is not None:
+                    latest_scene = connection.execute(
+                        """SELECT target_id FROM operations
+                           WHERE kind='scene' AND action='activate' AND status='succeeded'
+                           ORDER BY finished_at DESC,created_at DESC,id DESC LIMIT 1"""
+                    ).fetchone()
+                    if latest_scene is not None:
+                        connection.execute(
+                            "UPDATE scenes SET is_last_activated=1 WHERE id=?",
+                            (latest_scene["target_id"],),
+                        )
+                        last_activated = [latest_scene]
+            for row in last_activated[1:]:
+                connection.execute(
+                    "UPDATE scenes SET is_last_activated=0 WHERE id=?", (row["id"],)
+                )
+            connection.execute("DROP INDEX IF EXISTS idx_scenes_unique_purpose")
+            connection.execute("UPDATE scenes SET purpose='' WHERE purpose <> ''")
+            connection.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_scenes_single_default_generation
+                   ON scenes(is_default_generation) WHERE is_default_generation=1"""
+            )
+            connection.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_scenes_single_last_activated
+                   ON scenes(is_last_activated) WHERE is_last_activated=1"""
+            )
+
+        video_jobs_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_jobs'"
+        ).fetchone()
+        if video_jobs_table is None:
+            return
+        for column in ("generation_scene_id", "generation_scene_name",
+                       "original_scene_id", "original_scene_name"):
+            cls._ensure_column(connection, "video_jobs", column, "TEXT")
+        if legacy_video is not None:
+            connection.execute(
+                """UPDATE video_jobs
+                   SET generation_scene_id=COALESCE(generation_scene_id,?),
+                       generation_scene_name=COALESCE(generation_scene_name,?)""",
+                (legacy_video["id"], legacy_video["name"]),
+            )
+        if legacy_code is not None:
+            connection.execute(
+                """UPDATE video_jobs
+                   SET original_scene_id=COALESCE(original_scene_id,?),
+                       original_scene_name=COALESCE(original_scene_name,?)""",
+                (legacy_code["id"], legacy_code["name"]),
+            )
 
     @staticmethod
     def _no_op_migration(_: sqlite3.Connection) -> None:
@@ -1356,6 +1454,8 @@ class Database:
                 result: list[dict[str, Any]] = []
                 for row in rows:
                     item = dict(row)
+                    item.pop("purpose", None)
+                    item.pop("is_last_activated", None)
                     services = connection.execute(
                         """SELECT ss.service_id,rs.name FROM scene_services ss
                            JOIN registered_services rs ON rs.id=ss.service_id
@@ -1374,6 +1474,47 @@ class Database:
 
     def get_default_scene(self) -> dict[str, Any] | None:
         return next((item for item in self.list_scenes() if item["is_default"] == 1), None)
+
+    def get_default_generation_scene(self) -> dict[str, Any] | None:
+        return next(
+            (item for item in self.list_scenes() if item["is_default_generation"] == 1),
+            None,
+        )
+
+    def get_scene_by_name(self, name: str) -> dict[str, Any] | None:
+        lowered = name.casefold()
+        return next(
+            (item for item in self.list_scenes() if str(item["name"]).casefold() == lowered),
+            None,
+        )
+
+    def get_last_activated_scene(self) -> dict[str, Any] | None:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    "SELECT id FROM scenes WHERE is_last_activated=1"
+                ).fetchone()
+            return None if row is None else self.get_scene(row["id"])
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取最后激活场景失败: {exc}") from exc
+
+    def set_last_activated_scene(self, scene_id: str) -> None:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    if connection.execute(
+                        "SELECT 1 FROM scenes WHERE id=?", (scene_id,)
+                    ).fetchone() is None:
+                        raise DatabaseError("场景不存在")
+                    connection.execute(
+                        "UPDATE scenes SET is_last_activated=0 WHERE is_last_activated=1"
+                    )
+                    connection.execute(
+                        "UPDATE scenes SET is_last_activated=1 WHERE id=?", (scene_id,)
+                    )
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"记录最后激活场景失败: {exc}") from exc
 
     def set_default_scene(self, scene_id: str, enabled: bool) -> bool:
         try:
@@ -1407,13 +1548,20 @@ class Database:
                     row = connection.execute(
                         "SELECT COALESCE(MAX(display_order), -1) + 1 AS next_order FROM scenes"
                     ).fetchone()
+                    if item.get("is_default_generation"):
+                        connection.execute(
+                            "UPDATE scenes SET is_default_generation=0 "
+                            "WHERE is_default_generation=1"
+                        )
                     connection.execute(
                         """INSERT INTO scenes(
-                               id,name,description,detailed_description,purpose,display_order,
+                               id,name,description,detailed_description,purpose,
+                               is_default_generation,display_order,
                                created_at,updated_at
-                           ) VALUES (?,?,?,?,?,?,?,?)""",
+                           ) VALUES (?,?,?,?,?,?,?,?,?)""",
                         (item["id"], item["name"], item["description"],
-                         item.get("detailed_description", ""), item.get("purpose", ""),
+                         item.get("detailed_description", ""), "",
+                         int(bool(item.get("is_default_generation"))),
                          row["next_order"], now, now),
                     )
                     self._replace_scene_services(connection, item["id"], item["service_ids"])
@@ -1426,18 +1574,27 @@ class Database:
         try:
             with self.connect() as connection:
                 with connection:
-                    if "detailed_description" in item and "purpose" in item:
+                    if item.get("is_default_generation"):
+                        connection.execute(
+                            "UPDATE scenes SET is_default_generation=0 "
+                            "WHERE is_default_generation=1 AND id<>?", (scene_id,)
+                        )
+                    if "detailed_description" in item and "is_default_generation" in item:
                         cursor = connection.execute(
                             """UPDATE scenes
-                               SET name=?,description=?,detailed_description=?,purpose=?,updated_at=?
+                               SET name=?,description=?,detailed_description=?,
+                                   is_default_generation=?,updated_at=?
                                WHERE id=?""",
                             (item["name"], item["description"],
-                             item["detailed_description"], item["purpose"], utc_now(), scene_id),
+                             item["detailed_description"],
+                             int(bool(item["is_default_generation"])), utc_now(), scene_id),
                         )
-                    elif "purpose" in item:
+                    elif "is_default_generation" in item:
                         cursor = connection.execute(
-                            "UPDATE scenes SET name=?,description=?,purpose=?,updated_at=? WHERE id=?",
-                            (item["name"], item["description"], item["purpose"], utc_now(), scene_id),
+                            """UPDATE scenes SET name=?,description=?,is_default_generation=?,
+                               updated_at=? WHERE id=?""",
+                            (item["name"], item["description"],
+                             int(bool(item["is_default_generation"])), utc_now(), scene_id),
                         )
                     elif "detailed_description" in item:
                         cursor = connection.execute(
@@ -1495,16 +1652,6 @@ class Database:
         except sqlite3.Error as exc:
             raise DatabaseError(f"保存场景排序失败: {exc}") from exc
 
-    def get_scene_by_purpose(self, purpose: str) -> dict[str, Any] | None:
-        try:
-            with self.connect() as connection:
-                row = connection.execute(
-                    "SELECT id FROM scenes WHERE purpose=?", (purpose,)
-                ).fetchone()
-            return None if row is None else self.get_scene(row["id"])
-        except sqlite3.Error as exc:
-            raise DatabaseError(f"按用途读取场景失败: {exc}") from exc
-
     @staticmethod
     def _decode_video_job(row: sqlite3.Row, *, include_internal: bool = False) -> dict[str, Any]:
         item = dict(row)
@@ -1536,14 +1683,16 @@ class Database:
                         """INSERT INTO video_jobs(
                                id,idempotency_key,payload_hash,session_id,workflow_path,workflow_json,
                                requested_output_path,callback_url,callback_directory,
+                               generation_scene_id,generation_scene_name,
                                status,phase,created_at,updated_at
-                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             item["id"], item["idempotency_key"], item["payload_hash"],
                             item["session_id"], item["workflow_path"], item["workflow_json"],
-                            item.get("requested_output_path"), item["callback_url"],
-                            item.get("callback_directory"),
-                            "queued", "queued", now, now,
+                             item.get("requested_output_path"), item["callback_url"],
+                             item.get("callback_directory"),
+                             item["generation_scene_id"], item["generation_scene_name"],
+                             "queued", "queued", now, now,
                         ),
                     )
                     row = connection.execute(
@@ -1595,7 +1744,7 @@ class Database:
         allowed = {
             "status", "phase", "prompt_id", "output_path", "result", "progress",
             "error_code", "error_summary", "cancel_requested", "started_at", "finished_at",
-            "callback_attempts",
+            "callback_attempts", "original_scene_id", "original_scene_name",
         }
         if not fields or set(fields) - allowed:
             raise DatabaseError("视频任务更新字段不受支持")

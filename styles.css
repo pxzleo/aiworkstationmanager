@@ -781,6 +781,9 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .control-dialog input, .control-dialog textarea { width: 100%; border: 1px solid var(--line, #d9dde5); border-radius: 10px; padding: 11px 12px; background: transparent; color: inherit; }
 .control-dialog textarea { min-height: 82px; resize: vertical; font: inherit; }
 .control-dialog .scene-detailed-description { min-height: 150px; }
+.control-dialog .scene-default-generation { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 10px; }
+.control-dialog .scene-default-generation input { width: 18px; height: 18px; margin: 2px 0 0; padding: 0; }
+.scene-default-generation small { color: var(--muted); }
 .editor-dialog { max-height: calc(100vh - 32px); overflow: auto; }
 .scene-editor-dialog { width: min(720px, calc(100vw - 32px)); overflow: hidden; }
 .control-dialog .dialog-shell { height: min(780px, calc(100vh - 32px)); max-height: calc(100vh - 32px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 0; padding: 0; overflow: hidden; }

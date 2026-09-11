@@ -73,10 +73,10 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 
 `name` 最长 100 字符，`description` 最长 1000 字符，`script_path` 必须是现有 `.ps1`、`.cmd` 或 `.bat` 绝对路径，`gpu_label` 最长 100 字符，`port` 为 `1..65535`，`ui_url` 必须为空或完整 HTTP/HTTPS 地址。启用 `wsl_portproxy_enabled` 后，管理器启动及任一服务启动/重启前会统一校准全部已登记的 Windows `portproxy`，关闭、修改或删除登记时会清理旧映射；管理器仅更新或清理自己上次成功同步过的目标，未知现有映射会拒绝操作。同步成功还要求 IP Helper 实际持有监听端口。监听地址只允许 `0.0.0.0`、loopback 或私网 IPv4，监听端口为空时使用服务端口，WSL 目标端口为空时使用监听端口。
 
-登记或修改场景使用有序且不包含未知服务的 `service_ids`；重复 ID 会按首次出现去重。`description` 是最长 1000 字符的卡片简短介绍，`detailed_description` 是最长 8000 字符的独立详细使用说明。`purpose` 可为空或为 `code_agent`、`video_gen`；两个非空用途各只能分配给一个场景，由用户在场景编辑器中选择：
+登记或修改场景使用有序且不包含未知服务的 `service_ids`；重复 ID 会按首次出现去重。`description` 是最长 1000 字符的卡片简短介绍，`detailed_description` 是最长 8000 字符的独立详细使用说明。`is_default_generation` 表示默认生成场景，最多只能有一个，由用户在场景编辑器中勾选：
 
 ```json
-{"name":"开发","description":"开发服务组","detailed_description":"API Base：http://127.0.0.1:8080/v1","purpose":"code_agent","service_ids":["服务ID1","服务ID2"]}
+{"name":"视频生成","description":"视频服务组","detailed_description":"ComfyUI：http://127.0.0.1:8189","is_default_generation":true,"service_ids":["服务ID1","服务ID2"]}
 ```
 
 场景排序的 `scene_ids` 必须恰好包含全部现有场景 ID 且不得重复：
@@ -163,16 +163,17 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
   "session_id": "ses_xxx",
   "workflow_path": "D:\\AIWork\\job\\h3-api-workflow.json",
   "output_path": "D:\\AIWork\\job\\final.mp4",
+  "scene_name": "视频生成",
   "callback_url": "http://127.0.0.1:61714",
   "callback_directory": "D:\\AIWork\\job"
 }
 ```
 
-`workflow_path` 必须是现有 JSON 绝对路径，内容是 ComfyUI API workflow 的 `prompt` 对象；提交时内容会固化进任务记录，之后修改原文件不会改变已排队任务。`output_path` 可省略；指定时必须是绝对路径且不会覆盖现有文件，省略时写入 `video_output_directory/<job_id>/`。视频以分块方式写入同目录临时文件，再原子改名。`callback_url` 只允许无路径、查询、片段或凭据的 loopback 地址，`callback_directory` 可传递原 OpenCode 工作目录。提交和回调均不携带认证信息；AXIS 在收尾后调用 OpenCode 插件的本机回调桥，瞬时失败最多退避重试三次。查询和取消仍使用 AXIS 管理界面的登录态及 CSRF。
+`workflow_path` 必须是现有 JSON 绝对路径，内容是 ComfyUI API workflow 的 `prompt` 对象；提交时内容会固化进任务记录，之后修改原文件不会改变已排队任务。`output_path` 可省略；指定时必须是绝对路径且不会覆盖现有文件，省略时写入 `video_output_directory/<job_id>/`。`scene_name` 可指定现有生成场景名称，省略时使用场景设置中唯一的默认生成场景。视频以分块方式写入同目录临时文件，再原子改名。`callback_url` 只允许无路径、查询、片段或凭据的 loopback 地址，`callback_directory` 可传递原 OpenCode 工作目录。提交和回调均不携带认证信息；AXIS 在收尾后调用 OpenCode 插件的本机回调桥，瞬时失败最多退避重试三次。查询和取消仍使用 AXIS 管理界面的登录态及 CSRF。
 
 `integrations/opencode/plugins/axis-video.ts` 注册 `axis_video_submit` 工具并自动读取当前 `sessionID` 与工作目录，同时在随机 loopback 端口创建无认证回调桥；收到 AXIS 结果后通过 OpenCode 内部客户端继续原会话。运行 `integrations/opencode/Install-AxisVideo.ps1` 可把插件和 `axis-video` Skill 安装到当前用户的 OpenCode 配置目录，重启 OpenCode 后输入“使用场景切换技能生成视频”即可触发。
 
-调度器先获取 RTX 4090 独占租约，阻止等待期间出现新的人工场景切换，再同时检查 NInfer `/slots` 和 `/metrics`；只有所有 slot 空闲且 `requests_processing=0`、`requests_deferred=0` 才切换 `video_gen` 场景。随后验证 ComfyUI `/system_stats`、通过 `/prompt` 获取 `prompt_id`、轮询 `/queue` 与 `/history/{prompt_id}`、通过 `/view` 收集视频。成功、失败和取消都进入 `code_agent` 场景恢复，再验证 NInfer `/health`、`/v1/models` 和真实 `/v1/chat/completions` 请求，最后异步回调原 `session_id`。AXIS 重启时恢复非终态任务；若重启发生在提交请求与 `prompt_id` 落库之间，只从 ComfyUI queue/history 的 `axis_job_id` 恢复，无法确认时明确失败并拒绝重复提交。
+调度器先获取 RTX 4090 独占租约并持久化当前完整激活的原场景，阻止等待期间出现新的人工场景切换，再同时检查 NInfer `/slots` 和 `/metrics`；只有所有 slot 空闲且 `requests_processing=0`、`requests_deferred=0` 才切换到请求指定的生成场景，未指定时切换到默认生成场景。随后验证 ComfyUI `/system_stats`、通过 `/prompt` 获取 `prompt_id`、轮询 `/queue` 与 `/history/{prompt_id}`、通过 `/view` 收集视频。成功、失败和取消都恢复持久化的原场景，最后异步回调原 `session_id`。AXIS 重启时恢复非终态任务；若重启发生在提交请求与 `prompt_id` 落库之间，只从 ComfyUI queue/history 的 `axis_job_id` 恢复，无法确认时明确失败并拒绝重复提交。
 
 动作接口返回异步操作；前端通过操作详情展示进度。取消不会撤销已经完成的服务动作。设置默认场景本身不会立即切换；管理器下次启动后以 `system/startup` 提交普通场景切换操作。没有默认场景时启动过程不控制任何服务，但会逐个执行只读 `status` 并对第一轮的 `unknown` 重试一次，再把明确的 `running`/`stopped` 同步为期望状态；`unhealthy`/`unknown` 对应期望状态 `unknown`。
 
@@ -235,6 +236,6 @@ WM_VIDEO_JOB_GENERATION_TIMEOUT_SECONDS
 
 ## 数据与并发
 
-默认数据库是 `data/workstation-manager.db`，当前 schema 为 24，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置；schema 23 增加用户选择且唯一的场景 `purpose`、持久化 `video_jobs` 状态机和 RTX 4090 `resource_leases`；schema 24 删除视频任务的回调认证字段。旧客户端更新场景时若未提交详细说明或用途字段，已有值会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
+默认数据库是 `data/workstation-manager.db`，当前 schema 为 25，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置；schema 23 增加旧版场景用途、持久化 `video_jobs` 状态机和 RTX 4090 `resource_leases`；schema 24 删除视频任务的回调认证字段；schema 25 将旧版 `video_gen` 用途迁移为唯一的 `is_default_generation` 勾选项，并为视频任务保存生成场景及原场景。旧客户端更新场景时若未提交详细说明或默认生成场景字段，已有值会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
 
 服务控制面分别保存期望状态和实际观察状态。场景、总览及 GPU 服务摘要只使用实际观察状态；状态或错误变化时才写入 SQLite，连续成功检查不会每 5 秒写盘。资源监控定时采样和健康监控都不会调用服务脚本；显式深度检查、无默认场景的启动校准及失败动作校准才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留 24 小时；内存队列固定只保留最近 15 分钟。

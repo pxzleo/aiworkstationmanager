@@ -1008,12 +1008,12 @@ Web UI / HTTP API
 ### 20.10 OpenCode 与视频生成串行共用 RTX 4090
 
 - AXIS 是唯一后台调度所有者。OpenCode Skill/插件只准备提示词、参考图、音频和 ComfyUI API workflow JSON，使用本机接口提交任务、传递原 `session_id`，不保持模型进程常驻等待。
-- 场景增加由用户选择的 `purpose` 字段，取值为空、`code_agent` 或 `video_gen`；两个非空用途各只能分配给一个场景。任务调度按用途定位场景，不依赖可改名的场景名称或硬编码数据库 ID。
-- 视频任务使用独立持久化状态机和固定 RTX 4090 独占租约，支持幂等提交、超时、取消、进度、明确错误、AXIS 重启恢复和串行执行。租约存在时，普通服务/场景控制和登记修改必须拒绝执行；内部任务仅可用自己的任务 ID 完成 Video Gen 与 Code Agent 切换。
+- 场景不增加 `code_agent`、`video_gen` 等类型设置；场景编辑器只增加一个 `is_default_generation`“默认生成场景”勾选项，且最多一个场景可勾选。视频任务可按名称指定现有生成场景，未指定时使用默认生成场景。
+- 视频任务使用独立持久化状态机和固定 RTX 4090 独占租约，支持幂等提交、超时、取消、进度、明确错误、AXIS 重启恢复和串行执行。租约存在时，普通服务/场景控制和登记修改必须拒绝执行；任务必须先等待已有服务/场景操作结束，再根据最后一次成功激活且当前仍完整生效的场景持久化原场景，并在收尾时恢复该场景；不得按相同服务集合或显示顺序猜测原场景。
 - 提交接口首版只允许本机 loopback 直连，不要求密钥、用户名、密码或认证头。`workflow_path` 必须指向已经存在的 ComfyUI API workflow JSON，提交时将已校验内容固化进任务，排队后修改或删除原文件不得改变实际执行载荷；调用者可明确指定绝对 `output_path`，未指定时写入 AXIS 默认视频输出目录。现有文件不得静默覆盖，视频必须分块写入同目录临时文件后原子改名。
-- 在切换到 Video Gen 前，AXIS 必须同时检查 NInfer `/slots` 与 `/metrics`。只要任何 slot 仍在处理、`requests_processing` 非零或 `requests_deferred` 非零，就保持等待且不提交场景切换；读取或解析失败时关闭失败，禁止把未知状态当作空闲。现有 NInfer 停止脚本最长约 540 秒的 processing+deferred 排空和拒绝强停边界保持不变。
-- 空闲后复用现有场景切换、operations、desired_state/observed_state、固定登记服务脚本和安全健康检查；不得另建第二套服务生命周期控制器。Video Gen 场景真正激活且 ComfyUI `/system_stats` 健康后，才向本机 `127.0.0.1:8189` 标准 `POST /prompt` 提交并持久化 `prompt_id`。
+- 在切换到生成场景前，AXIS 必须同时检查 NInfer `/slots` 与 `/metrics`。只要任何 slot 仍在处理、`requests_processing` 非零或 `requests_deferred` 非零，就保持等待且不提交场景切换；读取或解析失败时关闭失败，禁止把未知状态当作空闲。现有 NInfer 停止脚本最长约 540 秒的 processing+deferred 排空和拒绝强停边界保持不变。
+- 空闲后复用现有场景切换、operations、desired_state/observed_state、固定登记服务脚本和安全健康检查；不得另建第二套服务生命周期控制器。指定或默认生成场景真正激活且 ComfyUI `/system_stats` 健康后，才向本机 `127.0.0.1:8189` 标准 `POST /prompt` 提交并持久化 `prompt_id`。
 - AXIS 轮询 ComfyUI `/queue` 与 `/history/{prompt_id}`，记录排队位置、执行状态、失败和输出。取消时必须先核对目标 `prompt_id` 的队列归属：排队任务只从 `/queue` 删除，只有目标任务确实处于 running 时才允许调用全局 `/interrupt`；未知归属关闭失败。AXIS 在提交请求与 `prompt_id` 落库之间重启时，只能根据提交携带的 `axis_job_id` 从 queue/history 恢复；无法确认时必须明确失败，禁止重复提交。
-- 成功、失败、取消及重启恢复都必须进入明确收尾：恢复 `code_agent` 场景，检查 NInfer `/health`、现有 4090 模型 `qwen3.8-27b` 的 `/v1/models`，并完成一次真实 OpenAI 兼容 `/v1/chat/completions` 请求。恢复或验证失败必须成为可见任务错误，不能把视频产出存在等同于任务成功。
-- OpenCode 插件必须提供 `axis_video_submit` 工具，用户输入“使用场景切换技能生成视频”即可触发；插件自动读取当前 `sessionID` 和工作目录，并在随机 loopback 端口建立无认证回调桥，用户无需填写 AXIS/OpenCode 密钥、用户名、密码或认证头。收尾成功后 AXIS 向该桥发送完成、失败或取消结果，由插件通过 OpenCode 内部客户端继续原会话；瞬时失败进行有限退避重试，只有 HTTP 204 才记为已送达，重试耗尽形成明确失败终态。回调地址只允许 loopback。
-- AXIS 提供独立“视频任务”页面，持续显示排队、等待 NInfer、场景切换、ComfyUI 健康、`prompt_id`、生成/排队进度、输出收集、Code Agent 恢复、NInfer 验证和 OpenCode 回调阶段，并允许已登录用户取消非终态任务。
+- 成功、失败、取消及重启恢复都必须进入明确收尾：恢复任务切换前持久化的原场景。原场景不存在或恢复失败必须成为可见任务错误，不能把视频产出存在等同于任务成功。
+- OpenCode 插件必须提供 `axis_video_submit` 工具，用户输入“使用场景切换技能生成视频”即可触发，也可通过可选 `scene_name` 指定生成场景；插件自动读取当前 `sessionID` 和工作目录，并在随机 loopback 端口建立无认证回调桥，用户无需填写 AXIS/OpenCode 密钥、用户名、密码或认证头。收尾成功后 AXIS 向该桥发送完成、失败或取消结果，由插件通过 OpenCode 内部客户端继续原会话；瞬时失败进行有限退避重试，只有 HTTP 204 才记为已送达，重试耗尽形成明确失败终态。回调地址只允许 loopback。
+- AXIS 提供独立“视频任务”页面，持续显示排队、等待 NInfer、切换生成场景、ComfyUI 健康、`prompt_id`、生成/排队进度、输出收集、恢复原场景和 OpenCode 回调阶段，并允许已登录用户取消非终态任务。

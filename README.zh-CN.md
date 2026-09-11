@@ -33,7 +33,7 @@ AXIS 将 AI 工作站的各种服务统一管理并整合进不同场景，可�
 - 通过低开销本机健康接口自动识别外部启停、服务异常和意外退出
 - 创建并拖动排序工作场景，一键切换一组服务
 - 在独立“视频任务”界面提交、取消并监控本地视频生成的完整阶段
-- 通过独占 GPU 租约串行切换 Code Agent 与 Video Gen 场景，完成后恢复并验证 NInfer
+- 通过独占 GPU 租约切换到指定或默认生成场景，完成后自动恢复原场景
 - 按独立分区展示 CPU、内存及每张 NVIDIA GPU，提供统一刻度、当前/平均/峰值/最低值和关键硬件指标
 - 记录服务启停和场景切换的时间、步骤及结果
 - 支持中文、英文和浏览器语言自动检测
@@ -83,7 +83,7 @@ D:\AIWork\example\manage.ps1 status
 
 每个项目可以选择一个“默认场景”。设置后不会立即切换；AXIS 下次启动时会自动执行该场景。取消默认只清除启动设置，不会停止当前服务；下次启动时 AXIS 只读校准全部已登记服务，不会自动启停它们。
 
-场景可以标记为普通用途、`Code Agent` 或 `Video Gen`；后两种用途各只允许一个场景。OpenCode 通过随项目提供的 `axis_video_submit` 工具向本机 `POST /api/v1/video-jobs` 直接提交 ComfyUI API 工作流，无需配置密钥、用户名、密码或认证头。AXIS 会持久化任务、等待 NInfer 完全空闲、独占 GPU、切换到视频场景、监控 ComfyUI `prompt_id`、保存输出，再恢复 Code Agent 场景并用一次真实推理验证 NInfer，最后通过插件建立的本机回调桥返回原 OpenCode 会话。若 NInfer 仍有处理或排队请求，AXIS 不会切换场景。第一版只接受本机提交；显式输出路径优先，未提供时使用默认输出目录。
+场景不再设置 `Code Agent` 或 `Video Gen` 类型；场景编辑器只提供“默认生成场景”勾选项，且最多勾选一个。OpenCode 通过随项目提供的 `axis_video_submit` 工具向本机 `POST /api/v1/video-jobs` 直接提交 ComfyUI API 工作流，无需配置密钥、用户名、密码或认证头。调用时可指定生成场景名称；未指定时使用默认生成场景。AXIS 会持久化任务、记录当前原场景、等待 NInfer 完全空闲、独占 GPU、切换到生成场景、监控 ComfyUI `prompt_id`、保存输出，再自动恢复原场景，最后通过插件建立的本机回调桥返回原 OpenCode 会话。若 NInfer 仍有处理或排队请求，AXIS 不会切换场景。第一版只接受本机提交；显式输出路径优先，未提供时使用默认输出目录。
 
 安装 OpenCode 集成后重启 OpenCode：
 
@@ -91,7 +91,7 @@ D:\AIWork\example\manage.ps1 status
 .\integrations\opencode\Install-AxisVideo.ps1
 ```
 
-之后在 OpenCode 中输入“使用场景切换技能生成视频”。OpenCode 会准备 ComfyUI API workflow 并调用 `axis_video_submit`。插件会自动取得当前会话 ID 和工作目录，任务进度在 AXIS 的“视频任务”页面查看，完成后结果自动回到原会话。
+之后在 OpenCode 中输入“使用场景切换技能生成视频”，也可以在同一句中指定生成场景名称。OpenCode 会准备 ComfyUI API workflow 并调用 `axis_video_submit`；未指定名称时使用默认生成场景。插件会自动取得当前会话 ID 和工作目录，任务进度在 AXIS 的“视频任务”页面查看，完成后恢复原场景并把结果送回原会话。
 
 在私人电脑或手机登录时，可以勾选“在该电脑自动登录”保持登录 30 天。AXIS 不会在浏览器中保存密码；主动退出或修改密码仍会立即撤销会话。
 

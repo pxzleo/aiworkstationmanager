@@ -151,13 +151,15 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.database = Database(self.root / "axis.db")
         self.registry = RegisteredServiceManager(self.database)
         self.database.create_scene({
-            "id": "a" * 32, "name": "Code", "description": "", "purpose": "code_agent",
+            "id": "a" * 32, "name": "Code", "description": "",
             "service_ids": [],
         })
         self.database.create_scene({
-            "id": "b" * 32, "name": "Video", "description": "", "purpose": "video_gen",
+            "id": "b" * 32, "name": "Video", "description": "",
+            "is_default_generation": True,
             "service_ids": [],
         })
+        self.database.set_last_activated_scene("a" * 32)
         self.workflow = self.root / "workflow.json"
         self.workflow.write_text(json.dumps({"1": {"class_type": "Test"}}), encoding="utf-8")
 
@@ -182,14 +184,30 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             "callback_directory": str(self.root),
         }
 
-    def test_scene_purpose_is_unique_and_user_selected(self) -> None:
-        scene = self.database.get_scene_by_purpose("video_gen")
+    def test_default_generation_scene_is_unique_and_user_selected(self) -> None:
+        scene = self.database.get_default_generation_scene()
         self.assertEqual(scene["id"], "b" * 32)
-        with self.assertRaises(Exception):
-            self.database.create_scene({
-                "id": "c" * 32, "name": "Video 2", "description": "",
-                "purpose": "video_gen", "service_ids": [],
-            })
+        self.database.create_scene({
+            "id": "c" * 32, "name": "Video 2", "description": "",
+            "is_default_generation": True, "service_ids": [],
+        })
+        self.assertEqual(self.database.get_default_generation_scene()["id"], "c" * 32)
+        self.assertEqual(self.database.get_scene("b" * 32)["is_default_generation"], 0)
+
+    def test_submit_can_select_generation_scene_by_name(self) -> None:
+        self.database.create_scene({
+            "id": "c" * 32, "name": "Video 2", "description": "", "service_ids": [],
+        })
+        payload = self.payload("named-scene")
+        payload["scene_name"] = "Video 2"
+        job, created = self.manager().submit(payload)
+        self.assertTrue(created)
+        self.assertEqual(job["generation_scene_id"], "c" * 32)
+        self.assertEqual(job["generation_scene_name"], "Video 2")
+
+    def test_active_scene_uses_last_successful_selection_when_services_match(self) -> None:
+        self.database.set_last_activated_scene("b" * 32)
+        self.assertEqual(self.registry.active_scene()["id"], "b" * 32)
 
     def test_database_schema_contains_no_callback_authorization_column(self) -> None:
         with self.database.connect() as connection:
@@ -197,6 +215,61 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
                 row["name"] for row in connection.execute("PRAGMA table_info(video_jobs)")
             }
         self.assertNotIn("callback_authorization", columns)
+
+    def test_schema_25_migrates_legacy_scene_purposes_and_job_route(self) -> None:
+        job_id = "d" * 32
+        now = "2026-09-11T00:00:00+00:00"
+        with self.database.connect() as connection:
+            with connection:
+                connection.execute(
+                    "UPDATE scenes SET purpose='code_agent' WHERE id=?", ("a" * 32,)
+                )
+                connection.execute(
+                    "UPDATE scenes SET purpose='video_gen',is_default_generation=0 WHERE id=?",
+                    ("b" * 32,),
+                )
+                connection.execute("DROP INDEX IF EXISTS idx_scenes_single_default_generation")
+                connection.execute("DROP INDEX IF EXISTS idx_scenes_single_last_activated")
+                connection.execute("ALTER TABLE scenes DROP COLUMN is_default_generation")
+                connection.execute("ALTER TABLE scenes DROP COLUMN is_last_activated")
+                for column in (
+                    "generation_scene_id", "generation_scene_name",
+                    "original_scene_id", "original_scene_name",
+                ):
+                    connection.execute(f"ALTER TABLE video_jobs DROP COLUMN {column}")
+                connection.execute(
+                    """CREATE UNIQUE INDEX idx_scenes_unique_purpose
+                       ON scenes(purpose) WHERE purpose <> ''"""
+                )
+                connection.execute(
+                    """INSERT INTO video_jobs(
+                           id,idempotency_key,payload_hash,session_id,workflow_path,workflow_json,
+                           callback_url,status,phase,created_at,updated_at
+                       ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        job_id, "legacy-job", "hash", "ses_legacy", str(self.workflow),
+                        "{}", "http://127.0.0.1:61714", "queued", "queued", now, now,
+                    ),
+                )
+                connection.execute("UPDATE schema_version SET version=24")
+
+        migrated = Database(self.database.path)
+        self.assertEqual(migrated.get_default_generation_scene()["id"], "b" * 32)
+        self.assertNotIn("purpose", migrated.get_scene("a" * 32))
+        job = migrated.get_video_job(job_id)
+        self.assertEqual(job["generation_scene_id"], "b" * 32)
+        self.assertEqual(job["original_scene_id"], "a" * 32)
+
+    async def test_process_waits_for_existing_operation_before_freezing_original_scene(self) -> None:
+        manager = self.manager()
+        job, _ = manager.submit(self.payload("wait-operation"))
+        with patch.object(
+            self.database, "has_active_operation", side_effect=[True, False]
+        ) as active_operation:
+            await manager._process(job)
+        self.assertGreaterEqual(active_operation.call_count, 2)
+        finished = self.database.get_video_job(job["id"])
+        self.assertEqual(finished["original_scene_id"], "a" * 32)
 
     def test_idempotent_submit_uses_non_secret_payload(self) -> None:
         manager = self.manager()
@@ -251,7 +324,10 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         job, _ = manager.submit(self.payload())
         self.workflow.write_text(json.dumps({"changed": {}}), encoding="utf-8")
 
-        await manager._process(self.database.next_video_job())
+        with patch.object(
+            manager, "_activate_scene", wraps=manager._activate_scene
+        ) as activate_scene:
+            await manager._process(self.database.next_video_job())
 
         finished = self.database.get_video_job(job["id"])
         self.assertEqual(finished["status"], "succeeded")
@@ -259,7 +335,13 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(Path(finished["output_path"]).is_file())
         self.assertEqual(comfy.submit_calls, 1)
         self.assertEqual(comfy.last_workflow, {"1": {"class_type": "Test"}})
-        self.assertEqual(ninfer.verify_calls, 1)
+        self.assertEqual(ninfer.verify_calls, 0)
+        self.assertEqual(finished["generation_scene_name"], "Video")
+        self.assertEqual(finished["original_scene_name"], "Code")
+        self.assertEqual(
+            [call.args[0] for call in activate_scene.await_args_list],
+            ["b" * 32, "a" * 32],
+        )
         self.assertIn("已完成", callback.messages[0])
         self.assertIsNone(self.database.resource_lease_owner("gpu:4090"))
 
@@ -287,6 +369,7 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.database.update_video_job(
             job["id"], status="collecting_output", phase="collecting_output",
             prompt_id="prompt-1", output_path=str(output), result="succeeded",
+            original_scene_id="a" * 32, original_scene_name="Code",
         )
 
         await manager._process(self.database.next_video_job())

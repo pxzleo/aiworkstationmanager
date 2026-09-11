@@ -384,10 +384,24 @@ class VideoJobManager:
         callback_directory = str(payload.get("callback_directory") or "").strip() or None
         if callback_directory and not Path(callback_directory).is_absolute():
             raise VideoJobError("invalid_callback_directory", "callback_directory 必须是绝对路径")
+        scene_name = str(payload.get("scene_name") or "").strip()
+        generation_scene = (
+            self.database.get_scene_by_name(scene_name)
+            if scene_name else self.database.get_default_generation_scene()
+        )
+        if generation_scene is None:
+            if scene_name:
+                raise VideoJobError(
+                    "generation_scene_not_found", f"指定的生成场景不存在: {scene_name}"
+                )
+            raise VideoJobError(
+                "default_generation_scene_missing", "尚未设置默认生成场景"
+            )
         canonical = {
             "session_id": session_id, "workflow_path": str(workflow_path.resolve()),
             "output_path": output_text, "callback_url": callback_url,
             "callback_directory": callback_directory,
+            "generation_scene_id": generation_scene["id"],
             "workflow_sha256": workflow_sha256,
         }
         payload_hash = hashlib.sha256(
@@ -400,6 +414,8 @@ class VideoJobManager:
             "workflow_json": workflow_json,
             "requested_output_path": output_text or None, "callback_url": callback_url,
             "callback_directory": callback_directory,
+            "generation_scene_id": generation_scene["id"],
+            "generation_scene_name": generation_scene["name"],
         })
         if item["payload_hash"] != payload_hash:
             raise VideoJobError(
@@ -452,10 +468,12 @@ class VideoJobManager:
             raise VideoJobError("video_job_not_found", "视频任务在执行期间消失")
         return bool(job["cancel_requested"])
 
-    async def _activate_scene(self, purpose: str, job_id: str) -> None:
-        scene = self.database.get_scene_by_purpose(purpose)
+    async def _activate_scene(
+        self, scene_id: str, job_id: str, missing_code: str, missing_message: str,
+    ) -> None:
+        scene = self.database.get_scene(scene_id)
         if scene is None:
-            raise VideoJobError("scene_purpose_missing", f"没有场景被设置为用途 {purpose}")
+            raise VideoJobError(missing_code, missing_message)
         if self.registry._scene_with_state(scene)["state"] == "active":
             return
         deadline = asyncio.get_running_loop().time() + self.scene_timeout_seconds
@@ -494,6 +512,15 @@ class VideoJobManager:
                 return
             if asyncio.get_running_loop().time() >= deadline:
                 raise VideoJobError("ninfer_busy_timeout", "等待 NInfer 所有活动与排队请求结束超时")
+            await asyncio.sleep(self.poll_interval_seconds)
+
+    async def _wait_for_registry_idle(self, job_id: str) -> None:
+        deadline = asyncio.get_running_loop().time() + self.scene_timeout_seconds
+        while self.registry._operation_pending or self.database.has_active_operation():
+            if await self._cancel_requested(job_id):
+                raise VideoJobError("cancelled", "用户在等待现有场景操作完成时取消了视频任务")
+            if asyncio.get_running_loop().time() >= deadline:
+                raise VideoJobError("operation_busy", "等待现有服务或场景操作完成超时")
             await asyncio.sleep(self.poll_interval_seconds)
 
     @staticmethod
@@ -542,14 +569,21 @@ class VideoJobManager:
         job = self.database.get_video_job(job_id, include_internal=True)
         if job is None:
             raise DatabaseError("视频任务在回调前消失")
+        original_scene_name = str(job.get("original_scene_name") or "原场景")
         def callback_message() -> str:
             if outcome == "succeeded":
-                return f"AXIS 视频任务 {job_id} 已完成，输出文件：{output_path}。请继续原任务。"
+                return (
+                    f"AXIS 视频任务 {job_id} 已完成，输出文件：{output_path}。"
+                    f"已恢复场景 {original_scene_name}，请继续原任务。"
+                )
             if outcome == "cancelled":
-                return f"AXIS 视频任务 {job_id} 已取消，Code Agent 场景和 NInfer 已恢复。请继续原任务。"
+                return (
+                    f"AXIS 视频任务 {job_id} 已取消，已恢复场景 "
+                    f"{original_scene_name}。请继续原任务。"
+                )
             return (
                 f"AXIS 视频任务 {job_id} 失败：{error_code}: {error_summary}。"
-                "已尝试 Code Agent 场景恢复和 NInfer 验证，请继续处理失败。"
+                f"已尝试恢复场景 {original_scene_name}，请继续处理失败。"
             )
         attempts = int(job.get("callback_attempts") or 0)
         self.database.update_video_job(job_id, status="callback_pending", phase="callback_pending")
@@ -598,17 +632,19 @@ class VideoJobManager:
         error_code = job.get("error_code")
         error_summary = job.get("error_summary")
         try:
-            await self._activate_scene("code_agent", job["id"])
-            self.database.update_video_job(
-                job["id"], status="verifying_ninfer", phase="verifying_ninfer"
+            original_scene_id = str(job.get("original_scene_id") or "")
+            if not original_scene_id:
+                raise VideoJobError("original_scene_missing", "视频任务没有可恢复的原场景")
+            await self._activate_scene(
+                original_scene_id, job["id"], "original_scene_missing",
+                "视频任务的原场景已不存在，无法恢复",
             )
-            await asyncio.to_thread(self.ninfer.verify)
         except asyncio.CancelledError:
             raise
         except (VideoJobError, RegistryError, DatabaseError) as exc:
             outcome = "failed"
             error_code = error_code or (
-                exc.code if isinstance(exc, VideoJobError) else "code_restore_failed"
+                exc.code if isinstance(exc, VideoJobError) else "scene_restore_failed"
             )
             error_summary = "; ".join(filter(None, [error_summary, str(exc)]))
         await self._deliver_callback_and_finish(
@@ -636,7 +672,7 @@ class VideoJobManager:
                 initial_job.get("error_summary"),
             )
             return
-        if initial_phase in {"restoring_code", "verifying_ninfer"}:
+        if initial_phase in {"restoring_code", "restoring_scene", "verifying_ninfer"}:
             await self._resume_cleanup(initial_job)
             return
         if initial_phase == "collecting_output" and initial_job.get("output_path") \
@@ -652,6 +688,22 @@ class VideoJobManager:
         error_summary: str | None = None
         output_path: str | None = initial_job.get("output_path")
         try:
+            if not initial_job.get("original_scene_id"):
+                await self._wait_for_registry_idle(job_id)
+                original_scene = self.registry.active_scene()
+                if original_scene is None:
+                    raise VideoJobError(
+                        "active_scene_missing", "当前没有已记录且完整激活的场景，无法在生成后恢复"
+                    )
+                self.database.update_video_job(
+                    job_id, original_scene_id=original_scene["id"],
+                    original_scene_name=original_scene["name"],
+                )
+                initial_job = {
+                    **initial_job,
+                    "original_scene_id": original_scene["id"],
+                    "original_scene_name": original_scene["name"],
+                }
             started_at = initial_job.get("started_at") or utc_now()
             self.database.update_video_job(
                 job_id, status="waiting_for_ninfer_idle", phase="waiting_for_ninfer_idle",
@@ -671,7 +723,15 @@ class VideoJobManager:
                 self.database.update_video_job(
                     job_id, status="switching_to_video", phase="switching_to_video", progress=None
                 )
-                await self._activate_scene("video_gen", job_id)
+                generation_scene_id = str(initial_job.get("generation_scene_id") or "")
+                if not generation_scene_id:
+                    raise VideoJobError(
+                        "generation_scene_not_found", "视频任务没有可用的生成场景"
+                    )
+                await self._activate_scene(
+                    generation_scene_id, job_id,
+                    "generation_scene_not_found", "视频任务指定的生成场景已不存在",
+                )
                 if await self._cancel_requested(job_id):
                     raise VideoJobError("cancelled", "用户在场景切换后取消了视频任务")
                 self.database.update_video_job(job_id, status="checking_comfy", phase="checking_comfy")
@@ -713,19 +773,21 @@ class VideoJobManager:
             error_summary = str(exc)
         try:
             self.database.update_video_job(
-                job_id, status="restoring_code", phase="restoring_code",
+                job_id, status="restoring_scene", phase="restoring_scene",
                 output_path=output_path, result=outcome,
                 error_code=error_code, error_summary=error_summary,
             )
-            await self._activate_scene("code_agent", job_id)
-            self.database.update_video_job(
-                job_id, status="verifying_ninfer", phase="verifying_ninfer"
+            original_scene_id = str(initial_job.get("original_scene_id") or "")
+            if not original_scene_id:
+                raise VideoJobError("original_scene_missing", "视频任务没有可恢复的原场景")
+            await self._activate_scene(
+                original_scene_id, job_id, "original_scene_missing",
+                "视频任务的原场景已不存在，无法恢复",
             )
-            await asyncio.to_thread(self.ninfer.verify)
         except asyncio.CancelledError:
             raise
         except (VideoJobError, RegistryError, DatabaseError) as exc:
-            restore_code = exc.code if isinstance(exc, VideoJobError) else "code_restore_failed"
+            restore_code = exc.code if isinstance(exc, VideoJobError) else "scene_restore_failed"
             restore_message = str(exc)
             outcome = "failed"
             error_code = error_code or restore_code

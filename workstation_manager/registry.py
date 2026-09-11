@@ -395,13 +395,8 @@ def validate_scene_input(payload: dict[str, Any], database: Database) -> dict[st
         "description": description,
         "service_ids": service_ids,
     }
-    if "purpose" in payload:
-        purpose = str(payload.get("purpose") or "").strip()
-        if purpose not in {"", "code_agent", "video_gen"}:
-            raise RegistryError(
-                422, "invalid_scene_purpose", "场景用途必须为空、Code Agent 或 Video Gen"
-            )
-        result["purpose"] = purpose
+    if "is_default_generation" in payload:
+        result["is_default_generation"] = bool(payload["is_default_generation"])
     if "detailed_description" in payload:
         detailed_description = str(payload.get("detailed_description") or "").strip()
         if len(detailed_description) > 8000:
@@ -962,6 +957,12 @@ class RegisteredServiceManager:
     def list_scenes(self) -> list[dict[str, Any]]:
         return [self._scene_with_state(item) for item in self.database.list_scenes()]
 
+    def active_scene(self) -> dict[str, Any] | None:
+        scene = self.database.get_last_activated_scene()
+        if scene is None or self._scene_with_state(scene)["state"] != "active":
+            return None
+        return scene
+
     def _scene_with_state(self, scene: dict[str, Any] | None) -> dict[str, Any]:
         if scene is None:
             raise RegistryError(404, "scene_not_found", "场景不存在")
@@ -1298,6 +1299,8 @@ class RegisteredServiceManager:
             )
             return
         success = stop_ok and start_ok and final_scene["state"] == "active"
+        if success:
+            self.database.set_last_activated_scene(scene_id)
         result = "success" if success else ("stop_failed" if not stop_ok else "partial")
         self.database.finish_operation_with_audit(
             operation_id, "succeeded" if success else "failed", result,
