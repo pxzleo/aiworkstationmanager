@@ -91,7 +91,7 @@ D:\AIWork\example\manage.ps1 status
 .\integrations\opencode\Install-AxisVideo.ps1
 ```
 
-之后可直接让 OpenCode 准备 ComfyUI API workflow 并调用 `axis_video_submit`。插件会自动取得当前会话 ID 和工作目录，任务进度在 AXIS 的“视频任务”页面查看，完成后结果自动回到原会话。
+之后在 OpenCode 中输入“使用场景切换技能生成视频”。OpenCode 会准备 ComfyUI API workflow 并调用 `axis_video_submit`。插件会自动取得当前会话 ID 和工作目录，任务进度在 AXIS 的“视频任务”页面查看，完成后结果自动回到原会话。
 
 在私人电脑或手机登录时，可以勾选“在该电脑自动登录”保持登录 30 天。AXIS 不会在浏览器中保存密码；主动退出或修改密码仍会立即撤销会话。
 

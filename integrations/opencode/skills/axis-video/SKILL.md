@@ -1,9 +1,11 @@
 ---
 name: axis-video
-description: 使用本机 AXIS 串行调度 RTX 4090 视频生成任务。用户要求生成视频、提交 ComfyUI API 工作流、后台监控或完成后回到当前 OpenCode 会话时使用。
+description: 使用本机 AXIS 串行调度 RTX 4090 视频生成任务。用户说“使用场景切换技能生成视频”，或要求提交 ComfyUI API 工作流、后台监控、完成后回到当前 OpenCode 会话时使用。
 ---
 
 # AXIS 视频生成
+
+当用户说“使用场景切换技能生成视频”时，使用本 Skill，并在工作流准备完成后调用 `axis_video_submit`。
 
 先准备可由 ComfyUI `/prompt` 接受的 API workflow JSON，并确保其中引用的本地素材路径已经存在。
 

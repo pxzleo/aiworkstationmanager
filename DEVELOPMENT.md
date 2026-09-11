@@ -170,7 +170,7 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 
 `workflow_path` 必须是现有 JSON 绝对路径，内容是 ComfyUI API workflow 的 `prompt` 对象；提交时内容会固化进任务记录，之后修改原文件不会改变已排队任务。`output_path` 可省略；指定时必须是绝对路径且不会覆盖现有文件，省略时写入 `video_output_directory/<job_id>/`。视频以分块方式写入同目录临时文件，再原子改名。`callback_url` 只允许无路径、查询、片段或凭据的 loopback 地址，`callback_directory` 可传递原 OpenCode 工作目录。提交和回调均不携带认证信息；AXIS 在收尾后调用 OpenCode 插件的本机回调桥，瞬时失败最多退避重试三次。查询和取消仍使用 AXIS 管理界面的登录态及 CSRF。
 
-`integrations/opencode/plugins/axis-video.ts` 注册 `axis_video_submit` 工具并自动读取当前 `sessionID` 与工作目录，同时在随机 loopback 端口创建无认证回调桥；收到 AXIS 结果后通过 OpenCode 内部客户端继续原会话。运行 `integrations/opencode/Install-AxisVideo.ps1` 可把插件和 `axis-video` Skill 安装到当前用户的 OpenCode 配置目录，重启 OpenCode 后生效。
+`integrations/opencode/plugins/axis-video.ts` 注册 `axis_video_submit` 工具并自动读取当前 `sessionID` 与工作目录，同时在随机 loopback 端口创建无认证回调桥；收到 AXIS 结果后通过 OpenCode 内部客户端继续原会话。运行 `integrations/opencode/Install-AxisVideo.ps1` 可把插件和 `axis-video` Skill 安装到当前用户的 OpenCode 配置目录，重启 OpenCode 后输入“使用场景切换技能生成视频”即可触发。
 
 调度器先获取 RTX 4090 独占租约，阻止等待期间出现新的人工场景切换，再同时检查 NInfer `/slots` 和 `/metrics`；只有所有 slot 空闲且 `requests_processing=0`、`requests_deferred=0` 才切换 `video_gen` 场景。随后验证 ComfyUI `/system_stats`、通过 `/prompt` 获取 `prompt_id`、轮询 `/queue` 与 `/history/{prompt_id}`、通过 `/view` 收集视频。成功、失败和取消都进入 `code_agent` 场景恢复，再验证 NInfer `/health`、`/v1/models` 和真实 `/v1/chat/completions` 请求，最后异步回调原 `session_id`。AXIS 重启时恢复非终态任务；若重启发生在提交请求与 `prompt_id` 落库之间，只从 ComfyUI queue/history 的 `axis_job_id` 恢复，无法确认时明确失败并拒绝重复提交。
 

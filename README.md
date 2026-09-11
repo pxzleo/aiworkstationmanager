@@ -91,7 +91,7 @@ Install the OpenCode integration, then restart OpenCode:
 .\integrations\opencode\Install-AxisVideo.ps1
 ```
 
-OpenCode can then prepare the ComfyUI API workflow and call `axis_video_submit`. The plugin obtains the current session ID and directory automatically, while the AXIS Video Jobs page shows progress and the final result returns to the original session.
+In OpenCode, enter `使用场景切换技能生成视频` (use the scene-switching skill to generate a video). OpenCode then prepares the ComfyUI API workflow and calls `axis_video_submit`. The plugin obtains the current session ID and directory automatically, while the AXIS Video Jobs page shows progress and the final result returns to the original session.
 
 On a private computer or phone, select **Sign in automatically on this device** to stay signed in for 30 days. AXIS never stores the password in the browser; signing out or changing the password still revokes the session immediately.
 

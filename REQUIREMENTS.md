@@ -1015,5 +1015,5 @@ Web UI / HTTP API
 - 空闲后复用现有场景切换、operations、desired_state/observed_state、固定登记服务脚本和安全健康检查；不得另建第二套服务生命周期控制器。Video Gen 场景真正激活且 ComfyUI `/system_stats` 健康后，才向本机 `127.0.0.1:8189` 标准 `POST /prompt` 提交并持久化 `prompt_id`。
 - AXIS 轮询 ComfyUI `/queue` 与 `/history/{prompt_id}`，记录排队位置、执行状态、失败和输出。取消时必须先核对目标 `prompt_id` 的队列归属：排队任务只从 `/queue` 删除，只有目标任务确实处于 running 时才允许调用全局 `/interrupt`；未知归属关闭失败。AXIS 在提交请求与 `prompt_id` 落库之间重启时，只能根据提交携带的 `axis_job_id` 从 queue/history 恢复；无法确认时必须明确失败，禁止重复提交。
 - 成功、失败、取消及重启恢复都必须进入明确收尾：恢复 `code_agent` 场景，检查 NInfer `/health`、现有 4090 模型 `qwen3.8-27b` 的 `/v1/models`，并完成一次真实 OpenAI 兼容 `/v1/chat/completions` 请求。恢复或验证失败必须成为可见任务错误，不能把视频产出存在等同于任务成功。
-- OpenCode 插件必须提供 `axis_video_submit` 工具，自动读取当前 `sessionID` 和工作目录，并在随机 loopback 端口建立无认证回调桥；用户无需填写 AXIS/OpenCode 密钥、用户名、密码或认证头。收尾成功后 AXIS 向该桥发送完成、失败或取消结果，由插件通过 OpenCode 内部客户端继续原会话；瞬时失败进行有限退避重试，只有 HTTP 204 才记为已送达，重试耗尽形成明确失败终态。回调地址只允许 loopback。
+- OpenCode 插件必须提供 `axis_video_submit` 工具，用户输入“使用场景切换技能生成视频”即可触发；插件自动读取当前 `sessionID` 和工作目录，并在随机 loopback 端口建立无认证回调桥，用户无需填写 AXIS/OpenCode 密钥、用户名、密码或认证头。收尾成功后 AXIS 向该桥发送完成、失败或取消结果，由插件通过 OpenCode 内部客户端继续原会话；瞬时失败进行有限退避重试，只有 HTTP 204 才记为已送达，重试耗尽形成明确失败终态。回调地址只允许 loopback。
 - AXIS 提供独立“视频任务”页面，持续显示排队、等待 NInfer、场景切换、ComfyUI 健康、`prompt_id`、生成/排队进度、输出收集、Code Agent 恢复、NInfer 验证和 OpenCode 回调阶段，并允许已登录用户取消非终态任务。
