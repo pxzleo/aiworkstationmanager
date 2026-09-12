@@ -928,7 +928,9 @@ class VideoJobManager:
                 if outcome == "cancelled":
                     return (
                         f"AXIS 视频批次 {batch_id} 已在第 {index} / {len(batch)} 段取消，"
-                        f"后续段已终止，已尝试恢复场景 {original_scene_name}，请继续原任务。"
+                        f"后续段已终止，已尝试恢复场景 {original_scene_name}。取消是终态；"
+                        "不要继续本次生成，不得重新生成或重新提交该批次。只有用户在取消之后"
+                        "提出新的明确生成要求时，才可创建新任务。"
                     )
                 return (
                     f"AXIS 视频批次 {batch_id} 第 {index} / {len(batch)} 段失败："
@@ -943,7 +945,8 @@ class VideoJobManager:
             if outcome == "cancelled":
                 return (
                     f"AXIS 视频任务 {job_id} 已取消，已恢复场景 "
-                    f"{original_scene_name}。请继续原任务。"
+                    f"{original_scene_name}。取消是终态；不要继续本次生成，不得重新生成或"
+                    "重新提交该任务。只有用户在取消之后提出新的明确生成要求时，才可创建新任务。"
                 )
             return (
                 f"AXIS 视频任务 {job_id} 失败：{error_code}: {error_summary}。"
@@ -956,7 +959,7 @@ class VideoJobManager:
             latest = self.database.get_video_job(job_id)
             if latest is None:
                 raise DatabaseError("视频任务在回调重试前消失")
-            if latest["cancel_requested"] and outcome == "succeeded":
+            if latest["cancel_requested"] and outcome != "cancelled":
                 outcome = "cancelled"
                 output_path = None
             attempts += 1

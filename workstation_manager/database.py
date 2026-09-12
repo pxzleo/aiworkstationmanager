@@ -2073,11 +2073,14 @@ class Database:
                 with connection:
                     connection.execute("BEGIN IMMEDIATE")
                     row = connection.execute(
-                        "SELECT status FROM video_jobs WHERE id=?", (job_id,)
+                        "SELECT status,phase FROM video_jobs WHERE id=?", (job_id,)
                     ).fetchone()
                     if row is None:
                         return "missing"
-                    if row["status"] in {"succeeded", "failed", "cancelled"}:
+                    if row["phase"] in {"callback_pending", "callback_delivered"} or row["status"] in {
+                        "callback_pending", "callback_delivered",
+                        "succeeded", "failed", "cancelled",
+                    }:
                         return "finished"
                     connection.execute(
                         "UPDATE video_jobs SET cancel_requested=1,updated_at=? WHERE id=?",
@@ -2092,6 +2095,12 @@ class Database:
             with self.connect() as connection:
                 with connection:
                     connection.execute(
+                        """UPDATE video_jobs SET status=phase,updated_at=?
+                           WHERE phase IN ('callback_pending','callback_delivered')
+                             AND status NOT IN ('succeeded','failed','cancelled')""",
+                        (utc_now(),),
+                    )
+                    connection.execute(
                         """DELETE FROM resource_leases WHERE owner_id IN (
                                SELECT id FROM video_jobs
                                WHERE status IN ('succeeded','failed','cancelled')
@@ -2099,7 +2108,8 @@ class Database:
                     )
                     connection.execute(
                         """UPDATE video_jobs SET status='queued',updated_at=?
-                           WHERE status NOT IN ('queued','succeeded','failed','cancelled')""",
+                           WHERE status NOT IN ('queued','succeeded','failed','cancelled')
+                             AND phase NOT IN ('callback_pending','callback_delivered')""",
                         (utc_now(),),
                     )
         except sqlite3.Error as exc:

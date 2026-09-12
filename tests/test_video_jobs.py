@@ -152,8 +152,10 @@ class CancelDuringCallback:
         self.messages.append(message)
         if len(self.messages) == 1:
             assert self.manager is not None
-            self.manager.cancel(self.job_id, "admin", "local")
-            raise VideoJobError("opencode_callback_failed", "retry")
+            try:
+                self.manager.cancel(self.job_id, "admin", "local")
+            except VideoJobError as exc:
+                self.cancel_error = exc
 
 
 class FakeHttp:
@@ -674,6 +676,22 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished["prompt_id"], "prompt-recovered")
         self.assertEqual(comfy.submit_calls, 0)
 
+    def test_restart_preserves_callback_cancellation_cutoff(self) -> None:
+        manager = self.manager()
+        for phase in ("callback_pending", "callback_delivered"):
+            job, _ = manager.submit(self.payload(f"restart-{phase}"))
+            self.database.update_video_job(job["id"], status="queued", phase=phase)
+
+        self.database.recover_video_jobs()
+
+        for job in self.database.list_video_jobs():
+            if job["phase"] not in {"callback_pending", "callback_delivered"}:
+                continue
+            self.assertEqual(job["status"], job["phase"])
+            with self.assertRaises(VideoJobError) as raised:
+                manager.cancel(job["id"], "admin", "local")
+            self.assertEqual(raised.exception.code, "video_job_finished")
+
     async def test_restart_after_output_download_does_not_download_again(self) -> None:
         comfy = CompletedComfy()
         manager = self.manager(comfy=comfy)
@@ -720,19 +738,40 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished["callback_attempts"], 3)
         self.assertIn("temporary failure", finished["error_summary"])
 
-    async def test_cancel_during_callback_retry_changes_terminal_result(self) -> None:
+    async def test_cancelled_failed_outcome_delivers_terminal_cancel_message(self) -> None:
+        callback = RecordingCallback()
+        manager = self.manager(callback=callback)
+        job, _ = manager.submit(self.payload("callback-cancel-key"))
+        manager.cancel(job["id"], "admin", "local")
+        self.assertTrue(self.database.acquire_resource_lease("gpu:4090", job["id"]))
+
+        await manager._deliver_callback_and_finish(
+            job["id"], "failed", None, "generation_failed", "failure before callback",
+        )
+
+        finished = self.database.get_video_job(job["id"])
+        self.assertEqual(finished["status"], "cancelled")
+        self.assertEqual(len(callback.messages), 1)
+        self.assertIn("已取消", callback.messages[0])
+        self.assertIn("不得重新生成", callback.messages[0])
+        self.assertIn("新的明确生成要求", callback.messages[0])
+
+    async def test_cancel_is_rejected_after_callback_delivery_begins(self) -> None:
         callback = CancelDuringCallback()
+        callback.cancel_error = None
         manager = self.manager(callback=callback)
         callback.manager = manager
         job, _ = manager.submit(self.payload("callback-cancel-key"))
         callback.job_id = job["id"]
-        with patch("workstation_manager.video_jobs.asyncio.sleep", new=AsyncMock()):
-            await manager._process(self.database.next_video_job())
+        self.assertTrue(self.database.acquire_resource_lease("gpu:4090", job["id"]))
+
+        await manager._deliver_callback_and_finish(job["id"], "succeeded", "output.mp4", None, None)
 
         finished = self.database.get_video_job(job["id"])
-        self.assertEqual(finished["status"], "cancelled")
-        self.assertEqual(len(callback.messages), 2)
-        self.assertIn("已取消", callback.messages[1])
+        self.assertEqual(finished["status"], "succeeded")
+        self.assertIsNotNone(callback.cancel_error)
+        self.assertEqual(callback.cancel_error.code, "video_job_finished")
+        self.assertEqual(len(callback.messages), 1)
 
     async def test_cancel_before_scene_switch_does_not_submit_comfy(self) -> None:
         comfy = CompletedComfy()
@@ -747,6 +786,8 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished["status"], "cancelled")
         self.assertEqual(comfy.submit_calls, 0)
         self.assertIn("已取消", callback.messages[0])
+        self.assertIn("不得重新生成", callback.messages[0])
+        self.assertIn("新的明确生成要求", callback.messages[0])
 
     def test_gpu_lease_blocks_manual_scene_switch(self) -> None:
         manager = self.manager()

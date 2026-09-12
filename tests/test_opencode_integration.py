@@ -10,11 +10,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "integrations" / "opencode" / "skills" / "h3-ref2v-video-pipeline"
+AXIS_SKILL = ROOT / "integrations" / "opencode" / "skills" / "axis-video" / "SKILL.md"
 BUILDER = SKILL / "scripts" / "build_api.py"
 BASELINE = SKILL / "assets" / "h3-ref2v-8step-api.json"
 
 
 class H3WorkflowBuilderTests(unittest.TestCase):
+    def test_cancelled_job_requires_a_new_explicit_user_request_before_resubmission(self) -> None:
+        for path in (AXIS_SKILL, SKILL / "SKILL.md"):
+            skill = path.read_text(encoding="utf-8")
+            self.assertIn("取消是终态", skill)
+            self.assertIn("新的明确生成要求", skill)
+            self.assertIn("不得重新生成", skill)
+
     def test_skill_requires_coherent_anatomy_and_natural_skin_completion(self) -> None:
         skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
         for requirement in (
