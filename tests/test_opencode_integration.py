@@ -15,6 +15,24 @@ BASELINE = SKILL / "assets" / "h3-ref2v-8step-api.json"
 
 
 class H3WorkflowBuilderTests(unittest.TestCase):
+    def test_skill_requires_coherent_anatomy_and_natural_skin_completion(self) -> None:
+        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        for requirement in (
+            "源片中不可见的身体区域", "合理补全", "骨骼标志", "软组织拉伸与压缩",
+            "毛孔", "皮下散射", "细微自然变化", "不得逐帧随机改变",
+            "subject_definitions", "summary", "retention_analysis", "partially_preserved",
+            "fully_preserved", "detailed_description", "只描述声音",
+        ):
+            self.assertIn(requirement, skill)
+        ordered_sections = (
+            "`subject_definitions`：", "`summary`：", "`retention_analysis`：",
+            "`detailed_description`：", "`overall_soundscape` 和 `non_diegetic_music`",
+        )
+        positions = [skill.index(section) for section in ordered_sections]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("不得在这里定义或假装引用源片未展示的身体细节", skill)
+        self.assertIn("把新露出区域作为目标画面需要合理生成", skill)
+
     def run_builder(
         self, root: Path, *, length: int = 107, baseline: Path = BASELINE,
     ) -> subprocess.CompletedProcess[str]:
