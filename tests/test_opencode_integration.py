@@ -38,9 +38,16 @@ class H3WorkflowBuilderTests(unittest.TestCase):
         self.assertIn("不得为了“对齐写法”搜索、读取或复用既往任务", skill)
         self.assertIn("历史 API JSON 只可作为节点图基线", skill)
         self.assertIn("必须用本次依据源片和用户要求新写的提示词覆盖", skill)
-        self.assertIn("The only permitted visual change is the requested clothing or occlusion edit", skill)
+        self.assertIn("Change only the requested clothing or occlusion", skill)
         self.assertIn("所有源片可见身体特征必须保持感知一致", skill)
         self.assertIn("先写脸部与所有源片可见区域不得改变", skill)
+        self.assertIn("1600–2200 个 UTF-8 字节", skill)
+        self.assertIn("每个真实镜头一段", skill)
+        self.assertIn("禁止只写 `same actions`", skill)
+        self.assertIn("负面约束只保留", skill)
+        self.assertIn("超过 2200 字节先删除重复句", skill)
+        self.assertIn("三个字段各写自身职责", skill)
+        self.assertIn("不存在、被遮挡或无法判断的项目不得猜测", skill)
 
     def run_builder(
         self, root: Path, *, length: int = 107, baseline: Path = BASELINE,

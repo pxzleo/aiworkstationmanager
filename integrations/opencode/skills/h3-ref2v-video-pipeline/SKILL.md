@@ -54,7 +54,7 @@ python scripts\build_api.py `
 换装或移除遮挡物会露出源片中不可见的身体区域时，提示词必须在靠前位置明确以下约束：
 
 - 最高优先级不是重新美化人物，而是让目标人物除服装或遮挡变化外与源片在感知上不可区分。脸部是第一身份锚点；源片可见的脸型、五官几何、表情、妆容、发际线、肤色、曝光、白平衡、纹理、清晰度和受光不得重绘、提亮、磨皮、改色或重新打光。源片可见的颈部、四肢、躯干及轮廓同样不得改变体型、比例、肤色或材质。
-- 在 `summary` 靠前写明 `The only permitted visual change is the requested clothing or occlusion edit; every source-visible facial and body characteristic must remain perceptually indistinguishable from <Video 1>.`，不要把任务描述成重新设计人物。
+- `summary` 只写一句具体编辑边界：`Change only the requested clothing or occlusion; keep the source face, hair, exposed skin, body outline, pose, hands, camera, lighting, and background unchanged.` 不要用 `perceptually indistinguishable` 代替具体属性，也不要把任务描述成重新设计人物。
 - 源片中可见的身份、体型比例、姿态、动作节奏和镜头透视作为连续性锚点；原先被遮挡的区域只能描述为依据这些锚点进行的合理补全，不得声称从源片精确保留了不可见细节。
 - 新露出的区域必须与相邻可见区域组成同一个连续身体，并随源片动作同步；骨骼标志、关节活动、重力、软组织拉伸与压缩、接触形变和自身遮挡符合真实解剖及当前视角，不能出现重复、融合、断裂或滑动的结构。
 - 源片可见的脸部和各身体部位必须分别保持自身已有的肤色、亮度、纹理、粗糙度和受光差异，不得强行统一成同一数值或同一涂层。新露出区域以其相邻可见皮肤为局部颜色与材质基准，并与同一人物的整体底色、白平衡和材质体系协调连续；保留由身体部位、解剖、血色、受力、曲率、朝向、遮挡和原片光照造成的真实差异，同时禁止脸与身体出现非原片已有的分色、局部重新曝光、独立补光、区域性色漂、云状色斑或跨帧跳变。
@@ -66,6 +66,14 @@ python scripts\build_api.py `
   - `detailed_description`：先写脸部与所有源片可见区域不得改变，再把新露出区域作为目标画面需要合理生成的连续身体部分；在对应时间窗内具体描述与原片一致的颜色、材质、曝光、受光、姿态、关节运动和软组织响应，且必须与源片动作同步。不要只堆叠 `realistic`、`natural`、`anatomically correct` 等抽象形容词。
   - `overall_soundscape` 和 `non_diegetic_music` 只描述声音，不混入解剖或画质要求。
 - 提示词较长时优先保留 `subject_definitions`、`retention_analysis` 和逐时间窗的关键约束，不要把它们放在容易被忽略的末尾。
+
+提示词必须短而具体，通常控制在 1600–2200 个 UTF-8 字节：
+
+- `subject_definitions` 每个引用一行，只写源片实际可见事实，不写 `must never be redrawn` 等命令。
+- `summary` 用一句话概括编辑边界；`retention_analysis` 每个引用一行说明保留/变化关系；`detailed_description` 在镜头中落实可见事实。三个字段各写自身职责，但不得逐字复制整段约束或完整负面词清单。
+- `detailed_description` 每个真实镜头一段，只写该镜头实际可见且可判定的项目：眼睛大小与视线、嘴部开合与表情、脸型和妆容、发型轮廓、手臂/手/道具位置、可见身体轮廓和运动模糊；不存在、被遮挡或无法判断的项目不得猜测。再写需要改变的遮挡区域及其局部匹配；禁止只写 `same actions`、`exactly unchanged` 或 `perceptually identical`。
+- 负面约束只保留与源片和既往失败直接相关的 4–8 项，例如眼睛放大、下巴变尖、表情改变、手或道具移位、脸身分色、蜡质皮肤、色斑和锐度不匹配；不要堆叠通用质量词。
+- 在写入 workflow 前计算字节数；超过 2200 字节先删除重复句、抽象形容词和无关负面词，不得删除逐镜头可观察事实、唯一编辑边界或局部补全约束。
 
 需要保留源片音频时，生成 workflow 可以只输出视频，完成后用 `finish_video.py` 回填。需要模型原生音效或音乐时，工作流必须使用能同时解码视频和音频 latent 的节点，并把生成音频接到最终视频节点；不得把无声输出误报为含音频。
 
