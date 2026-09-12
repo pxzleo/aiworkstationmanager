@@ -32,6 +32,10 @@ class H3WorkflowBuilderTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertIn("不得在这里定义或假装引用源片未展示的身体细节", skill)
         self.assertIn("把新露出区域作为目标画面需要合理生成", skill)
+        self.assertIn("Ref2VA 六段规则是提示词写作的唯一规范", skill)
+        self.assertIn("不得为了“对齐写法”搜索、读取或复用既往任务", skill)
+        self.assertIn("历史 API JSON 只可作为节点图基线", skill)
+        self.assertIn("必须用本次依据源片和用户要求新写的提示词覆盖", skill)
 
     def run_builder(
         self, root: Path, *, length: int = 107, baseline: Path = BASELINE,
@@ -65,6 +69,15 @@ class H3WorkflowBuilderTests(unittest.TestCase):
             self.assertEqual(details["prefix"], "test/segment-01")
             self.assertEqual(graph["136"]["inputs"]["width"], 768)
             self.assertEqual(graph["150"]["inputs"]["frame_load_cap"], 107)
+            self.assertEqual(
+                graph["136"]["inputs"]["prompt"],
+                "Preserve motion and camera continuity.",
+            )
+            baseline_graph = json.loads(BASELINE.read_text(encoding="utf-8"))
+            self.assertNotEqual(
+                graph["136"]["inputs"]["prompt"],
+                baseline_graph["136"]["inputs"]["prompt"],
+            )
             self.assertEqual(sum(
                 node.get("class_type") == "MiniMaxH3ReferenceToVideo"
                 for node in graph.values()
