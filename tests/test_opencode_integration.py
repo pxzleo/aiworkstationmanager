@@ -19,9 +19,11 @@ class H3WorkflowBuilderTests(unittest.TestCase):
         skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
         for requirement in (
             "源片中不可见的身体区域", "合理补全", "骨骼标志", "软组织拉伸与压缩",
-            "毛孔", "皮下散射", "细微自然变化", "不得逐帧随机改变",
+            "毛孔", "皮下散射", "真实差异", "跨帧跳变",
             "subject_definitions", "summary", "retention_analysis", "partially_preserved",
             "fully_preserved", "detailed_description", "只描述声音",
+            "脸部是第一身份锚点", "感知上不可区分", "局部颜色与材质基准",
+            "分色", "区域性色漂", "云状色斑", "不得让身体变得更黄",
         ):
             self.assertIn(requirement, skill)
         ordered_sections = (
@@ -36,6 +38,9 @@ class H3WorkflowBuilderTests(unittest.TestCase):
         self.assertIn("不得为了“对齐写法”搜索、读取或复用既往任务", skill)
         self.assertIn("历史 API JSON 只可作为节点图基线", skill)
         self.assertIn("必须用本次依据源片和用户要求新写的提示词覆盖", skill)
+        self.assertIn("The only permitted visual change is the requested clothing or occlusion edit", skill)
+        self.assertIn("所有源片可见身体特征必须保持感知一致", skill)
+        self.assertIn("先写脸部与所有源片可见区域不得改变", skill)
 
     def run_builder(
         self, root: Path, *, length: int = 107, baseline: Path = BASELINE,
