@@ -751,9 +751,11 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     @app.get("/api/v1/file-service/files")
     async def list_file_service_files(
         path: str = Query(default="", max_length=4096),
+        sort_by: str = Query(default="modified", max_length=16),
+        sort_order: str = Query(default="desc", max_length=4),
         _: AuthenticatedSession = Depends(require_session),
     ) -> dict[str, Any]:
-        return file_catalog.list_directory(path)
+        return file_catalog.list_directory(path, sort_by=sort_by, sort_order=sort_order)
 
     @app.get("/api/v1/file-service/content")
     async def read_file_service_file(

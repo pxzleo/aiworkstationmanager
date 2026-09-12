@@ -18,10 +18,11 @@ let sceneProgressOperationId = null;
 let sceneProgressExpectedTotal = null;
 let progressCancelLabel = '终止切换并返回';
 let draggedSceneId = null;
+let fileThumbnailObserver = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, timers: new Map(),
-  fileService: null, files: [], filePath: '',
+  fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'list',
   historyWindowMinutes: 15, historyLoading: false,
   chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
@@ -170,6 +171,33 @@ function downloadFile(entry) { const link = document.createElement('a'); link.hr
 function closeMedia() { const stage = byId('mediaStage'); stage.querySelectorAll('audio, video').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); if (byId('mediaDialog').open) byId('mediaDialog').close(); }
 function openMedia(entry) { const kind = entry.media_type?.startsWith('audio/') ? 'audio' : 'video'; const player = document.createElement(kind); player.controls = true; player.autoplay = true; player.preload = 'metadata'; player.src = fileContentUrl(entry.path); player.dataset.i18nSkip = ''; text('mediaTitle', entry.name); const download = byId('mediaDownloadLink'); download.href = fileContentUrl(entry.path, true); download.download = entry.name; byId('mediaStage').replaceChildren(player); byId('mediaDialog').showModal(); }
 function openFileEntry(entry) { if (entry.type === 'directory') refreshFiles(entry.path).catch(() => {}); else if (entry.playable) openMedia(entry); else downloadFile(entry); }
+function releaseFileThumbnailVideos(rows = byId('fileRows')) {
+  fileThumbnailObserver?.disconnect(); fileThumbnailObserver = null;
+  rows.querySelectorAll('.file-thumbnail video').forEach((video) => { video.removeAttribute('src'); video.load(); });
+}
+function observeFileThumbnail(video, source) {
+  video.dataset.src = source;
+  if (!('IntersectionObserver' in window)) { video.src = source; delete video.dataset.src; return; }
+  if (!fileThumbnailObserver) fileThumbnailObserver = new IntersectionObserver((entries, observer) => entries.forEach((entry) => { if (!entry.isIntersecting) return; entry.target.src = entry.target.dataset.src; delete entry.target.dataset.src; observer.unobserve(entry.target); }), { rootMargin: '240px 0px' });
+  fileThumbnailObserver.observe(video);
+}
+function fileThumbnail(entry) {
+  const preview = element('span', 'file-thumbnail');
+  if (entry.media_type?.startsWith('image/')) {
+    const image = document.createElement('img'); image.src = fileContentUrl(entry.path); image.alt = ''; image.loading = 'lazy'; image.decoding = 'async'; preview.append(image);
+  } else if (entry.media_type?.startsWith('video/')) {
+    const video = document.createElement('video'); video.muted = true; video.preload = 'metadata'; video.playsInline = true; observeFileThumbnail(video, fileContentUrl(entry.path)); preview.append(video);
+  } else {
+    preview.append(icon(entry.type === 'directory' ? 'box' : entry.media_type?.startsWith('audio/') ? 'play' : 'file'));
+  }
+  return preview;
+}
+function setFileView(view) {
+  if (!['list', 'thumbnail'].includes(view)) return;
+  state.fileView = view;
+  document.querySelectorAll('[data-file-view]').forEach((button) => { const selected = button.dataset.fileView === view; button.classList.toggle('active', selected); button.setAttribute('aria-pressed', String(selected)); });
+  renderFiles();
+}
 function renderFileBreadcrumbs() {
   const breadcrumbs = byId('fileBreadcrumbs'); breadcrumbs.replaceChildren();
   const parts = state.filePath ? state.filePath.split('/') : [];
@@ -178,16 +206,16 @@ function renderFileBreadcrumbs() {
   parts.forEach((part, index) => { breadcrumbs.append(icon('chevron')); add(part, parts.slice(0, index + 1).join('/'), index === parts.length - 1); });
 }
 function renderFiles() {
-  renderFileBreadcrumbs(); const rows = byId('fileRows'); rows.replaceChildren();
+  renderFileBreadcrumbs(); const rows = byId('fileRows'); const browser = byId('fileBrowser'); releaseFileThumbnailVideos(rows); rows.replaceChildren(); browser.classList.toggle('list-view', state.fileView === 'list'); browser.classList.toggle('thumbnail-view', state.fileView === 'thumbnail');
   if (!state.files.length) { rows.append(element('p', 'empty-state', '这个目录是空的。')); return; }
-  state.files.forEach((entry) => { const row = element('article', 'file-row'); const name = element('button', 'file-name'); name.type = 'button'; name.append(icon(entry.type === 'directory' ? 'box' : entry.playable ? 'play' : 'file')); const copy = element('span'); copy.append(userElement('strong', '', entry.name), element('small', '', fileLabel(entry))); name.append(copy); name.addEventListener('click', () => openFileEntry(entry)); const action = element('button', 'file-action', entry.type === 'directory' ? ui('打开') : entry.playable ? ui('播放') : ui('下载')); action.type = 'button'; action.addEventListener('click', () => openFileEntry(entry)); row.append(name, element('span', 'file-size', entry.type === 'directory' ? '—' : formatFileSize(entry.size)), userElement('time', '', formatDate(entry.modified_at, true)), action); rows.append(row); });
+  state.files.forEach((entry) => { const row = element('article', 'file-row'); const name = element('button', 'file-name'); name.type = 'button'; name.append(icon(entry.type === 'directory' ? 'box' : entry.playable ? 'play' : 'file')); const copy = element('span'); copy.append(userElement('strong', '', entry.name), element('small', '', fileLabel(entry))); name.append(copy); name.addEventListener('click', () => openFileEntry(entry)); const action = element('button', 'file-action', entry.type === 'directory' ? ui('打开') : entry.playable ? ui('播放') : ui('下载')); action.type = 'button'; action.addEventListener('click', () => openFileEntry(entry)); if (state.fileView === 'thumbnail') row.append(fileThumbnail(entry)); row.append(name, element('span', 'file-size', entry.type === 'directory' ? '—' : formatFileSize(entry.size)), userElement('time', '', formatDate(entry.modified_at, true)), action); rows.append(row); });
 }
 async function refreshFiles(path = '') {
-  if (document.hidden) return; const rows = byId('fileRows'); rows.setAttribute('aria-busy', 'true');
+  if (document.hidden) return; const rows = byId('fileRows'); releaseFileThumbnailVideos(rows); rows.setAttribute('aria-busy', 'true');
   try {
     const info = state.fileService || await api('/file-service', { resource: 'file-service-info' }); state.fileService = info; text('fileServicePort', `:${info.port}`); dataText('fileServiceRoot', info.root, '根目录未配置');
     if (!info.root_available) throw new ApiError(404, 'file_root_unavailable', '配置的根目录不存在或不可访问。');
-    const params = new URLSearchParams({ path }); const result = await api(`/file-service/files?${params}`, { resource: 'file-service-files' }); state.filePath = result.path || ''; state.files = result.entries || []; text('fileServiceStatus', window.axisI18n.language === 'zh' ? `${state.files.length} 个项目 · HTTP 端口 ${info.port}` : `${state.files.length} items · HTTP port ${info.port}`); byId('fileServiceStatus').classList.remove('error'); renderFiles();
+    const [sortBy, sortOrder] = state.fileSort.split('-'); const params = new URLSearchParams({ path, sort_by: sortBy, sort_order: sortOrder }); const result = await api(`/file-service/files?${params}`, { resource: 'file-service-files' }); state.filePath = result.path || ''; state.files = result.entries || []; text('fileServiceStatus', window.axisI18n.language === 'zh' ? `${state.files.length} 个项目 · HTTP 端口 ${info.port}` : `${state.files.length} items · HTTP port ${info.port}`); byId('fileServiceStatus').classList.remove('error'); renderFiles();
   } catch (error) {
     if (error instanceof StaleRequestError) return; state.files = []; rows.replaceChildren(element('p', 'empty-state', `目录加载失败：${error.message}`)); text('fileServiceStatus', error.message); byId('fileServiceStatus').classList.add('error'); throw error;
   } finally { rows.removeAttribute('aria-busy'); }
@@ -574,6 +602,8 @@ byId('monitorTabbar').addEventListener('click', (event) => { const button = even
 document.addEventListener('languagechange', () => { buildMonitorCharts(); if (state.snapshot) renderSnapshot(); renderServices(); renderScenes(); renderUsers(); renderOperations(); renderOperationTimeline(); renderVideoJobs(); renderFiles(); text('pageTitle', byId(`page-${state.activePage}`)?.dataset.title || ''); });
 byId('refreshVideoJobsButton').addEventListener('click', refreshVideoJobs);
 byId('refreshFilesButton').addEventListener('click', () => refreshFiles(state.filePath).catch(() => {}));
+byId('fileSortSelect').addEventListener('change', (event) => { state.fileSort = event.target.value; refreshFiles(state.filePath).catch(() => {}); });
+byId('fileBrowser').parentElement.querySelector('.file-view-switch').addEventListener('click', (event) => { const button = event.target.closest('[data-file-view]'); if (button) setFileView(button.dataset.fileView); });
 byId('closeMediaButton').addEventListener('click', closeMedia);
 byId('mediaDialog').addEventListener('close', () => { const stage = byId('mediaStage'); stage.querySelectorAll('audio, video').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); });
 

@@ -47,7 +47,17 @@ class FileCatalog:
             raise FileServiceError("not_a_file", "请求路径不是文件", 400)
         return candidate
 
-    def list_directory(self, relative_path: str = "") -> dict[str, Any]:
+    def list_directory(
+        self,
+        relative_path: str = "",
+        *,
+        sort_by: str = "modified",
+        sort_order: str = "desc",
+    ) -> dict[str, Any]:
+        if sort_by not in {"modified", "name", "size"}:
+            raise FileServiceError("invalid_file_sort", "文件排序字段无效", 400)
+        if sort_order not in {"asc", "desc"}:
+            raise FileServiceError("invalid_file_sort_order", "文件排序方向无效", 400)
         directory = self._resolve(relative_path, expected="directory")
         entries: list[dict[str, Any]] = []
         try:
@@ -80,7 +90,13 @@ class FileCatalog:
                     "media_type": media_type,
                     "playable": bool(media_type and media_type.split("/", 1)[0] in {"audio", "video"}),
                 })
-            entries.sort(key=lambda item: (item["type"] != "directory", item["name"].casefold()))
+            sort_key = {
+                "modified": lambda item: item["modified_at"],
+                "name": lambda item: item["name"].casefold(),
+                "size": lambda item: item["size"] or 0,
+            }[sort_by]
+            entries.sort(key=sort_key, reverse=sort_order == "desc")
+            entries.sort(key=lambda item: item["type"] != "directory")
         except FileServiceError:
             raise
         except PermissionError as exc:
@@ -94,6 +110,8 @@ class FileCatalog:
         return {
             "path": current_path,
             "parent": parent_path,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
             "entries": entries,
         }
 
@@ -234,8 +252,12 @@ def create_file_service_app(root: Path) -> FastAPI:
         }
 
     @app.get("/api/v1/files")
-    async def list_files(path: str = Query(default="", max_length=4096)) -> dict[str, Any]:
-        return catalog.list_directory(path)
+    async def list_files(
+        path: str = Query(default="", max_length=4096),
+        sort_by: str = Query(default="modified", max_length=16),
+        sort_order: str = Query(default="desc", max_length=4),
+    ) -> dict[str, Any]:
+        return catalog.list_directory(path, sort_by=sort_by, sort_order=sort_order)
 
     @app.get("/api/v1/files/content")
     async def read_file(

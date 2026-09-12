@@ -158,15 +158,15 @@ When a health endpoint is unreachable, AXIS combines the result with desired sta
 
 ### HTTP file service
 
-The manager process also starts a standalone HTTP file service on `file_service_port` (default `18765`), bound to the same `host`, with `file_service_root` (default `D:/共享/`) as its root. The standalone service exposes `GET /health`, `GET /api/v1/files?path=`, and `GET /api/v1/files/content?path=&download=`. It does not use the AXIS session and is intended only for direct players and download tools on a trusted LAN; never expose it to the public internet. The manager port exposes these authenticated same-origin endpoints for the UI:
+The manager process also starts a standalone HTTP file service on `file_service_port` (default `18765`), bound to the same `host`, with `file_service_root` (default `D:/共享/`) as its root. The standalone service exposes `GET /health`, `GET /api/v1/files?path=&sort_by=&sort_order=`, and `GET /api/v1/files/content?path=&download=`. It does not use the AXIS session and is intended only for direct players and download tools on a trusted LAN; never expose it to the public internet. The manager port exposes these authenticated same-origin endpoints for the UI:
 
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/api/v1/file-service` | Return the port, root, and root availability |
-| GET | `/api/v1/file-service/files` | List the root or an optional `path`, with folders first |
+| GET | `/api/v1/file-service/files` | List the root or optional `path`; `sort_by` accepts `modified`, `name`, or `size`, `sort_order` accepts `asc` or `desc`, and the default is newest modified first with folders grouped first |
 | GET | `/api/v1/file-service/content` | Stream the required `path`; `download=true` returns an attachment |
 
-Path values use `/` separators relative to the root and support UTF-8 names. After resolving symbolic links and normalizing the path, the service verifies that the target remains inside the root and rejects every path or link whose final target escapes it. Files are streamed from disk and support HTTP Range requests for large downloads and media seeking.
+Path values use `/` separators relative to the root and support UTF-8 names. After resolving symbolic links and normalizing the path, the service verifies that the target remains inside the root and rejects every path or link whose final target escapes it. Files are streamed from disk and support HTTP Range requests for large downloads and media seeking. The page can switch between list and thumbnail views; thumbnail mode previews images and videos and uses type icons for other entries.
 
 The submission body references resources already prepared by OpenCode; AXIS does not create prompts, reference images, audio, or workflows:
 

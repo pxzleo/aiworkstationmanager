@@ -299,6 +299,13 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-service-heading .button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; }
 .file-service-status { margin-bottom: 0; }
 .file-service-status.error { border-color: color-mix(in srgb, var(--danger) 46%, var(--line)); color: var(--danger); }
+.file-toolbar { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 12px 8px 16px; border: 1px solid var(--line); border-bottom: 0; background: color-mix(in srgb, var(--surface) 88%, var(--bg)); }
+.file-sort-control { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11px; font-weight: 680; }
+.file-sort-control select { min-width: 164px; height: 38px; padding: 0 34px 0 11px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-2); color: var(--text); font: inherit; cursor: pointer; }
+.file-view-switch { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); }
+.file-view-switch button { min-height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: 10px; font-weight: 720; cursor: pointer; transition: color .16s ease, border-color .16s ease, background .16s ease; }
+.file-view-switch button.active { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); background: color-mix(in srgb, var(--accent) 12%, var(--surface-3)); color: var(--accent); }
+.file-view-switch svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; }
 .file-breadcrumbs { min-height: 50px; display: flex; align-items: center; gap: 2px; padding: 0 16px; border: 1px solid var(--line); border-bottom: 0; background: var(--surface); overflow-x: auto; }
 .file-breadcrumbs svg { width: 14px; min-width: 14px; height: 14px; fill: none; stroke: var(--muted-2); stroke-width: 2; }
 .file-breadcrumbs button { border: 0; background: transparent; color: var(--muted); min-height: 38px; padding: 0 8px; font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
@@ -318,6 +325,20 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-action { min-height: 34px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 11px; font-weight: 720; cursor: pointer; transition: border-color .16s ease, color .16s ease, background .16s ease; }
 .file-action:hover { border-color: color-mix(in srgb, var(--accent) 52%, var(--line)); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); }
 .file-browser [aria-busy="true"] { opacity: .56; pointer-events: none; }
+.file-browser.thumbnail-view > header { display: none; }
+.file-browser.thumbnail-view #fileRows { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; padding: 12px; }
+.file-browser.thumbnail-view .file-row { min-width: 0; min-height: 270px; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto auto; align-content: start; gap: 9px 12px; padding: 0 12px 13px; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--surface-2); animation: fileViewReveal .18s ease both; }
+.file-browser.thumbnail-view .file-row:hover { border-color: color-mix(in srgb, var(--accent) 36%, var(--line)); transform: translateY(-2px); }
+.file-thumbnail { grid-column: 1 / -1; grid-row: 1; width: calc(100% + 24px); aspect-ratio: 16 / 10; margin-left: -12px; display: grid; place-items: center; overflow: hidden; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface-3) 78%, var(--bg)); }
+.file-thumbnail img, .file-thumbnail video { width: 100%; height: 100%; display: block; object-fit: cover; background: #050708; }
+.file-thumbnail > svg { width: 38px; height: 38px; fill: none; stroke: var(--accent); stroke-width: 1.25; opacity: .8; }
+.file-browser.thumbnail-view .file-name { grid-column: 1 / -1; grid-row: 2; align-items: flex-start; padding: 2px 0 0; }
+.file-browser.thumbnail-view .file-name > svg { display: none; }
+.file-browser.thumbnail-view .file-name strong { display: -webkit-box; white-space: normal; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.file-browser.thumbnail-view .file-size { grid-column: 1; grid-row: 3; align-self: center; }
+.file-browser.thumbnail-view .file-row time { display: none; }
+.file-browser.thumbnail-view .file-action { grid-column: 2; grid-row: 3; justify-self: end; }
+@keyframes fileViewReveal { from { opacity: .45; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .media-dialog { width: min(920px, calc(100vw - 32px)); padding: 0; }
 .media-dialog-shell { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: min(680px, calc(100vh - 48px)); }
 .media-dialog-shell > header, .media-dialog-shell > footer { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
@@ -328,6 +349,12 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .media-stage audio { width: min(680px, 100%); }
 
 @media (max-width: 820px) {
+  .file-toolbar { align-items: stretch; flex-direction: column; }
+  .file-sort-control { justify-content: space-between; }
+  .file-sort-control select { flex: 1; min-width: 0; }
+  .file-view-switch button { flex: 1; justify-content: center; }
+  .file-browser.thumbnail-view #fileRows { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding: 8px; }
+  .file-browser.thumbnail-view .file-row { min-height: 235px; }
   .file-browser > header { display: none; }
   .file-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; padding: 13px 14px; }
   .file-name { grid-column: 1; grid-row: 1 / span 2; }

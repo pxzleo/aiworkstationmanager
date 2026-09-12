@@ -40,6 +40,8 @@ ENGLISH_ERROR_MESSAGES = {
     "file_read_failed": "The requested file could not be read.",
     "file_path_verification_failed": "The opened file path could not be verified.",
     "invalid_file_range": "The requested file range is invalid.",
+    "invalid_file_sort": "The requested file sort field is invalid.",
+    "invalid_file_sort_order": "The requested file sort order is invalid.",
     "original_scene_missing": "The original scene is no longer available for restoration.",
     "invalid_script": "The management script path or file type is invalid.",
     "invalid_services": "Scene services must be an ordered array of IDs.",

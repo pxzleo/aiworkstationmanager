@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,8 @@ class FileCatalogTests(unittest.TestCase):
         (self.root / "子目录" / "说明.txt").write_text("中文内容", encoding="utf-8")
         (self.root / "影片.mp4").write_bytes(b"0123456789")
         (self.root / "资料.bin").write_bytes(b"binary")
+        os.utime(self.root / "影片.mp4", (1000, 1000))
+        os.utime(self.root / "资料.bin", (2000, 2000))
         self.catalog = FileCatalog(self.root)
 
     def tearDown(self) -> None:
@@ -28,8 +31,10 @@ class FileCatalogTests(unittest.TestCase):
         root = self.catalog.list_directory()
         self.assertEqual(root["path"], "")
         self.assertIsNone(root["parent"])
-        self.assertEqual([entry["name"] for entry in root["entries"]], ["子目录", "影片.mp4", "资料.bin"])
-        video = root["entries"][1]
+        self.assertEqual([entry["name"] for entry in root["entries"]], ["子目录", "资料.bin", "影片.mp4"])
+        self.assertEqual(root["sort_by"], "modified")
+        self.assertEqual(root["sort_order"], "desc")
+        video = root["entries"][2]
         self.assertEqual(video["media_type"], "video/mp4")
         self.assertTrue(video["playable"])
         self.assertEqual(video["size"], 10)
@@ -38,6 +43,26 @@ class FileCatalogTests(unittest.TestCase):
         self.assertEqual(child["path"], "子目录")
         self.assertEqual(child["parent"], "")
         self.assertEqual(child["entries"][0]["path"], "子目录/说明.txt")
+
+    def test_supports_name_size_and_time_sorting_with_directories_first(self) -> None:
+        by_name = self.catalog.list_directory(sort_by="name", sort_order="asc")
+        self.assertEqual(
+            [entry["name"] for entry in by_name["entries"]],
+            ["子目录", "影片.mp4", "资料.bin"],
+        )
+        by_size = self.catalog.list_directory(sort_by="size", sort_order="desc")
+        self.assertEqual(
+            [entry["name"] for entry in by_size["entries"]],
+            ["子目录", "影片.mp4", "资料.bin"],
+        )
+        oldest = self.catalog.list_directory(sort_by="modified", sort_order="asc")
+        self.assertEqual(
+            [entry["name"] for entry in oldest["entries"]],
+            ["子目录", "影片.mp4", "资料.bin"],
+        )
+
+        with self.assertRaisesRegex(FileServiceError, "排序字段无效"):
+            self.catalog.list_directory(sort_by="unknown")
 
     def test_rejects_path_traversal_and_non_matching_types(self) -> None:
         outside = self.root.parent / "outside.txt"

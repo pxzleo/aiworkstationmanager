@@ -160,15 +160,15 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 
 ### HTTP 文件服务
 
-管理器进程启动时同时在 `file_service_port`（默认 `18765`）启动独立 HTTP 文件服务，绑定地址与 `host` 相同，根目录由 `file_service_root`（默认 `D:/共享/`）指定。独立服务提供 `GET /health`、`GET /api/v1/files?path=` 和 `GET /api/v1/files/content?path=&download=`；它不使用 AXIS 登录态，供可信局域网直接下载或播放，禁止暴露到公网。主管理端口提供以下登录保护的同源接口供页面使用：
+管理器进程启动时同时在 `file_service_port`（默认 `18765`）启动独立 HTTP 文件服务，绑定地址与 `host` 相同，根目录由 `file_service_root`（默认 `D:/共享/`）指定。独立服务提供 `GET /health`、`GET /api/v1/files?path=&sort_by=&sort_order=` 和 `GET /api/v1/files/content?path=&download=`；它不使用 AXIS 登录态，供可信局域网直接下载或播放，禁止暴露到公网。主管理端口提供以下登录保护的同源接口供页面使用：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/v1/file-service` | 返回端口、根目录和根目录可用状态 |
-| GET | `/api/v1/file-service/files` | 使用可选 `path` 列出根目录或子目录，目录优先排序 |
+| GET | `/api/v1/file-service/files` | 使用可选 `path` 列出根目录或子目录；`sort_by` 支持 `modified`、`name`、`size`，`sort_order` 支持 `asc`、`desc`，默认按修改时间倒序且目录优先 |
 | GET | `/api/v1/file-service/content` | 使用必填 `path` 流式读取文件；`download=true` 返回附件下载 |
 
-路径参数统一使用相对根目录的 `/` 分隔路径并支持 UTF-8 中文名称。服务在解析符号链接和规范化路径后验证目标仍位于根目录内，拒绝任何最终指向根目录之外的路径或链接。文件响应使用磁盘流式发送并支持 HTTP Range 请求，满足大文件下载和音视频拖动播放。
+路径参数统一使用相对根目录的 `/` 分隔路径并支持 UTF-8 中文名称。服务在解析符号链接和规范化路径后验证目标仍位于根目录内，拒绝任何最终指向根目录之外的路径或链接。文件响应使用磁盘流式发送并支持 HTTP Range 请求，满足大文件下载和音视频拖动播放。页面可切换列表或缩略图视图；缩略图视图会直接预览图片和视频，其余类型显示文件类型图标。
 
 提交体只引用 OpenCode 已准备好的资源，不在 AXIS 内创建提示词、参考图、音频或工作流：
 
