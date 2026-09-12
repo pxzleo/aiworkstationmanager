@@ -16,7 +16,7 @@ class ConfigError(ValueError):
     """Raised when manager configuration is invalid."""
 
 
-DEFAULT_PORTS = (1234, 3000, 8000, 8001, 8080, 8081, 8765, 18020, 18030, 18031)
+DEFAULT_PORTS = (1234, 3000, 8000, 8001, 8080, 8081, 8765, 18020, 18030, 18031, 18765)
 MIN_SAMPLE_INTERVAL_SECONDS = 0.5
 MAX_SAMPLE_INTERVAL_SECONDS = 3600.0
 MIN_HISTORY_MINUTES = 1
@@ -31,6 +31,8 @@ MAX_HISTORY_CAPACITY = 172801
 class Settings:
     host: str = "127.0.0.1"
     port: int = 19100
+    file_service_port: int = 18765
+    file_service_root: Path = Path("D:/共享/")
     sample_interval_seconds: float = 5.0
     history_minutes: int = 1440
     command_timeout_seconds: float = 4.0
@@ -299,6 +301,8 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
     env_mapping = {
         "WM_HOST": "host",
         "WM_PORT": "port",
+        "WM_FILE_SERVICE_PORT": "file_service_port",
+        "WM_FILE_SERVICE_ROOT": "file_service_root",
         "WM_SAMPLE_INTERVAL_SECONDS": "sample_interval_seconds",
         "WM_HISTORY_MINUTES": "history_minutes",
         "WM_COMMAND_TIMEOUT_SECONDS": "command_timeout_seconds",
@@ -338,6 +342,10 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
     host = str(data.get("host", "127.0.0.1")).strip()
     if not host:
         raise ConfigError("host 不能为空")
+    manager_port = _port(data.get("port", 19100), "port")
+    file_service_port = _port(data.get("file_service_port", 18765), "file_service_port")
+    if manager_port == file_service_port:
+        raise ConfigError("file_service_port 不能与管理器 port 相同")
     history_minutes = _bounded_integer(
         data.get("history_minutes", 1440),
         "history_minutes",
@@ -346,7 +354,9 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
     )
     return Settings(
         host=host,
-        port=_port(data.get("port", 19100), "port"),
+        port=manager_port,
+        file_service_port=file_service_port,
+        file_service_root=_path(data.get("file_service_root", "D:/共享/"), "file_service_root"),
         sample_interval_seconds=_bounded_number(
             data.get("sample_interval_seconds", 5),
             "sample_interval_seconds",

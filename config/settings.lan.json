@@ -1,6 +1,8 @@
 {
   "host": "0.0.0.0",
   "port": 19100,
+  "file_service_port": 18765,
+  "file_service_root": "D:/共享/",
   "database_path": "data/workstation-manager.db",
   "script_status_timeout_seconds": 3,
   "script_action_timeout_seconds": 600,

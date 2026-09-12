@@ -290,9 +290,9 @@ test('scene editor and management log remain wired', () => {
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260912-5'));
-  assert.ok(html.includes('i18n.js?v=20260912-5'));
-  assert.ok(html.includes('app.js?v=20260912-5'));
+  assert.ok(html.includes('styles.css?v=20260912-6'));
+  assert.ok(html.includes('i18n.js?v=20260912-6'));
+  assert.ok(html.includes('app.js?v=20260912-6'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -338,6 +338,24 @@ test('video job page monitors every scheduler stage and exposes cancellation', (
   for (const stage of ['等待 NInfer 空闲', '切换生成场景', '检查 ComfyUI', '提交工作流', 'ComfyUI 生成中', '收集输出', '恢复原场景', '回调 OpenCode']) {
     assert.ok(js.includes(stage), `missing video stage ${stage}`);
   }
+});
+
+test('file service page browses folders, downloads files and plays media', () => {
+  assert.ok(html.includes('data-page="files"'));
+  assert.ok(html.includes('id="page-files"'));
+  assert.ok(html.includes('id="fileBreadcrumbs"'));
+  assert.ok(html.includes('id="fileRows"'));
+  assert.ok(html.includes('id="mediaDialog"'));
+  assert.ok(html.includes('id="mediaStage"'));
+  assert.ok(js.includes("api('/file-service'"));
+  assert.ok(js.includes('`/file-service/files?${params}`'));
+  assert.ok(js.includes('fileContentUrl(entry.path, true)'));
+  assert.ok(js.includes("entry.media_type?.startsWith('audio/') ? 'audio' : 'video'"));
+  assert.ok(js.includes("player.preload = 'metadata'"));
+  assert.ok(js.includes("player.removeAttribute('src')"));
+  assert.ok(css.includes('.file-browser > header, .file-row'));
+  assert.ok(css.includes('.media-stage video'));
+  assert.ok(i18n.includes("'文件服务': 'File Service'"));
 });
 
 test('scene operation progress keeps the fixed backend denominator', () => {
@@ -431,9 +449,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260912-5'));
-  assert.ok(html.includes('i18n.js?v=20260912-5'));
-  assert.ok(html.includes('app.js?v=20260912-5'));
+  assert.ok(html.includes('styles.css?v=20260912-6'));
+  assert.ok(html.includes('i18n.js?v=20260912-6'));
+  assert.ok(html.includes('app.js?v=20260912-6'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

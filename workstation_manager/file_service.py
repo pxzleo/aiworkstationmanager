@@ -1,0 +1,301 @@
+from __future__ import annotations
+
+import mimetypes
+import os
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, BinaryIO, Iterator
+from urllib.parse import quote
+
+import uvicorn
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+
+
+class FileServiceError(ValueError):
+    """Raised when a file-service path or filesystem operation is invalid."""
+
+    def __init__(self, code: str, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+
+
+class FileCatalog:
+    def __init__(self, root: Path) -> None:
+        self.root = root.expanduser().resolve(strict=False)
+
+    def _resolve(self, relative_path: str, *, expected: str) -> Path:
+        if not isinstance(relative_path, str) or "\x00" in relative_path:
+            raise FileServiceError("invalid_file_path", "文件路径无效", 400)
+        normalized = relative_path.replace("\\", "/").strip("/")
+        try:
+            candidate = (self.root / normalized).resolve(strict=False)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise FileServiceError("invalid_file_path", f"文件路径无效: {exc}", 400) from exc
+        try:
+            candidate.relative_to(self.root)
+        except ValueError as exc:
+            raise FileServiceError("file_path_outside_root", "禁止访问根目录之外的路径", 403) from exc
+        if not candidate.exists():
+            raise FileServiceError("file_not_found", "文件或目录不存在", 404)
+        if expected == "directory" and not candidate.is_dir():
+            raise FileServiceError("not_a_directory", "请求路径不是目录", 400)
+        if expected == "file" and not candidate.is_file():
+            raise FileServiceError("not_a_file", "请求路径不是文件", 400)
+        return candidate
+
+    def list_directory(self, relative_path: str = "") -> dict[str, Any]:
+        directory = self._resolve(relative_path, expected="directory")
+        entries: list[dict[str, Any]] = []
+        try:
+            for child in directory.iterdir():
+                try:
+                    resolved = child.resolve(strict=False)
+                    resolved.relative_to(self.root)
+                    stat = child.stat()
+                except ValueError as exc:
+                    raise FileServiceError(
+                        "file_path_outside_root",
+                        f"目录项目指向根目录之外: {child.name}",
+                        403,
+                    ) from exc
+                except (OSError, RuntimeError) as exc:
+                    raise FileServiceError(
+                        "file_metadata_failed",
+                        f"无法读取目录项目: {child.name}",
+                        500,
+                    ) from exc
+                is_directory = child.is_dir()
+                relative = child.relative_to(self.root).as_posix()
+                media_type = None if is_directory else mimetypes.guess_type(child.name)[0]
+                entries.append({
+                    "name": child.name,
+                    "path": relative,
+                    "type": "directory" if is_directory else "file",
+                    "size": None if is_directory else stat.st_size,
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                    "media_type": media_type,
+                    "playable": bool(media_type and media_type.split("/", 1)[0] in {"audio", "video"}),
+                })
+            entries.sort(key=lambda item: (item["type"] != "directory", item["name"].casefold()))
+        except FileServiceError:
+            raise
+        except PermissionError as exc:
+            raise FileServiceError("directory_access_denied", "没有权限读取该目录", 403) from exc
+        except OSError as exc:
+            raise FileServiceError("directory_read_failed", "读取目录失败", 500) from exc
+        current_path = "" if directory == self.root else directory.relative_to(self.root).as_posix()
+        parent_path = None if directory == self.root else (
+            "" if directory.parent == self.root else directory.parent.relative_to(self.root).as_posix()
+        )
+        return {
+            "path": current_path,
+            "parent": parent_path,
+            "entries": entries,
+        }
+
+    def _verify_open_file(self, stream: BinaryIO) -> None:
+        opened_path: Path | None = None
+        if os.name == "nt":
+            import ctypes
+            import msvcrt
+
+            buffer = ctypes.create_unicode_buffer(32768)
+            length = ctypes.windll.kernel32.GetFinalPathNameByHandleW(
+                msvcrt.get_osfhandle(stream.fileno()), buffer, len(buffer), 0
+            )
+            if length == 0 or length >= len(buffer):
+                raise FileServiceError("file_path_verification_failed", "无法核验已打开文件的路径", 500)
+            final_path = buffer.value
+            if final_path.startswith("\\\\?\\UNC\\"):
+                final_path = "\\\\" + final_path[8:]
+            elif final_path.startswith("\\\\?\\"):
+                final_path = final_path[4:]
+            opened_path = Path(final_path).resolve(strict=False)
+        else:
+            descriptor_path = Path(f"/proc/self/fd/{stream.fileno()}")
+            if descriptor_path.exists():
+                opened_path = Path(os.readlink(descriptor_path)).resolve(strict=False)
+
+        if opened_path is None:
+            raise FileServiceError("file_path_verification_failed", "当前系统无法核验已打开文件的路径", 500)
+        try:
+            opened_path.relative_to(self.root)
+        except ValueError as exc:
+            raise FileServiceError("file_path_outside_root", "禁止访问根目录之外的路径", 403) from exc
+
+    @staticmethod
+    def _parse_range(range_header: str | None, size: int) -> tuple[int, int, bool]:
+        if not range_header:
+            return 0, size - 1, False
+        if not range_header.startswith("bytes=") or "," in range_header:
+            raise FileServiceError("invalid_file_range", "Range 请求无效", 416)
+        value = range_header[6:].strip()
+        if "-" not in value:
+            raise FileServiceError("invalid_file_range", "Range 请求无效", 416)
+        start_text, end_text = value.split("-", 1)
+        try:
+            if start_text:
+                start = int(start_text)
+                end = min(int(end_text), size - 1) if end_text else size - 1
+            else:
+                suffix_length = int(end_text)
+                if suffix_length <= 0:
+                    raise ValueError
+                start = max(size - suffix_length, 0)
+                end = size - 1
+        except ValueError as exc:
+            raise FileServiceError("invalid_file_range", "Range 请求无效", 416) from exc
+        if size <= 0 or start < 0 or start >= size or end < start:
+            raise FileServiceError("invalid_file_range", "Range 请求超出文件范围", 416)
+        return start, end, True
+
+    def file_response(
+        self,
+        relative_path: str,
+        *,
+        download: bool = False,
+        range_header: str | None = None,
+    ) -> StreamingResponse:
+        file_path = self._resolve(relative_path, expected="file")
+        try:
+            stream = file_path.open("rb")
+        except PermissionError as exc:
+            raise FileServiceError("file_access_denied", "没有权限读取该文件", 403) from exc
+        except OSError as exc:
+            raise FileServiceError("file_read_failed", "读取文件失败", 500) from exc
+        try:
+            self._verify_open_file(stream)
+            size = os.fstat(stream.fileno()).st_size
+            start, end, partial = self._parse_range(range_header, size)
+        except FileServiceError:
+            stream.close()
+            raise
+        except OSError as exc:
+            stream.close()
+            raise FileServiceError(
+                "file_path_verification_failed",
+                "无法核验已打开文件的路径",
+                500,
+            ) from exc
+
+        def chunks() -> Iterator[bytes]:
+            remaining = end - start + 1
+            try:
+                stream.seek(start)
+                while remaining:
+                    chunk = stream.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise OSError("文件在读取期间意外结束")
+                    remaining -= len(chunk)
+                    yield chunk
+            finally:
+                stream.close()
+
+        media_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        disposition = "attachment" if download else "inline"
+        length = end - start + 1
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(length),
+            "Content-Disposition": f"{disposition}; filename*=utf-8''{quote(file_path.name)}",
+        }
+        if partial:
+            headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        return StreamingResponse(
+            chunks(),
+            status_code=206 if partial else 200,
+            media_type=media_type,
+            headers=headers,
+        )
+
+
+def _error_body(exc: FileServiceError) -> dict[str, Any]:
+    return {"error": {"code": exc.code, "message": str(exc)}}
+
+
+def create_file_service_app(root: Path) -> FastAPI:
+    catalog = FileCatalog(root)
+    app = FastAPI(title="AXIS HTTP 文件服务", version="1")
+    app.state.catalog = catalog
+
+    @app.exception_handler(FileServiceError)
+    async def file_service_error_handler(_: Request, exc: FileServiceError) -> JSONResponse:
+        return JSONResponse(_error_body(exc), status_code=exc.status_code)
+
+    @app.get("/health")
+    async def health() -> dict[str, Any]:
+        return {
+            "status": "ok" if catalog.root.is_dir() else "unavailable",
+            "root_available": catalog.root.is_dir(),
+        }
+
+    @app.get("/api/v1/files")
+    async def list_files(path: str = Query(default="", max_length=4096)) -> dict[str, Any]:
+        return catalog.list_directory(path)
+
+    @app.get("/api/v1/files/content")
+    async def read_file(
+        request: Request,
+        path: str = Query(min_length=1, max_length=4096),
+        download: bool = Query(default=False),
+    ) -> StreamingResponse:
+        return catalog.file_response(
+            path,
+            download=download,
+            range_header=request.headers.get("range"),
+        )
+
+    return app
+
+
+class FileServiceServer:
+    def __init__(self, root: Path, host: str, port: int) -> None:
+        self.host = host
+        self.port = port
+        self._server = uvicorn.Server(
+            uvicorn.Config(
+                create_file_service_app(root),
+                host=host,
+                port=port,
+                access_log=False,
+                log_level="warning",
+            )
+        )
+        self._thread: threading.Thread | None = None
+        self._failure: BaseException | None = None
+
+    def _run(self) -> None:
+        try:
+            self._server.run()
+        except BaseException as exc:
+            self._failure = exc
+
+    def start(self, timeout_seconds: float = 5.0) -> None:
+        if self._thread is not None:
+            raise RuntimeError("HTTP 文件服务已经启动")
+        self._thread = threading.Thread(target=self._run, name="axis-file-service", daemon=True)
+        self._thread.start()
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if self._server.started:
+                return
+            if not self._thread.is_alive():
+                cause = f": {self._failure}" if self._failure else ""
+                raise RuntimeError(f"无法在 {self.host}:{self.port} 启动 HTTP 文件服务{cause}")
+            time.sleep(0.01)
+        self.stop()
+        raise RuntimeError(f"HTTP 文件服务在 {self.host}:{self.port} 启动超时")
+
+    def stop(self, timeout_seconds: float = 5.0) -> None:
+        thread = self._thread
+        if thread is None:
+            return
+        self._server.should_exit = True
+        thread.join(timeout_seconds)
+        if thread.is_alive():
+            raise RuntimeError("HTTP 文件服务未能在超时时间内停止")
+        self._thread = None

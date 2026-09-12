@@ -21,6 +21,7 @@ let draggedSceneId = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, timers: new Map(),
+  fileService: null, files: [], filePath: '',
   historyWindowMinutes: 15, historyLoading: false,
   chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
@@ -93,6 +94,7 @@ function navigate(page) {
   const next = byId(`page-${page}`); if (!next) return;
   state.activePage = page; pages.forEach((item) => item.classList.toggle('active', item === next)); navItems.forEach((item) => item.classList.toggle('active', item.dataset.page === page));
   text('pageTitle', next.dataset.title); closeSidebar(mobileViewport.matches); window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (page === 'files') refreshFiles(state.filePath).catch(() => {});
 }
 navItems.forEach((item) => item.addEventListener('click', () => navigate(item.dataset.page)));
 document.querySelectorAll('[data-nav]').forEach((item) => item.addEventListener('click', () => navigate(item.dataset.nav)));
@@ -129,7 +131,7 @@ async function bootstrap() {
 function enterApplication() { document.body.classList.remove('auth-pending'); text('logoutButton', (state.username || '管理员').slice(0, 2).toUpperCase()); clearTimers(); refreshAll(); startPolling('snapshot', refreshSnapshot, SNAPSHOT_INTERVAL_MS); startPolling('history', refreshHistory, HISTORY_INTERVAL_MS); startPolling('services', refreshServicesAndScenes, SERVICE_INTERVAL_MS); startPolling('video-jobs', refreshVideoJobs, 2000); startPolling('logs', refreshLogs, SERVICE_INTERVAL_MS); }
 async function logout() { try { await api('/auth/logout', { method: 'POST', authRequest: true }); showAuth('login', '已退出登录。'); } catch (error) { showToast(error.message); } }
 
-async function refreshAll() { await Promise.allSettled([refreshSnapshot(), refreshHistory(), refreshServicesAndScenes(), refreshVideoJobs(), refreshUsers(), refreshLogs(), refreshSystemInfo()]); }
+async function refreshAll() { await Promise.allSettled([refreshSnapshot(), refreshHistory(), refreshServicesAndScenes(), refreshVideoJobs(), refreshUsers(), refreshLogs(), refreshSystemInfo(), refreshFiles(state.filePath)]); }
 async function refreshSystemInfo() {
   try { const health = await api('/health', { resource: 'system-info' }); dataText('systemVersion', health.version, '版本未知'); }
   catch (error) { dataText('systemVersion', '', '读取失败'); throw error; }
@@ -160,6 +162,36 @@ async function refreshServicesAndScenes() {
 async function refreshLogs() { if (document.hidden) return; const [operationRequest, auditRequest] = await Promise.allSettled([api('/operations?limit=50', { resource: 'operations' }), api('/audit?limit=100', { resource: 'audit' })]); if (operationRequest.status === 'rejected') { if (!(operationRequest.reason instanceof StaleRequestError)) showToast(`操作日志读取失败：${operationRequest.reason.message}`); return; } if (auditRequest.status === 'rejected' && !(auditRequest.reason instanceof StaleRequestError)) showToast(`默认场景记录读取失败：${auditRequest.reason.message}`); const auditEvents = auditRequest.status === 'fulfilled' ? auditRequest.value.events || [] : []; const defaultSceneEvents = auditEvents.filter((event) => ['management.scene.default.set', 'management.scene.default.clear'].includes(event.event)).map(defaultSceneOperation); state.operations = [...(operationRequest.value.operations || []), ...defaultSceneEvents].sort((left, right) => new Date(right.created_at) - new Date(left.created_at)).slice(0, 50); renderOperations(); renderOperationTimeline(); }
 async function refreshVideoJobs() { if (document.hidden) return; try { const result = await api('/video-jobs?limit=100', { resource: 'video-jobs' }); state.videoJobs = result.jobs || []; state.videoQueueSummary = result.queue_summary || { queued_segments: 0 }; renderVideoJobs(); } catch (error) { if (!(error instanceof StaleRequestError)) showToast(`视频任务读取失败：${error.message}`); } }
 async function refreshUsers() { if (document.hidden) return; try { const result = await api('/users', { resource: 'users' }); state.users = result.users || []; renderUsers(); } catch (error) { const rows = byId('userRows'); rows.replaceChildren(element('p', 'empty-state', `用户加载失败：${error.message}`)); throw error; } }
+
+function fileContentUrl(path, download = false) { const params = new URLSearchParams({ path }); if (download) params.set('download', 'true'); return `${API_PREFIX}/file-service/content?${params}`; }
+function formatFileSize(value) { if (!Number.isFinite(value)) return '—'; if (value < 1024) return `${value} B`; const units = ['KB', 'MB', 'GB', 'TB']; let size = value; let unit = -1; do { size /= 1024; unit += 1; } while (size >= 1024 && unit < units.length - 1); return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unit]}`; }
+function fileLabel(entry) { if (entry.type === 'directory') return '目录'; if (entry.playable) return entry.media_type?.startsWith('audio/') ? '音频' : '视频'; return '文件'; }
+function downloadFile(entry) { const link = document.createElement('a'); link.href = fileContentUrl(entry.path, true); link.download = entry.name; document.body.append(link); link.click(); link.remove(); }
+function closeMedia() { const stage = byId('mediaStage'); stage.querySelectorAll('audio, video').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); if (byId('mediaDialog').open) byId('mediaDialog').close(); }
+function openMedia(entry) { const kind = entry.media_type?.startsWith('audio/') ? 'audio' : 'video'; const player = document.createElement(kind); player.controls = true; player.autoplay = true; player.preload = 'metadata'; player.src = fileContentUrl(entry.path); player.dataset.i18nSkip = ''; text('mediaTitle', entry.name); const download = byId('mediaDownloadLink'); download.href = fileContentUrl(entry.path, true); download.download = entry.name; byId('mediaStage').replaceChildren(player); byId('mediaDialog').showModal(); }
+function openFileEntry(entry) { if (entry.type === 'directory') refreshFiles(entry.path).catch(() => {}); else if (entry.playable) openMedia(entry); else downloadFile(entry); }
+function renderFileBreadcrumbs() {
+  const breadcrumbs = byId('fileBreadcrumbs'); breadcrumbs.replaceChildren();
+  const parts = state.filePath ? state.filePath.split('/') : [];
+  const add = (label, path, current, userText = true) => { const button = userText ? userElement('button', current ? 'current' : '', label) : element('button', current ? 'current' : '', label); button.type = 'button'; button.disabled = current; button.addEventListener('click', () => refreshFiles(path).catch(() => {})); breadcrumbs.append(button); };
+  add('根目录', '', parts.length === 0, false);
+  parts.forEach((part, index) => { breadcrumbs.append(icon('chevron')); add(part, parts.slice(0, index + 1).join('/'), index === parts.length - 1); });
+}
+function renderFiles() {
+  renderFileBreadcrumbs(); const rows = byId('fileRows'); rows.replaceChildren();
+  if (!state.files.length) { rows.append(element('p', 'empty-state', '这个目录是空的。')); return; }
+  state.files.forEach((entry) => { const row = element('article', 'file-row'); const name = element('button', 'file-name'); name.type = 'button'; name.append(icon(entry.type === 'directory' ? 'box' : entry.playable ? 'play' : 'file')); const copy = element('span'); copy.append(userElement('strong', '', entry.name), element('small', '', fileLabel(entry))); name.append(copy); name.addEventListener('click', () => openFileEntry(entry)); const action = element('button', 'file-action', entry.type === 'directory' ? ui('打开') : entry.playable ? ui('播放') : ui('下载')); action.type = 'button'; action.addEventListener('click', () => openFileEntry(entry)); row.append(name, element('span', 'file-size', entry.type === 'directory' ? '—' : formatFileSize(entry.size)), userElement('time', '', formatDate(entry.modified_at, true)), action); rows.append(row); });
+}
+async function refreshFiles(path = '') {
+  if (document.hidden) return; const rows = byId('fileRows'); rows.setAttribute('aria-busy', 'true');
+  try {
+    const info = state.fileService || await api('/file-service', { resource: 'file-service-info' }); state.fileService = info; text('fileServicePort', `:${info.port}`); dataText('fileServiceRoot', info.root, '根目录未配置');
+    if (!info.root_available) throw new ApiError(404, 'file_root_unavailable', '配置的根目录不存在或不可访问。');
+    const params = new URLSearchParams({ path }); const result = await api(`/file-service/files?${params}`, { resource: 'file-service-files' }); state.filePath = result.path || ''; state.files = result.entries || []; text('fileServiceStatus', window.axisI18n.language === 'zh' ? `${state.files.length} 个项目 · HTTP 端口 ${info.port}` : `${state.files.length} items · HTTP port ${info.port}`); byId('fileServiceStatus').classList.remove('error'); renderFiles();
+  } catch (error) {
+    if (error instanceof StaleRequestError) return; state.files = []; rows.replaceChildren(element('p', 'empty-state', `目录加载失败：${error.message}`)); text('fileServiceStatus', error.message); byId('fileServiceStatus').classList.add('error'); throw error;
+  } finally { rows.removeAttribute('aria-busy'); }
+}
 
 function normalizeGpu(gpu) { return { ...gpu, load_percent: normalizedPercent(gpu.load_percent), memory_percent: normalizedPercent(gpu.memory_percent) }; }
 function normalizeHistorySample(sample) { return { ...sample, cpu_load_percent: normalizedPercent(sample.cpu_load_percent), memory_percent: normalizedPercent(sample.memory_percent), gpus: Array.isArray(sample.gpus) ? sample.gpus.map(normalizeGpu) : [], disks: Array.isArray(sample.disks) ? sample.disks : [] }; }
@@ -539,7 +571,10 @@ async function cancelVideoJob(job) { if (!confirmUi(`取消视频任务“${vide
 byId('authForm').addEventListener('submit', submitAuth); byId('logoutButton').addEventListener('click', logout); byId('refreshButton').addEventListener('click', refreshAll); byId('refreshLogsButton').addEventListener('click', refreshLogs); byId('overviewSceneSelect').addEventListener('change', handleOverviewSceneChange); byId('stopAllServicesButton').addEventListener('click', stopAllServices); byId('addServiceButton').addEventListener('click', () => openServiceDialog()); byId('addSceneButton').addEventListener('click', () => openSceneDialog()); byId('addUserButton').addEventListener('click', openUserDialog); byId('cancelSceneSwitchButton').addEventListener('click', cancelSceneSwitch); byId('closeSceneProgressButton').addEventListener('click', () => byId('sceneProgressDialog').close()); byId('sceneProgressDialog').addEventListener('cancel', (event) => { if (sceneProgressOperationId) event.preventDefault(); }); byId('serviceForm').addEventListener('submit', saveService); byId('serviceWslPortproxyEnabled').addEventListener('change', updateServicePortproxyFields); byId('sceneForm').addEventListener('submit', saveScene); byId('userForm').addEventListener('submit', saveUser); byId('passwordForm').addEventListener('submit', saveUserPassword); byId('serviceSearch').addEventListener('input', renderRegisteredServiceTable); byId('serviceFilters').addEventListener('click', (event) => { const button = event.target.closest('[data-filter]'); if (!button) return; state.serviceFilter = button.dataset.filter; byId('serviceFilters').querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item === button)); renderRegisteredServiceTable(); }); document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => byId(button.dataset.close).close())); document.addEventListener('visibilitychange', () => { if (!document.hidden && !document.body.classList.contains('auth-pending')) refreshAll(); });
 byId('historyRangeSelect').addEventListener('click', (event) => { const button = event.target.closest('[data-history-minutes]'); if (button) selectHistoryWindow(Number(button.dataset.historyMinutes)); });
 byId('monitorTabbar').addEventListener('click', (event) => { const button = event.target.closest('[data-monitor-view]'); if (button) selectMonitorView(button.dataset.monitorView); });
-document.addEventListener('languagechange', () => { buildMonitorCharts(); if (state.snapshot) renderSnapshot(); renderServices(); renderScenes(); renderUsers(); renderOperations(); renderOperationTimeline(); renderVideoJobs(); text('pageTitle', byId(`page-${state.activePage}`)?.dataset.title || ''); });
+document.addEventListener('languagechange', () => { buildMonitorCharts(); if (state.snapshot) renderSnapshot(); renderServices(); renderScenes(); renderUsers(); renderOperations(); renderOperationTimeline(); renderVideoJobs(); renderFiles(); text('pageTitle', byId(`page-${state.activePage}`)?.dataset.title || ''); });
 byId('refreshVideoJobsButton').addEventListener('click', refreshVideoJobs);
+byId('refreshFilesButton').addEventListener('click', () => refreshFiles(state.filePath).catch(() => {}));
+byId('closeMediaButton').addEventListener('click', closeMedia);
+byId('mediaDialog').addEventListener('close', () => { const stage = byId('mediaStage'); stage.querySelectorAll('audio, video').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); });
 
 bootstrap();

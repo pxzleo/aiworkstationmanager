@@ -109,6 +109,8 @@ class ConfigTests(unittest.TestCase):
     def test_invalid_port_is_explicit(self) -> None:
         with self.assertRaisesRegex(ConfigError, "1..65535"):
             load_settings({"WM_PORT": "70000"})
+        with self.assertRaisesRegex(ConfigError, "不能与管理器 port 相同"):
+            load_settings({"WM_PORT": "18765"})
 
     def test_configuration_rejects_non_finite_and_fractional_integers(self) -> None:
         invalid_cases = (
@@ -743,7 +745,10 @@ class ApiTests(unittest.TestCase):
             sample_interval_seconds=60,
             database_path=temporary_root / "manager.db",
             manager_log_path=temporary_root / "manager.log",
+            file_service_root=temporary_root / "共享",
         )
+        self.settings.file_service_root.mkdir()
+        (self.settings.file_service_root / "测试.txt").write_text("hello", encoding="utf-8")
 
         def fake_collector(_: Settings) -> dict:
             return {
@@ -798,6 +803,30 @@ class ApiTests(unittest.TestCase):
             "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
         )
         self.assertEqual(response.status_code, 201, response.text)
+
+    def test_authenticated_file_service_browses_downloads_and_streams_ranges(self) -> None:
+        unauthenticated = self.client.get("/api/v1/file-service/files")
+        self.assertEqual(unauthenticated.status_code, 401)
+        setup = self.client.post(
+            "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+        )
+        self.assertEqual(setup.status_code, 201, setup.text)
+
+        info = self.client.get("/api/v1/file-service")
+        self.assertEqual(info.status_code, 200)
+        self.assertEqual(info.json()["port"], 18765)
+        self.assertTrue(info.json()["root_available"])
+
+        listing = self.client.get("/api/v1/file-service/files")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json()["entries"][0]["name"], "测试.txt")
+        partial = self.client.get(
+            "/api/v1/file-service/content",
+            params={"path": "测试.txt"},
+            headers={"Range": "bytes=1-3"},
+        )
+        self.assertEqual(partial.status_code, 206)
+        self.assertEqual(partial.content, b"ell")
 
     def test_remember_login_extends_server_session_and_cookie_to_thirty_days(self) -> None:
         setup = self.client.post(

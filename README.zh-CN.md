@@ -110,6 +110,8 @@ Copy-Item .\config\settings.example.json .\config\settings.json
 | --- | --- | --- |
 | `host` | `127.0.0.1` | 监听地址；局域网访问可在完成首次设置后改为 `0.0.0.0` |
 | `port` | `19100` | 管理器端口 |
+| `file_service_port` | `18765` | 随管理器启动的 HTTP 文件服务端口 |
+| `file_service_root` | `D:/共享/` | 文件服务允许浏览、下载和播放的根目录 |
 | `database_path` | `data/workstation-manager.db` | 用户、服务、场景和操作记录数据库 |
 | `sample_interval_seconds` | `5` | 资源监控采样间隔，不会调用服务脚本 |
 | `history_minutes` | `1440` | 资源历史的 SQLite 保留时长（分钟） |
@@ -122,6 +124,8 @@ Copy-Item .\config\settings.example.json .\config\settings.json
 资源监控默认每 5 秒写入一次 SQLite，保留最近 24 小时；页面可切换 `15m`/`1h`/`24h`，其中长时间范围由服务端聚合后返回。每张 GPU 的核心负载、频率、功率和温度使用对齐曲线与联动指针显示，显存容量单独展示。内存中只保留最近 15 分钟，不会因 24 小时历史持续占用大量内存。
 
 局域网模式没有 HTTPS，账号密码会以未加密 HTTP 传输，只适合可信局域网，不要直接暴露到公网。
+
+侧栏“文件服务”页面使用登录态浏览配置根目录；目录可以逐级进入，普通文件点击下载，音视频点击后直接播放。独立的 `18765` HTTP 接口无需登录，供可信局域网中的播放器或下载工具直接访问，因此不要把该端口暴露到公网。
 
 ## 随系统启动
 

@@ -110,6 +110,8 @@ Most installations need only these fields:
 | --- | --- | --- |
 | `host` | `127.0.0.1` | Listen address; after initial setup, use `0.0.0.0` for LAN access |
 | `port` | `19100` | Manager port |
+| `file_service_port` | `18765` | HTTP file-service port started with AXIS |
+| `file_service_root` | `D:/共享/` | Root folder available for browsing, download, and playback |
 | `database_path` | `data/workstation-manager.db` | Users, services, scenes, and operation records |
 | `sample_interval_seconds` | `5` | Resource sampling interval; it never calls service scripts |
 | `history_minutes` | `1440` | SQLite resource-history retention in minutes |
@@ -122,6 +124,8 @@ Most installations need only these fields:
 Resource monitoring writes one SQLite sample every 5 seconds by default and retains the latest 24 hours. The UI supports `15m`, `1h`, and `24h`; longer windows are aggregated by the server before they are returned. For each GPU, aligned charts and a linked pointer compare core load, clock, power, and temperature, while VRAM capacity remains separate. Only the latest 15 minutes remain in memory, so 24-hour history does not create a large in-memory buffer.
 
 LAN mode does not provide HTTPS. Credentials travel over unencrypted HTTP, so use it only on a trusted LAN and never expose it directly to the internet.
+
+The sidebar **File Service** page uses the signed-in session to browse the configured root, enter folders, download ordinary files, and play audio or video inline. The standalone `18765` HTTP API is intentionally unauthenticated for direct access by trusted-LAN players and download tools; never expose that port to the public internet.
 
 ## Start with Windows
 

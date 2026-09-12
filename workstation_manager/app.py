@@ -25,6 +25,7 @@ from .auth import (
 )
 from .config import ConfigError, Settings, load_settings
 from .database import SCHEMA_VERSION as DATABASE_SCHEMA_VERSION, Database, DatabaseError
+from .file_service import FileCatalog, FileServiceError
 from .history import Sampler, parse_window
 from .i18n import localize_error, localize_http_error
 from .manager_logging import configure_manager_logging
@@ -257,6 +258,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         generation_timeout_seconds=resolved_settings.video_job_generation_timeout_seconds,
         resource_snapshot=lambda: resolved_sampler.current,
     )
+    file_catalog = FileCatalog(resolved_settings.file_service_root)
     auth_concurrency = asyncio.Semaphore(resolved_settings.auth_concurrency_limit)
     if resolved_settings.host.lower() != "localhost" and not is_loopback(resolved_settings.host) \
             and not resolved_auth.is_setup():
@@ -301,6 +303,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     app.state.auth = resolved_auth
     app.state.registry = resolved_registry
     app.state.video_jobs = resolved_video_jobs
+    app.state.file_catalog = file_catalog
     app.state.manager_logger = manager_logger
 
     @app.exception_handler(AuthError)
@@ -334,6 +337,14 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             exc.code, str(exc), request.headers.get("accept-language")
         )
         return JSONResponse(_error_body(exc.code, message), status,
+                            headers={"Content-Language": language})
+
+    @app.exception_handler(FileServiceError)
+    async def file_service_error_handler(request: Request, exc: FileServiceError) -> JSONResponse:
+        message, language = localize_error(
+            exc.code, str(exc), request.headers.get("accept-language")
+        )
+        return JSONResponse(_error_body(exc.code, message), exc.status_code,
                             headers={"Content-Language": language})
 
     @app.exception_handler(StarletteHTTPException)
@@ -726,6 +737,36 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         if re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
             raise VideoJobError("video_job_not_found", "视频任务不存在")
         return resolved_video_jobs.cancel(job_id, session.username, _client_ip(request))
+
+    @app.get("/api/v1/file-service")
+    async def file_service_info(
+        _: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, Any]:
+        return {
+            "port": resolved_settings.file_service_port,
+            "root": str(resolved_settings.file_service_root),
+            "root_available": file_catalog.root.is_dir(),
+        }
+
+    @app.get("/api/v1/file-service/files")
+    async def list_file_service_files(
+        path: str = Query(default="", max_length=4096),
+        _: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, Any]:
+        return file_catalog.list_directory(path)
+
+    @app.get("/api/v1/file-service/content")
+    async def read_file_service_file(
+        request: Request,
+        path: str = Query(min_length=1, max_length=4096),
+        download: bool = Query(default=False),
+        _: AuthenticatedSession = Depends(require_session),
+    ) -> Response:
+        return file_catalog.file_response(
+            path,
+            download=download,
+            range_header=request.headers.get("range"),
+        )
 
     @app.get("/api/v1/audit")
     async def audit(limit: int = Query(default=100, ge=1, le=500),
