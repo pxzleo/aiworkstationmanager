@@ -278,7 +278,7 @@ test('scene editor and management log remain wired', () => {
   assert.ok(js.includes("management.scene.default.set"));
   assert.ok(js.includes("management.scene.default.clear"));
   assert.ok(js.includes('Promise.allSettled'));
-  assert.ok(js.includes("auditRequest.status === 'fulfilled' ? auditRequest.value.events || [] : []"));
+  assert.ok(js.includes('const auditEvents = auditData?.events || []'));
   assert.ok(js.includes("operation.requested_by || ''"));
   assert.ok(js.includes("'operation-actor'"));
   assert.ok(js.includes("操作账号"));
@@ -302,7 +302,14 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 test('scene generation controls use the current frontend asset cache key', () => {
   assert.ok(html.includes('styles.css?v=20260913-14'));
   assert.ok(html.includes('i18n.js?v=20260913-11'));
-  assert.ok(html.includes('app.js?v=20260913-16'));
+  assert.ok(html.includes('app.js?v=20260913-17'));
+});
+
+test('read polling tolerates transient network failures without retrying writes', () => {
+  assert.ok(js.includes('const READ_RETRY_DELAYS_MS = [400, 1200];'));
+  assert.ok(js.includes("['GET', 'HEAD'].includes(method)"));
+  assert.ok(js.includes("showPollingError('历史数据读取失败', error)"));
+  assert.ok(js.includes('NETWORK_NOTICE_COOLDOWN_MS'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -554,7 +561,7 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
   assert.ok(html.includes('styles.css?v=20260913-14'));
   assert.ok(html.includes('i18n.js?v=20260913-11'));
-  assert.ok(html.includes('app.js?v=20260913-16'));
+  assert.ok(html.includes('app.js?v=20260913-17'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

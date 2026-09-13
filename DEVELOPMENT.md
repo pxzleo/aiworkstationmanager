@@ -12,7 +12,7 @@
 python -m pip install -r requirements.txt
 python -m pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
-node --test tests/frontend_request_guard.test.js tests/frontend_gpu_layout.test.js tests/frontend_monitor_chart.test.js tests/frontend_theme.test.js tests/frontend_contract.test.js tests/frontend_i18n.test.js tests/documentation_consistency.test.js
+node --test tests/frontend_request_guard.test.js tests/frontend_network_retry.test.js tests/frontend_gpu_layout.test.js tests/frontend_monitor_chart.test.js tests/frontend_theme.test.js tests/frontend_contract.test.js tests/frontend_i18n.test.js tests/documentation_consistency.test.js
 ```
 
 发布包不包含 `requirements-dev.txt` 或 `tests/`，其中的开发文档仅供接口和部署参考。生成干净发布目录：
@@ -30,6 +30,8 @@ node --test tests/frontend_request_guard.test.js tests/frontend_gpu_layout.test.
 API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定的 `error.code`，并根据 `Accept-Language` 返回中文或英文错误信息。
 
 首次初始化的 `auth/setup` 只允许从本机 loopback 地址访问。前端确认会话状态期间只显示 AXIS 启动画面，不显示登录表单；仅在确认未登录或检查失败后显示登录界面。初始化完成后，除健康、认证状态和登录外，读取接口需要登录；除 `auth/setup` 和 `auth/login` 外的写操作（包括 `auth/logout`）还需要把当前会话令牌放入 `X-CSRF-Token` 请求头。会话 Cookie 为 `HttpOnly` 和 `SameSite=Strict`。
+
+前端对 GET/HEAD 读取请求的瞬时网络失败或超时自动重试两次，间隔分别为 400 ms 和 1200 ms；POST、PUT、DELETE 等可能产生副作用的请求不自动重试，避免响应丢失时重复执行。后台轮询只在重试仍失败后提示网络不稳定，并把同类提示限制为 15 秒一次；服务端结构化错误仍立即显示。
 
 成功响应直接返回 JSON 对象，创建接口返回 `201`，异步动作返回 `202`，删除接口返回无正文的 `204`，其他成功接口返回 `200`。错误统一为 `{"error":{"code":"...","message":"...","details":...}}`；参数校验错误返回 `422`，未登录返回 `401`，CSRF 或访问来源不符合要求返回 `403`，目标不存在返回 `404`，冲突或已有操作执行中返回 `409`。
 

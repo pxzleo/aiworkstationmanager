@@ -12,7 +12,7 @@ The following install and test commands apply only to a source checkout containi
 python -m pip install -r requirements.txt
 python -m pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
-node --test tests/frontend_request_guard.test.js tests/frontend_gpu_layout.test.js tests/frontend_monitor_chart.test.js tests/frontend_theme.test.js tests/frontend_contract.test.js tests/frontend_i18n.test.js tests/documentation_consistency.test.js
+node --test tests/frontend_request_guard.test.js tests/frontend_network_retry.test.js tests/frontend_gpu_layout.test.js tests/frontend_monitor_chart.test.js tests/frontend_theme.test.js tests/frontend_contract.test.js tests/frontend_i18n.test.js tests/documentation_consistency.test.js
 ```
 
 Release packages contain neither `requirements-dev.txt` nor `tests/`; their development guides are included only as API and deployment references. Create a clean release directory with:
@@ -30,6 +30,8 @@ Release packages contain neither `requirements-dev.txt` nor `tests/`; their deve
 The API prefix is `/api/v1`; requests and responses use JSON. Error responses keep a stable `error.code` and localize the message from `Accept-Language`.
 
 Initial `auth/setup` is restricted to direct loopback access. While the frontend checks the session it shows only the AXIS startup screen, not the login form; the login UI appears only after an unauthenticated result or a failed check. After setup, read endpoints other than health, authentication status, and login require a session. Every write except `auth/setup` and `auth/login`, including `auth/logout`, also requires the current session token in `X-CSRF-Token`. The session cookie is `HttpOnly` and `SameSite=Strict`.
+
+The frontend retries transient network failures and timeouts for GET/HEAD reads twice, after 400 ms and 1200 ms. It never automatically retries POST, PUT, DELETE, or other potentially state-changing requests, avoiding duplicate actions when a response is lost. Background polling reports an unstable connection only after retries are exhausted and rate-limits equivalent notices to once every 15 seconds; structured server errors remain immediate.
 
 Successful endpoints return JSON objects. Create endpoints return `201`, asynchronous actions return `202`, delete endpoints return an empty `204`, and other successful endpoints return `200`. Errors use `{"error":{"code":"...","message":"...","details":...}}`; validation failures return `422`, missing authentication returns `401`, CSRF or source restrictions return `403`, missing targets return `404`, and conflicts or an existing active operation return `409`.
 

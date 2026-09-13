@@ -6,6 +6,8 @@ const HISTORY_INTERVAL_MS = 12000;
 const SERVICE_INTERVAL_MS = 5000;
 const REQUEST_TIMEOUT_MS = 8000;
 const ACTION_TIMEOUT_MS = 30000;
+const READ_RETRY_DELAYS_MS = [400, 1200];
+const NETWORK_NOTICE_COOLDOWN_MS = 15000;
 const PAGE_STORAGE_KEY = 'axis-active-page';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MONITOR_GPU_COLORS = ['#a78bfa', '#fb923c', '#22c55e', '#f472b6', '#38bdf8', '#eab308'];
@@ -33,6 +35,21 @@ class ApiError extends Error {
   constructor(status, code, message) { super(message); this.name = 'ApiError'; this.status = status; this.code = code; }
 }
 class StaleRequestError extends Error { constructor() { super('stale request'); this.name = 'StaleRequestError'; } }
+let lastPollingNetworkNoticeAt = -Infinity;
+function showPollingError(prefix, error, now = Date.now()) {
+  if (error instanceof StaleRequestError) return;
+  if (['network_error', 'timeout'].includes(error.code)) {
+    if (now - lastPollingNetworkNoticeAt < NETWORK_NOTICE_COOLDOWN_MS) return;
+    lastPollingNetworkNoticeAt = now;
+    showToast(window.axisI18n.language === 'zh' ? '网络连接不稳定，页面将自动重试。' : 'The network is unstable. The page will retry automatically.');
+    return;
+  }
+  showToast(`${prefix}：${error.message}`);
+}
+async function waitForReadRetry(milliseconds, ticket) {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+  if (!requestGuard.isCurrent(ticket)) throw new StaleRequestError();
+}
 function byId(id) { return document.getElementById(id); }
 function text(id, value) { const node = byId(id); if (node) node.textContent = value; }
 function element(tag, className, value) { const node = document.createElement(tag); if (className) node.className = className; if (value !== undefined) node.textContent = value; return node; }
@@ -60,37 +77,50 @@ function formatDuration(milliseconds) { if (!Number.isFinite(milliseconds) || mi
 async function api(path, options = {}) {
   const ticket = requestGuard.begin(options.resource);
   const method = (options.method || 'GET').toUpperCase();
-  const controller = new AbortController();
-  const abortLifecycle = () => controller.abort('lifecycle');
-  if (ticket.signal.aborted) abortLifecycle(); else ticket.signal.addEventListener('abort', abortLifecycle, { once: true });
-  const timeout = options.timeout === null ? null : setTimeout(() => controller.abort('timeout'), options.timeout || REQUEST_TIMEOUT_MS);
   const headers = new Headers(options.headers || {});
   headers.set('Accept-Language', window.axisI18n.language);
   if (options.body !== undefined) headers.set('Content-Type', 'application/json');
   if (options.rawBody !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/octet-stream');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && state.csrfToken && !options.skipCsrf) headers.set('X-CSRF-Token', state.csrfToken);
-  try {
-    const body = options.rawBody !== undefined ? options.rawBody : options.body === undefined ? undefined : JSON.stringify(options.body);
-    const response = await fetch(`${API_PREFIX}${path}`, { method, headers, credentials: 'same-origin', cache: 'no-store', signal: controller.signal, body });
-    let payload = {};
-    if (response.status !== 204) {
-      try { payload = await response.json(); }
-      catch (_) { throw new ApiError(response.status, 'invalid_response', '服务器返回了无法识别的数据。'); }
+  const body = options.rawBody !== undefined ? options.rawBody : options.body === undefined ? undefined : JSON.stringify(options.body);
+  const retryDelays = ['GET', 'HEAD'].includes(method) ? READ_RETRY_DELAYS_MS : [];
+  for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
+    if (attempt) await waitForReadRetry(retryDelays[attempt - 1], ticket);
+    const controller = new AbortController(); let timedOut = false;
+    const abortLifecycle = () => controller.abort('lifecycle');
+    if (ticket.signal.aborted) abortLifecycle(); else ticket.signal.addEventListener('abort', abortLifecycle, { once: true });
+    const timeout = options.timeout === null ? null : setTimeout(() => { timedOut = true; controller.abort('timeout'); }, options.timeout || REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${API_PREFIX}${path}`, { method, headers, credentials: 'same-origin', cache: 'no-store', signal: controller.signal, body });
+      let payload = {};
+      if (method !== 'HEAD' && response.status !== 204) {
+        try { payload = await response.json(); }
+        catch (error) {
+          if (error instanceof SyntaxError) throw new ApiError(response.status, 'invalid_response', '服务器返回了无法识别的数据。');
+          throw error;
+        }
+      }
+      if (!requestGuard.isCurrent(ticket)) throw new StaleRequestError();
+      if (!response.ok) {
+        const serverError = payload?.error;
+        const error = new ApiError(response.status, serverError?.code || 'request_failed', serverError?.message || `请求失败（${response.status}）`);
+        if (response.status === 401 && !options.authRequest) showAuth('login', '登录状态已过期，请重新登录。');
+        throw error;
+      }
+      return payload;
+    } catch (error) {
+      if (error instanceof StaleRequestError || !requestGuard.isCurrent(ticket)) throw new StaleRequestError();
+      const requestError = timedOut || error?.name === 'AbortError'
+        ? new ApiError(0, 'timeout', '连接管理器超时。')
+        : error instanceof ApiError ? error : new ApiError(0, 'network_error', '无法连接管理器。');
+      if (attempt < retryDelays.length && ['network_error', 'timeout'].includes(requestError.code)) continue;
+      throw requestError;
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+      ticket.signal.removeEventListener('abort', abortLifecycle);
     }
-    if (!requestGuard.isCurrent(ticket)) throw new StaleRequestError();
-    if (!response.ok) {
-      const serverError = payload?.error;
-      const error = new ApiError(response.status, serverError?.code || 'request_failed', serverError?.message || `请求失败（${response.status}）`);
-      if (response.status === 401 && !options.authRequest) showAuth('login', '登录状态已过期，请重新登录。');
-      throw error;
-    }
-    return payload;
-  } catch (error) {
-    if (error instanceof StaleRequestError || !requestGuard.isCurrent(ticket)) throw new StaleRequestError();
-    if (error.name === 'AbortError') throw new ApiError(0, 'timeout', '连接管理器超时。');
-    if (error instanceof ApiError) throw error;
-    throw new ApiError(0, 'network_error', '无法连接管理器。');
-  } finally { if (timeout !== null) clearTimeout(timeout); ticket.signal.removeEventListener('abort', abortLifecycle); }
+  }
+  throw new ApiError(0, 'network_error', '无法连接管理器。');
 }
 
 const pages = [...document.querySelectorAll('.page')];
@@ -156,7 +186,7 @@ async function refreshHistory() {
     const result = await api(`/history?window=${state.historyWindowMinutes}m`, { resource: 'history' });
     state.history = (result.samples || []).map(normalizeHistorySample); renderCharts();
   } catch (error) {
-    if (!(error instanceof StaleRequestError)) showToast(`历史数据读取失败：${error.message}`);
+    showPollingError('历史数据读取失败', error);
   } finally { setHistoryLoading(false); }
 }
 function setHistoryLoading(loading) { state.historyLoading = loading; const select = byId('historyRangeSelect'); if (select) { select.classList.toggle('loading', loading); select.setAttribute('aria-busy', String(loading)); } }
@@ -169,10 +199,18 @@ async function selectHistoryWindow(minutes) {
 async function refreshServicesAndScenes() {
   if (document.hidden) return;
   try { const [serviceData, sceneData] = await Promise.all([api('/registered-services', { resource: 'services' }), api('/scenes', { resource: 'scenes' })]); state.services = serviceData.services || []; state.scenes = sceneData.scenes || []; renderServices(); renderScenes(); }
-  catch (error) { if (!(error instanceof StaleRequestError)) showToast(`服务状态读取失败：${error.message}`); }
+  catch (error) { showPollingError('服务状态读取失败', error); }
 }
-async function refreshLogs() { if (document.hidden) return; const [operationRequest, auditRequest] = await Promise.allSettled([api('/operations?limit=50', { resource: 'operations' }), api('/audit?limit=100', { resource: 'audit' })]); if (operationRequest.status === 'rejected') { if (!(operationRequest.reason instanceof StaleRequestError)) showToast(`操作日志读取失败：${operationRequest.reason.message}`); return; } if (auditRequest.status === 'rejected' && !(auditRequest.reason instanceof StaleRequestError)) showToast(`默认场景记录读取失败：${auditRequest.reason.message}`); const auditEvents = auditRequest.status === 'fulfilled' ? auditRequest.value.events || [] : []; const defaultSceneEvents = auditEvents.filter((event) => ['management.scene.default.set', 'management.scene.default.clear'].includes(event.event)).map(defaultSceneOperation); state.operations = [...(operationRequest.value.operations || []), ...defaultSceneEvents].sort((left, right) => new Date(right.created_at) - new Date(left.created_at)).slice(0, 50); renderOperations(); renderOperationTimeline(); }
-async function refreshVideoJobs() { if (document.hidden) return; try { const result = await api('/video-jobs?limit=100', { resource: 'video-jobs' }); state.videoJobs = result.jobs || []; state.videoQueueSummary = result.queue_summary || { queued_segments: 0 }; renderVideoJobs(); } catch (error) { if (!(error instanceof StaleRequestError)) showToast(`视频任务读取失败：${error.message}`); } }
+async function refreshLogs() {
+  if (document.hidden) return;
+  const operationRequest = api('/operations?limit=50', { resource: 'operations' }).catch((error) => { showPollingError('操作日志读取失败', error); return null; });
+  const auditRequest = api('/audit?limit=100', { resource: 'audit' }).catch((error) => { showPollingError('默认场景记录读取失败', error); return null; });
+  const [operationData, auditData] = await Promise.all([operationRequest, auditRequest]);
+  if (!operationData) return;
+  const auditEvents = auditData?.events || []; const defaultSceneEvents = auditEvents.filter((event) => ['management.scene.default.set', 'management.scene.default.clear'].includes(event.event)).map(defaultSceneOperation);
+  state.operations = [...(operationData.operations || []), ...defaultSceneEvents].sort((left, right) => new Date(right.created_at) - new Date(left.created_at)).slice(0, 50); renderOperations(); renderOperationTimeline();
+}
+async function refreshVideoJobs() { if (document.hidden) return; try { const result = await api('/video-jobs?limit=100', { resource: 'video-jobs' }); state.videoJobs = result.jobs || []; state.videoQueueSummary = result.queue_summary || { queued_segments: 0 }; renderVideoJobs(); } catch (error) { showPollingError('视频任务读取失败', error); } }
 async function refreshAutomaticTasks() {
   if (document.hidden || automaticTaskOrderSaving) return;
   try {
@@ -183,7 +221,7 @@ async function refreshAutomaticTasks() {
     } while (result.has_more);
     tasks.sort((left, right) => { const rank = (task) => task.status === 'running' ? 0 : task.status === 'pending' ? 1 : 2; const rankDelta = rank(left) - rank(right); if (rankDelta) return rankDelta; if (['running', 'pending'].includes(left.status)) return (left.queue_position ?? Number.MAX_SAFE_INTEGER) - (right.queue_position ?? Number.MAX_SAFE_INTEGER); return String(right.updated_at).localeCompare(String(left.updated_at)) || String(right.id).localeCompare(String(left.id)); });
     state.automaticTasks = tasks; state.automaticTaskSummary = result?.summary || { pending: 0, running: 0, total: 0 }; renderAutomaticTasks();
-  } catch (error) { if (!(error instanceof StaleRequestError)) showToast(`${ui('自动任务读取失败')}：${error.message}`); }
+  } catch (error) { showPollingError(ui('自动任务读取失败'), error); }
 }
 async function refreshUsers() { if (document.hidden) return; try { const result = await api('/users', { resource: 'users' }); state.users = result.users || []; renderUsers(); } catch (error) { const rows = byId('userRows'); rows.replaceChildren(element('p', 'empty-state', `用户加载失败：${error.message}`)); throw error; } }
 
