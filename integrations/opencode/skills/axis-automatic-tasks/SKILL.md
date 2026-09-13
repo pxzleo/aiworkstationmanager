@@ -10,7 +10,7 @@ description: 执行 AXIS 自动任务队列。用户要求启动、运行或继�
 1. 调用 `axis_automatic_task_claim`，每次只领取一项。
 2. 返回的 `task` 为 `null` 时，报告队列已经执行完毕并停止。
 3. 保存返回的 `task.execution_token`。把 `task.content` 视为用户要求，在当前 OpenCode 会话和当前工作目录中完整执行。不得并行领取或执行下一项。
-4. 插件领取后会每分钟在后台自动续期，即使耗时工具仍在运行也保持租约。执行耗时工具前后可调用 `axis_automatic_task_heartbeat` 主动确认租约；若续期提示租约已过期或所有权不匹配，立即停止该项且不得回写旧结果。
+4. 插件领取后会每分钟在后台自动续期，即使耗时工具仍在运行、单次响应出错，或会话进入 `idle` 等待 AXIS 视频生成及回调，也保持租约。执行耗时工具前后可调用 `axis_automatic_task_heartbeat` 主动确认租约；若续期提示租约已过期、任务不存在或所有权不匹配，插件会停止后台续期，立即停止该项且不得回写旧结果。
 5. 当前任务成功后调用 `axis_automatic_task_finish`，传入任务 ID、领取令牌、`succeeded` 和简短结果摘要。
 6. 当前任务无法完成时，也必须调用 `axis_automatic_task_finish`，传入任务 ID、领取令牌、`failed` 和明确失败原因；然后继续领取下一项，不得让单项失败阻塞剩余队列。
 7. 回写完成状态后再调用 `axis_automatic_task_claim` 领取下一项。

@@ -2,6 +2,13 @@ import { type Plugin, tool } from "@opencode-ai/plugin"
 
 const AXIS_BASE_URL = "http://127.0.0.1:19100"
 
+class AxisRequestError extends Error {
+  constructor(readonly status: number, responseBody: string) {
+    super(`AXIS 拒绝自动任务操作（HTTP ${status}）：${responseBody}`)
+    this.name = "AxisRequestError"
+  }
+}
+
 async function requestAxis(path: string, payload: unknown): Promise<unknown> {
   let response: Response
   try {
@@ -15,7 +22,7 @@ async function requestAxis(path: string, payload: unknown): Promise<unknown> {
   }
   const text = await response.text()
   if (!response.ok) {
-    throw new Error(`AXIS 拒绝自动任务操作（HTTP ${response.status}）：${text}`)
+    throw new AxisRequestError(response.status, text)
   }
   try {
     return JSON.parse(text)
@@ -55,6 +62,11 @@ export const AxisAutomaticTasksPlugin: Plugin = async (_input, options) => {
           { session_id: sessionID, execution_token: executionToken },
         )
       } catch (error) {
+        if (error instanceof AxisRequestError && (error.status === 404 || error.status === 409)) {
+          stopLease(sessionID, executionToken)
+          console.error(`AXIS 自动任务 ${taskID} 租约已经失效：${String(error)}`)
+          return
+        }
         console.error(`AXIS 自动任务 ${taskID} 后台续期失败：${String(error)}`)
       }
     }
@@ -124,14 +136,7 @@ export const AxisAutomaticTasksPlugin: Plugin = async (_input, options) => {
     }),
     },
     event: async ({ event }) => {
-      if (event.type === "session.idle") stopLease(event.properties.sessionID)
-      if (event.type === "session.status" && event.properties.status.type === "idle") {
-        stopLease(event.properties.sessionID)
-      }
       if (event.type === "session.deleted") stopLease(event.properties.info.id)
-      if (event.type === "session.error" && event.properties.sessionID) {
-        stopLease(event.properties.sessionID)
-      }
     },
     dispose: async () => {
       for (const lease of activeLeases.values()) clearInterval(lease.timer)

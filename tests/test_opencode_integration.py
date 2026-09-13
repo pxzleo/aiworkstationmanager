@@ -50,10 +50,15 @@ class H3WorkflowBuilderTests(unittest.TestCase):
             runner.write_text(
                 f'''import {{ AxisAutomaticTasksPlugin }} from {json.dumps(AUTOMATIC_TASK_PLUGIN.as_uri())}
 const requests: string[] = []
-globalThis.fetch = async (url) => {{
+const heartbeatSessions: string[] = []
+globalThis.fetch = async (url, init) => {{
   const path = String(url)
   requests.push(path)
   if (path.endsWith("/claim")) return new Response(JSON.stringify({{task: {{id: {json.dumps(task_id)}, execution_token: "token-a"}}}}), {{status: 200}})
+  const payload = JSON.parse(String(init?.body || "{{}}"))
+  heartbeatSessions.push(payload.session_id)
+  if (payload.session_id === "session-c") return new Response("lease expired", {{status: 409}})
+  if (payload.session_id === "session-d") return new Response("temporary", {{status: 500}})
   return new Response(JSON.stringify({{task: {{id: {json.dumps(task_id)}}}}}), {{status: 200}})
 }}
 const hooks = await AxisAutomaticTasksPlugin({{}} as never, {{heartbeatIntervalMs: 10}})
@@ -75,7 +80,37 @@ await hooks.event?.({{event: {{type: "session.idle", properties: {{sessionID: "s
 const beforeIdleWait = requests.filter((path) => path.endsWith("/heartbeat")).length
 await Bun.sleep(30)
 const afterIdleWait = requests.filter((path) => path.endsWith("/heartbeat")).length
-if (afterIdleWait !== beforeIdleWait) throw new Error("heartbeat continued after session.idle")
+if (afterIdleWait <= beforeIdleWait) throw new Error("heartbeat stopped after session.idle")
+await hooks.event?.({{event: {{type: "session.status", properties: {{sessionID: "session-b", status: {{type: "idle"}}}}}} as never}})
+const beforeStatusIdleWait = requests.filter((path) => path.endsWith("/heartbeat")).length
+await Bun.sleep(30)
+const afterStatusIdleWait = requests.filter((path) => path.endsWith("/heartbeat")).length
+if (afterStatusIdleWait <= beforeStatusIdleWait) throw new Error("heartbeat stopped after session.status idle")
+await hooks.event?.({{event: {{type: "session.error", properties: {{sessionID: "session-b", error: {{name: "MessageOutputLengthError"}}}}}} as never}})
+const beforeErrorWait = heartbeatSessions.filter((sessionID) => sessionID === "session-b").length
+await Bun.sleep(30)
+const afterErrorWait = heartbeatSessions.filter((sessionID) => sessionID === "session-b").length
+if (afterErrorWait <= beforeErrorWait) throw new Error("heartbeat stopped after session.error")
+await hooks.event?.({{event: {{type: "session.deleted", properties: {{info: {{id: "session-b"}}}}}} as never}})
+const beforeDeletedWait = requests.filter((path) => path.endsWith("/heartbeat")).length
+await Bun.sleep(30)
+const afterDeletedWait = requests.filter((path) => path.endsWith("/heartbeat")).length
+if (afterDeletedWait !== beforeDeletedWait) throw new Error("heartbeat continued after session.deleted")
+await hooks.tool?.axis_automatic_task_claim.execute({{}}, {{sessionID: "session-c"}} as never)
+await Bun.sleep(30)
+const fatalCount = heartbeatSessions.filter((sessionID) => sessionID === "session-c").length
+if (fatalCount < 1) throw new Error("fatal heartbeat rejection was not exercised")
+await Bun.sleep(30)
+if (heartbeatSessions.filter((sessionID) => sessionID === "session-c").length !== fatalCount) {{
+  throw new Error("heartbeat continued after a definitive lease rejection")
+}}
+await hooks.tool?.axis_automatic_task_claim.execute({{}}, {{sessionID: "session-d"}} as never)
+await Bun.sleep(25)
+const transientCount = heartbeatSessions.filter((sessionID) => sessionID === "session-d").length
+await Bun.sleep(30)
+if (heartbeatSessions.filter((sessionID) => sessionID === "session-d").length <= transientCount) {{
+  throw new Error("heartbeat stopped after a transient server error")
+}}
 await hooks.dispose?.()
 ''',
                 encoding="utf-8",
