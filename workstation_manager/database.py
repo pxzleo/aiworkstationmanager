@@ -12,7 +12,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 
 class DatabaseError(RuntimeError):
@@ -31,7 +31,7 @@ class Database:
     VIDEO_JOB_LIST_COLUMNS = ",".join((
         "id", "idempotency_key", "payload_hash", "session_id", "workflow_path",
         "video_spec", "requested_output_path", "callback_url", "callback_directory",
-        "status", "phase", "prompt_id", "output_path", "result", "progress",
+        "status", "phase", "prompt_id", "output_path", "shared_output_path", "result", "progress",
         "error_code", "error_summary", "cancel_requested", "callback_attempts",
         "created_at", "updated_at", "started_at", "finished_at",
         "generation_scene_id", "generation_scene_name", "original_scene_id",
@@ -123,6 +123,7 @@ class Database:
                         26: self._migrate_to_26,
                         27: self._migrate_to_27,
                         28: self._migrate_to_28,
+                        29: self._migrate_to_29,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -552,6 +553,7 @@ class Database:
                 phase TEXT NOT NULL,
                 prompt_id TEXT,
                 output_path TEXT,
+                shared_output_path TEXT,
                 result TEXT,
                 progress TEXT,
                 error_code TEXT,
@@ -719,6 +721,15 @@ class Database:
         if table is None:
             return
         cls._backfill_video_specs(connection)
+
+    @classmethod
+    def _migrate_to_29(cls, connection: sqlite3.Connection) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_jobs'"
+        ).fetchone()
+        if table is None:
+            return
+        cls._ensure_column(connection, "video_jobs", "shared_output_path", "TEXT")
 
     @classmethod
     def _backfill_video_specs(cls, connection: sqlite3.Connection) -> None:
@@ -2040,7 +2051,7 @@ class Database:
 
     def update_video_job(self, job_id: str, **fields: Any) -> None:
         allowed = {
-            "status", "phase", "prompt_id", "output_path", "result", "progress",
+            "status", "phase", "prompt_id", "output_path", "shared_output_path", "result", "progress",
             "error_code", "error_summary", "cancel_requested", "started_at", "finished_at",
             "callback_attempts", "original_scene_id", "original_scene_name",
         }

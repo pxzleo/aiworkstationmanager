@@ -329,8 +329,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-browser.thumbnail-view #fileRows { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; padding: 12px; }
 .file-browser.thumbnail-view .file-row { min-width: 0; min-height: 270px; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto auto; align-content: start; gap: 9px 12px; padding: 0 12px 13px; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--surface-2); animation: fileViewReveal .18s ease both; }
 .file-browser.thumbnail-view .file-row:hover { border-color: color-mix(in srgb, var(--accent) 36%, var(--line)); transform: translateY(-2px); }
-.file-thumbnail { grid-column: 1 / -1; grid-row: 1; width: calc(100% + 24px); aspect-ratio: 16 / 10; margin-left: -12px; display: grid; place-items: center; overflow: hidden; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface-3) 78%, var(--bg)); }
+.file-thumbnail { position: relative; grid-column: 1 / -1; grid-row: 1; width: calc(100% + 24px); aspect-ratio: 9 / 16; margin-left: -12px; display: grid; place-items: center; overflow: hidden; padding: 0; border: 0; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface-3) 78%, var(--bg)); color: inherit; cursor: pointer; appearance: none; }
+.file-thumbnail:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .file-thumbnail img, .file-thumbnail video { width: 100%; height: 100%; display: block; object-fit: cover; background: #050708; }
+.file-thumbnail video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .file-thumbnail > svg { width: 38px; height: 38px; fill: none; stroke: var(--accent); stroke-width: 1.25; opacity: .8; }
 .file-browser.thumbnail-view .file-name { grid-column: 1 / -1; grid-row: 2; align-items: flex-start; padding: 2px 0 0; }
 .file-browser.thumbnail-view .file-name > svg { display: none; }
@@ -353,7 +355,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   .file-sort-control { justify-content: space-between; }
   .file-sort-control select { flex: 1; min-width: 0; }
   .file-view-switch button { flex: 1; justify-content: center; }
-  .file-browser.thumbnail-view #fileRows { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding: 8px; }
+  .file-browser.thumbnail-view #fileRows { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 8px; }
   .file-browser.thumbnail-view .file-row { min-height: 235px; }
   .file-browser > header { display: none; }
   .file-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; padding: 13px 14px; }
@@ -909,6 +911,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .operation-row { display: grid; grid-template-columns: minmax(160px, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 12px; }
 .video-job-row { grid-template-columns: minmax(220px, 1fr) auto auto auto; }
 .video-job-row .operation-summary small { overflow-wrap: anywhere; }
+.video-job-output-link { color: var(--accent); font-size: 11px; font-weight: 600; overflow-wrap: anywhere; word-break: break-word; }
 .video-job-time { display: grid; grid-template-columns: auto auto; gap: 3px 8px; align-items: baseline; min-width: 130px; font-variant-numeric: tabular-nums; }
 .video-job-time small { color: var(--muted); font-size: 8px; }
 .video-job-time b { color: var(--text); font-size: 10px; font-weight: 600; white-space: nowrap; }

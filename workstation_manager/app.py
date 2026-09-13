@@ -120,6 +120,7 @@ class VideoJobPayload(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=200)
     session_id: str = Field(min_length=1, max_length=200)
     workflow_path: str = Field(min_length=1, max_length=2048)
+    workflow_file_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     output_path: str | None = Field(default=None, max_length=2048)
     scene_name: str | None = Field(default=None, max_length=100)
     callback_url: str = Field(min_length=1, max_length=2048)
@@ -129,6 +130,7 @@ class VideoJobPayload(BaseModel):
 class VideoBatchWorkflowPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     workflow_path: str = Field(min_length=1, max_length=2048)
+    workflow_file_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     output_path: str | None = Field(default=None, max_length=2048)
 
 
@@ -252,6 +254,8 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         ninfer_base_url=resolved_settings.ninfer_base_url,
         ninfer_model_id=resolved_settings.ninfer_model_id,
         output_directory=resolved_settings.video_output_directory,
+        shared_output_directory=resolved_settings.file_service_root,
+        file_service_port=resolved_settings.file_service_port,
         poll_interval_seconds=resolved_settings.video_job_poll_interval_seconds,
         idle_timeout_seconds=resolved_settings.video_job_idle_timeout_seconds,
         scene_timeout_seconds=resolved_settings.video_job_scene_timeout_seconds,
@@ -714,7 +718,11 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         _: AuthenticatedSession = Depends(require_session),
     ) -> dict[str, Any]:
         return {
-            "jobs": resolved_database.list_video_jobs(limit), "limit": limit,
+            "jobs": [
+                resolved_video_jobs.public_job(job)
+                for job in resolved_database.list_video_jobs(limit)
+            ],
+            "limit": limit,
             "queue_summary": resolved_database.video_job_queue_summary(),
         }
 
@@ -727,7 +735,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         job = resolved_database.get_video_job(job_id)
         if job is None:
             raise VideoJobError("video_job_not_found", "视频任务不存在")
-        return job
+        return resolved_video_jobs.public_job(job)
 
     @app.post("/api/v1/video-jobs/{job_id}/cancel", status_code=202)
     async def cancel_video_job(

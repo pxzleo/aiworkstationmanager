@@ -290,9 +290,9 @@ test('scene editor and management log remain wired', () => {
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260912-7'));
-  assert.ok(html.includes('i18n.js?v=20260912-7'));
-  assert.ok(html.includes('app.js?v=20260912-7'));
+  assert.ok(html.includes('styles.css?v=20260913-5'));
+  assert.ok(html.includes('i18n.js?v=20260913-5'));
+  assert.ok(html.includes('app.js?v=20260913-5'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -318,6 +318,10 @@ test('video job page monitors every scheduler stage and exposes cancellation', (
   assert.ok(js.includes("'开始时间'"));
   assert.ok(js.includes("'持续时间'"));
   assert.ok(js.includes("return String(job.output_path || '').trim()"));
+  assert.ok(js.includes("job.shared_output_path"));
+  assert.ok(js.includes("outputLink.href = fileContentUrl(job.shared_output_path)"));
+  assert.ok(js.includes("outputLink.target = '_blank'"));
+  assert.ok(js.includes("publishing_output: '复制到共享目录'"));
   assert.ok(!js.includes('job.output_path || job.requested_output_path'));
   assert.ok(!js.includes('activity || job.workflow_path'));
   assert.ok(html.includes('id="videoQueuedSegments"'));
@@ -335,7 +339,7 @@ test('video job page monitors every scheduler stage and exposes cancellation', (
   assert.ok(js.includes("'callback_pending'"));
   assert.ok(js.includes("!['callback_pending', 'callback_delivered'].includes(job.phase)"));
   assert.ok(js.includes("!['callback_pending', 'callback_delivered', 'succeeded', 'failed', 'cancelled'].includes(job.status)"));
-  for (const stage of ['等待 NInfer 空闲', '切换生成场景', '检查 ComfyUI', '提交工作流', 'ComfyUI 生成中', '收集输出', '恢复原场景', '回调 OpenCode']) {
+  for (const stage of ['等待 OpenCode 当前响应结束', '等待 NInfer 空闲', '切换生成场景', '检查 ComfyUI', '提交工作流', 'ComfyUI 生成中', '收集输出', '恢复原场景', '回调 OpenCode']) {
     assert.ok(js.includes(stage), `missing video stage ${stage}`);
   }
 });
@@ -348,6 +352,7 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(html.includes('id="fileSortSelect"'));
   assert.ok(html.includes('data-file-view="list"'));
   assert.ok(html.includes('data-file-view="thumbnail"'));
+  assert.ok(html.includes('data-file-view="thumbnail" aria-pressed="true"'));
   assert.ok(html.includes('id="mediaDialog"'));
   assert.ok(html.includes('id="mediaStage"'));
   assert.ok(js.includes("api('/file-service'"));
@@ -355,18 +360,29 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(js.includes("fileSort: 'modified-desc'"));
   assert.ok(js.includes("sort_by: sortBy, sort_order: sortOrder"));
   assert.ok(js.includes("function fileThumbnail(entry)"));
+  assert.ok(js.includes("const preview = element('button', 'file-thumbnail')"));
+  assert.ok(js.includes("preview.addEventListener('click'"));
   assert.ok(js.includes("state.fileView === 'thumbnail'"));
+  assert.ok(js.includes("fileView: 'thumbnail'"));
   assert.ok(js.includes('new IntersectionObserver'));
   assert.ok(js.includes('video.dataset.src = source'));
   assert.ok(js.includes('releaseFileThumbnailVideos(rows)'));
   assert.ok(js.includes("video.removeAttribute('src'); video.load()"));
   assert.ok(js.includes('fileContentUrl(entry.path, true)'));
   assert.ok(js.includes("entry.media_type?.startsWith('audio/') ? 'audio' : 'video'"));
+  assert.ok(js.includes('function requestMediaFullscreen(player)'));
+  assert.ok(js.includes('player.requestFullscreen'));
+  assert.ok(js.includes('player.webkitEnterFullscreen'));
+  assert.ok(js.includes('const action = entry.playable ? null'));
+  assert.ok(!js.includes("entry.playable ? ui('播放')"));
   assert.ok(js.includes("player.preload = 'metadata'"));
   assert.ok(js.includes("player.removeAttribute('src')"));
   assert.ok(css.includes('.file-browser > header, .file-row'));
   assert.ok(css.includes('.file-browser.thumbnail-view #fileRows'));
+  assert.ok(css.includes('aspect-ratio: 9 / 16'));
+  assert.ok(css.includes('.file-browser.thumbnail-view #fileRows { grid-template-columns: repeat(2, minmax(0, 1fr));'));
   assert.ok(css.includes('.file-thumbnail img, .file-thumbnail video'));
+  assert.ok(css.includes('.file-thumbnail video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }'));
   assert.ok(css.includes('.media-stage video'));
   assert.ok(i18n.includes("'文件服务': 'File Service'"));
 });
@@ -462,9 +478,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260912-7'));
-  assert.ok(html.includes('i18n.js?v=20260912-7'));
-  assert.ok(html.includes('app.js?v=20260912-7'));
+  assert.ok(html.includes('styles.css?v=20260913-5'));
+  assert.ok(html.includes('i18n.js?v=20260913-5'));
+  assert.ok(html.includes('app.js?v=20260913-5'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

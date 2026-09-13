@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import os
 import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+from urllib.error import HTTPError, URLError
 
 from fastapi.testclient import TestClient
 
@@ -18,6 +21,7 @@ from workstation_manager.registry import RegisteredServiceManager, RegistryError
 from workstation_manager.video_jobs import (
     ComfyUIClient,
     NInferClient,
+    OpenCodeCallbackClient,
     VideoJobError,
     VideoJobManager,
 )
@@ -116,9 +120,43 @@ class PreconnectedComfy(CompletedComfy):
 class RecordingCallback:
     def __init__(self) -> None:
         self.messages: list[str] = []
+        self.handoff_checks = 0
+
+    def handoff_ready(self, job: dict) -> bool:
+        self.handoff_checks += 1
+        return True
 
     def send(self, job: dict, message: str) -> None:
         self.messages.append(message)
+
+
+class WaitingHandoffCallback(RecordingCallback):
+    def __init__(self, ready_after: int) -> None:
+        super().__init__()
+        self.ready_after = ready_after
+
+    def handoff_ready(self, job: dict) -> bool:
+        self.handoff_checks += 1
+        return self.handoff_checks >= self.ready_after
+
+
+class UnreachableHandoffCallback(RecordingCallback):
+    def handoff_ready(self, job: dict) -> bool:
+        self.handoff_checks += 1
+        raise VideoJobError(
+            "opencode_handoff_unreachable", "OpenCode 空闲握手端点不可达: connection refused",
+        )
+
+
+class HttpResponse:
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
 
 
 class CountingNInfer:
@@ -218,6 +256,8 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.database.set_last_activated_scene("a" * 32)
         self.workflow = self.root / "workflow.json"
         self.workflow.write_text(json.dumps({"1": {"class_type": "Test"}}), encoding="utf-8")
+        self.shared_output_directory = self.root / "shared"
+        self.shared_output_directory.mkdir()
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -229,6 +269,7 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             self.database, self.registry, comfyui_base_url="http://127.0.0.1:8189",
             ninfer_base_url="http://127.0.0.1:8080", ninfer_model_id="qwen3.8-27b",
             output_directory=self.root / "outputs", poll_interval_seconds=0,
+            shared_output_directory=self.shared_output_directory, file_service_port=18765,
             idle_timeout_seconds=1, scene_timeout_seconds=1, generation_timeout_seconds=1,
             ninfer=ninfer or IdleNInfer(), comfy=comfy or CompletedComfy(),
             callback=callback or RecordingCallback(),
@@ -292,7 +333,9 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
                 row["name"] for row in connection.execute("PRAGMA table_info(video_jobs)")
             }
         self.assertNotIn("callback_authorization", columns)
-        self.assertTrue({"batch_id", "batch_index", "batch_size"}.issubset(columns))
+        self.assertTrue({
+            "batch_id", "batch_index", "batch_size", "shared_output_path",
+        }.issubset(columns))
 
     def test_video_job_exposes_workflow_video_spec(self) -> None:
         self.workflow.write_text(json.dumps({
@@ -495,6 +538,14 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(raised.exception.code, "h3_multi_segment_workflow")
 
+    def test_submit_verifies_expected_workflow_file_hash_during_read(self) -> None:
+        payload = self.payload("workflow-file-hash")
+        payload["workflow_file_sha256"] = hashlib.sha256(self.workflow.read_bytes()).hexdigest()
+        self.workflow.write_text('{"changed": {"class_type": "Test"}}', encoding="utf-8")
+        with self.assertRaises(VideoJobError) as raised:
+            self.manager().submit(payload)
+        self.assertEqual(raised.exception.code, "workflow_hash_mismatch")
+
     async def test_execution_rechecks_persisted_h3_workflow_safety(self) -> None:
         manager = self.manager()
         job, _ = manager.submit(self.payload("persisted-multi-h3"))
@@ -624,6 +675,10 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished["status"], "succeeded")
         self.assertEqual(finished["prompt_id"], "prompt-1")
         self.assertTrue(Path(finished["output_path"]).is_file())
+        shared_relative = f"video-jobs/{job['id']}/result.mp4"
+        shared_output = self.shared_output_directory / Path(shared_relative)
+        self.assertEqual(shared_output.read_bytes(), b"video")
+        self.assertEqual(manager.public_job(finished)["shared_output_path"], shared_relative)
         self.assertEqual(comfy.submit_calls, 1)
         self.assertEqual(comfy.release_calls, 1)
         self.assertEqual(comfy.last_workflow, {"1": {"class_type": "Test"}})
@@ -635,7 +690,74 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             ["b" * 32, "a" * 32],
         )
         self.assertIn("已完成", callback.messages[0])
+        self.assertIn(
+            f"http://127.0.0.1:18765/api/v1/files/content?path="
+            f"video-jobs%2F{job['id']}%2Fresult.mp4",
+            callback.messages[0],
+        )
+        self.assertEqual(callback.handoff_checks, 1)
         self.assertIsNone(self.database.resource_lease_owner("gpu:4090"))
+
+    async def test_waits_for_opencode_session_idle_before_switching_scene(self) -> None:
+        callback = WaitingHandoffCallback(ready_after=2)
+        manager = self.manager(callback=callback)
+        job, _ = manager.submit(self.payload("opencode-handoff"))
+
+        with patch.object(
+            manager, "_activate_scene", wraps=manager._activate_scene,
+        ) as activate_scene:
+            await manager._process(self.database.next_video_job())
+
+        self.assertEqual(self.database.get_video_job(job["id"])["status"], "succeeded")
+        self.assertEqual(callback.handoff_checks, 2)
+        self.assertEqual(activate_scene.await_args_list[0].args[0], "b" * 32)
+
+    async def test_opencode_handoff_timeout_keeps_ninfer_scene_active(self) -> None:
+        callback = WaitingHandoffCallback(ready_after=100)
+        comfy = CompletedComfy()
+        manager = self.manager(callback=callback, comfy=comfy)
+        manager.scene_timeout_seconds = 0
+        job, _ = manager.submit(self.payload("opencode-handoff-timeout"))
+
+        await manager._process(self.database.next_video_job())
+
+        finished = self.database.get_video_job(job["id"])
+        self.assertEqual(finished["status"], "failed")
+        self.assertEqual(finished["error_code"], "opencode_handoff_timeout")
+        self.assertEqual(comfy.submit_calls, 0)
+        self.assertEqual(self.registry.active_scene()["id"], "a" * 32)
+
+    async def test_opencode_handoff_timeout_preserves_last_connection_error(self) -> None:
+        callback = UnreachableHandoffCallback()
+        comfy = CompletedComfy()
+        manager = self.manager(callback=callback, comfy=comfy)
+        manager.scene_timeout_seconds = 0
+        job, _ = manager.submit(self.payload("opencode-handoff-unreachable"))
+
+        await manager._process(self.database.next_video_job())
+
+        finished = self.database.get_video_job(job["id"])
+        self.assertEqual(finished["error_code"], "opencode_handoff_timeout")
+        self.assertIn("connection refused", finished["error_summary"])
+        self.assertEqual(comfy.submit_calls, 0)
+        self.assertEqual(self.registry.active_scene()["id"], "a" * 32)
+
+    def test_opencode_handoff_endpoint_supports_new_and_legacy_plugins(self) -> None:
+        job = self.payload("handoff-http")
+        job["id"] = "job-handoff-http"
+        with patch("workstation_manager.video_jobs.urlopen", return_value=HttpResponse(204)):
+            self.assertTrue(OpenCodeCallbackClient.handoff_ready(job))
+        for status, expected in ((425, False), (404, True), (405, True)):
+            with self.subTest(status=status), patch(
+                "workstation_manager.video_jobs.urlopen",
+                side_effect=HTTPError("http://callback", status, "test", {}, None),
+            ):
+                self.assertEqual(OpenCodeCallbackClient.handoff_ready(job), expected)
+
+        with patch("workstation_manager.video_jobs.urlopen", side_effect=URLError("refused")):
+            with self.assertRaisesRegex(VideoJobError, "握手端点不可达:.*refused") as raised:
+                OpenCodeCallbackClient.handoff_ready(job)
+            self.assertEqual(raised.exception.code, "opencode_handoff_unreachable")
 
     async def test_insufficient_host_memory_blocks_comfy_submission(self) -> None:
         comfy = CompletedComfy()
@@ -709,8 +831,139 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         finished = self.database.get_video_job(job["id"])
         self.assertEqual(finished["status"], "succeeded")
         self.assertEqual(finished["output_path"], str(output))
+        self.assertEqual(
+            (self.shared_output_directory / "video-jobs" / job["id"] / output.name).read_bytes(),
+            b"video",
+        )
         self.assertEqual(comfy.submit_calls, 0)
         self.assertEqual(comfy.release_calls, 1)
+
+    async def test_shared_output_conflict_fails_without_overwriting(self) -> None:
+        callback = RecordingCallback()
+        manager = self.manager(callback=callback)
+        job, _ = manager.submit(self.payload("shared-conflict"))
+        shared_output = self.shared_output_directory / "video-jobs" / job["id"] / "result.mp4"
+        shared_output.parent.mkdir(parents=True)
+        shared_output.write_bytes(b"different")
+
+        await manager._process(self.database.next_video_job())
+
+        finished = self.database.get_video_job(job["id"])
+        self.assertEqual(finished["status"], "failed")
+        self.assertEqual(finished["error_code"], "shared_output_conflict")
+        self.assertEqual(shared_output.read_bytes(), b"different")
+        self.assertIsNone(manager.public_job(finished)["shared_output_path"])
+        self.assertIn("共享输出已存在且内容不同", callback.messages[0])
+
+    def test_shared_output_race_does_not_overwrite_new_file(self) -> None:
+        source = self.root / "result.mp4"
+        source.write_bytes(b"video")
+        manager = self.manager()
+        job_id = "c" * 32
+        target = self.shared_output_directory / "video-jobs" / job_id / source.name
+        real_link = os.link
+
+        def create_target_then_link(temporary_path, target_path):
+            Path(target_path).write_bytes(b"new owner")
+            return real_link(temporary_path, target_path)
+
+        with patch(
+            "workstation_manager.video_jobs.os.link",
+            side_effect=create_target_then_link,
+        ):
+            with self.assertRaises(VideoJobError) as raised:
+                manager._publish_shared_output(job_id, str(source))
+
+        self.assertEqual(raised.exception.code, "shared_output_conflict")
+        self.assertEqual(target.read_bytes(), b"new owner")
+
+    def test_shared_output_read_error_is_explicit(self) -> None:
+        source = self.root / "result.mp4"
+        source.write_bytes(b"video")
+        manager = self.manager()
+        job_id = "d" * 32
+        target = self.shared_output_directory / "video-jobs" / job_id / source.name
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"video")
+
+        with patch.object(manager, "_file_sha256", side_effect=PermissionError("denied")):
+            with self.assertRaises(VideoJobError) as raised:
+                manager._publish_shared_output(job_id, str(source))
+
+        self.assertEqual(raised.exception.code, "shared_output_copy_failed")
+        self.assertIn("denied", str(raised.exception))
+
+    def test_shared_output_dangling_temporary_symlink_cannot_escape_root(self) -> None:
+        source = self.root / "result.mp4"
+        source.write_bytes(b"video")
+        manager = self.manager()
+        job_id = "e" * 32
+        target, _ = manager._shared_target(job_id, str(source), create_parent=True)
+        temporary = target.with_name(f".{target.name}.axis-part")
+        outside = self.root / "outside.mp4"
+        try:
+            temporary.symlink_to(outside)
+        except OSError as exc:
+            self.skipTest(f"当前平台不能创建文件符号链接: {exc}")
+
+        manager._publish_shared_output(job_id, str(source))
+
+        self.assertFalse(outside.exists())
+        self.assertEqual(target.read_bytes(), b"video")
+
+    def test_shared_output_final_symlink_is_not_accepted_as_published_file(self) -> None:
+        source = self.root / "result.mp4"
+        source.write_bytes(b"video")
+        manager = self.manager()
+        job_id = "f" * 32
+        target, relative = manager._shared_target(job_id, str(source), create_parent=True)
+        outside = self.root / "outside.mp4"
+        outside.write_bytes(b"video")
+        try:
+            target.symlink_to(outside)
+        except OSError as exc:
+            self.skipTest(f"当前平台不能创建文件符号链接: {exc}")
+
+        with self.assertRaises(VideoJobError) as raised:
+            manager._publish_shared_output(job_id, str(source))
+
+        self.assertEqual(raised.exception.code, "shared_output_conflict")
+        job = {
+            "id": job_id, "output_path": str(source), "shared_output_path": relative,
+        }
+        self.assertIsNone(manager.public_job(job)["shared_output_path"])
+
+    def test_shared_output_rejects_invalid_job_id_before_creating_directories(self) -> None:
+        source = self.root / "result.mp4"
+        source.write_bytes(b"video")
+        manager = self.manager()
+
+        with self.assertRaises(VideoJobError) as raised:
+            manager._publish_shared_output("../outside", str(source))
+
+        self.assertEqual(raised.exception.code, "shared_output_path_invalid")
+        self.assertFalse((self.root / "outside").exists())
+
+    async def test_batch_cancel_during_shared_copy_stops_remaining_segments(self) -> None:
+        callback = RecordingCallback()
+        manager = self.manager(callback=callback)
+        jobs, _ = manager.submit_batch(self.batch_payload("cancel-copy", 2))
+        publish = manager._publish_shared_output
+
+        def publish_then_cancel(job_id: str, output_path: str) -> str:
+            relative = publish(job_id, output_path)
+            manager.cancel(job_id, "admin", "local")
+            return relative
+
+        with patch.object(manager, "_publish_shared_output", side_effect=publish_then_cancel):
+            await manager._process(self.database.next_video_job())
+
+        finished = self.database.get_video_job(jobs[0]["id"])
+        self.assertEqual(finished["status"], "cancelled")
+        self.assertIsNotNone(finished["shared_output_path"])
+        self.assertEqual(self.database.get_video_job(jobs[1]["id"])["status"], "cancelled")
+        self.assertEqual(manager.comfy.release_calls, 1)
+        self.assertIn("已在第 1 / 2 段取消", callback.messages[0])
 
     async def test_invalid_resource_snapshot_fails_without_submitting(self) -> None:
         comfy = CompletedComfy()
@@ -891,6 +1144,7 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ninfer.calls, 1)
         self.assertEqual(len(callback.messages), 1)
         self.assertIn("3 段", callback.messages[0])
+        self.assertEqual(callback.messages[0].count("http://127.0.0.1:18765/"), 3)
         self.assertIn("已恢复场景", callback.messages[0])
         self.assertIsNone(self.database.resource_lease_owner("gpu:4090"))
 

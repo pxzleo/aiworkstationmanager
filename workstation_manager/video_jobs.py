@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import shutil
 import uuid
 from contextlib import suppress
 from pathlib import Path
@@ -368,11 +369,43 @@ class ComfyUIClient:
 
 class OpenCodeCallbackClient:
     @staticmethod
+    def handoff_ready(job: dict[str, Any]) -> bool:
+        base_url = str(job["callback_url"]).rstrip("/")
+        handoff_owner = str(job.get("batch_id") or job["id"])
+        url = (
+            f"{base_url}/session/{quote(job['session_id'], safe='')}/handoff_ready/"
+            f"{quote(handoff_owner, safe='')}"
+        )
+        request = Request(url, method="GET")
+        try:
+            with urlopen(request, timeout=2) as response:
+                if response.status != 204:
+                    raise VideoJobError(
+                        "opencode_handoff_status",
+                        f"OpenCode 空闲握手返回意外 HTTP {response.status}",
+                    )
+                return True
+        except HTTPError as exc:
+            if exc.code == 425:
+                return False
+            if exc.code in {404, 405}:
+                return True
+            raise VideoJobError(
+                "opencode_handoff_failed", f"OpenCode 空闲握手返回 HTTP {exc.code}",
+            ) from exc
+        except (URLError, TimeoutError, OSError) as exc:
+            raise VideoJobError(
+                "opencode_handoff_unreachable", f"OpenCode 空闲握手端点不可达: {exc}",
+            ) from exc
+
+    @staticmethod
     def send(job: dict[str, Any], message: str) -> None:
         base_url = str(job["callback_url"]).rstrip("/")
         query = ""
+        query_values = {"handoff_owner": str(job.get("batch_id") or job["id"])}
         if job.get("callback_directory"):
-            query = "?" + urlencode({"directory": job["callback_directory"]})
+            query_values["directory"] = job["callback_directory"]
+        query = "?" + urlencode(query_values)
         url = f"{base_url}/session/{quote(job['session_id'], safe='')}/prompt_async{query}"
         headers = {"Content-Type": "application/json"}
         body = json.dumps({"parts": [{"type": "text", "text": message}]}, ensure_ascii=False).encode()
@@ -395,6 +428,7 @@ class VideoJobManager:
     def __init__(
         self, database: Database, registry: RegisteredServiceManager, *, comfyui_base_url: str,
         ninfer_base_url: str, ninfer_model_id: str, output_directory: Path,
+        shared_output_directory: Path, file_service_port: int,
         poll_interval_seconds: float = 2.0, idle_timeout_seconds: float = 3600.0,
         scene_timeout_seconds: float = 1200.0, generation_timeout_seconds: float = 7200.0,
         comfy: ComfyUIClient | None = None, ninfer: NInferClient | None = None,
@@ -408,6 +442,8 @@ class VideoJobManager:
         self.callback = callback or OpenCodeCallbackClient()
         self.resource_snapshot = resource_snapshot
         self.output_directory = Path(output_directory)
+        self.shared_output_directory = Path(shared_output_directory)
+        self.file_service_port = file_service_port
         self.poll_interval_seconds = poll_interval_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
         self.scene_timeout_seconds = scene_timeout_seconds
@@ -469,7 +505,8 @@ class VideoJobManager:
             raise VideoJobError("invalid_workflow_path", "workflow_path 必须是 JSON 文件的绝对路径")
         if not workflow_path.is_file():
             raise VideoJobError("workflow_not_found", f"工作流文件不存在: {workflow_path}")
-        workflow = self._load_workflow(str(workflow_path))
+        expected_file_sha256 = str(payload.get("workflow_file_sha256") or "").strip() or None
+        workflow = self._load_workflow(str(workflow_path), expected_file_sha256)
         self._validate_workflow_safety(workflow)
         workflow_json = json.dumps(workflow, ensure_ascii=False, separators=(",", ":"))
         workflow_sha256 = hashlib.sha256(workflow_json.encode("utf-8")).hexdigest()
@@ -669,13 +706,48 @@ class VideoJobManager:
                 raise VideoJobError("operation_busy", "等待现有服务或场景操作完成超时")
             await asyncio.sleep(self.poll_interval_seconds)
 
+    async def _wait_for_opencode_idle(self, job_id: str, job: dict[str, Any]) -> None:
+        checker = getattr(self.callback, "handoff_ready", None)
+        if not callable(checker):
+            return
+        deadline = asyncio.get_running_loop().time() + self.scene_timeout_seconds
+        last_connection_error: str | None = None
+        while True:
+            try:
+                if await asyncio.to_thread(checker, job):
+                    return
+                last_connection_error = None
+            except VideoJobError as exc:
+                if exc.code != "opencode_handoff_unreachable":
+                    raise
+                last_connection_error = str(exc)
+            if await self._cancel_requested(job_id):
+                raise VideoJobError("cancelled", "用户在 OpenCode 空闲握手期间取消了视频任务")
+            if asyncio.get_running_loop().time() >= deadline:
+                if last_connection_error:
+                    raise VideoJobError(
+                        "opencode_handoff_timeout",
+                        f"OpenCode 空闲握手端点持续不可达，AXIS 保持 NInfer 运行；最后错误: {last_connection_error}",
+                    )
+                raise VideoJobError(
+                    "opencode_handoff_timeout",
+                    "OpenCode 当前响应未在限时内结束，AXIS 拒绝停止 NInfer",
+                )
+            await asyncio.sleep(max(self.poll_interval_seconds, 0.1))
+
     @staticmethod
-    def _load_workflow(path: str) -> dict[str, Any]:
+    def _load_workflow(path: str, expected_file_sha256: str | None = None) -> dict[str, Any]:
         workflow_path = Path(path)
         try:
             if workflow_path.stat().st_size > 4 * 1024 * 1024:
                 raise VideoJobError("workflow_too_large", "工作流 JSON 不能超过 4 MiB")
-            value = json.loads(workflow_path.read_text(encoding="utf-8"))
+            raw = workflow_path.read_bytes()
+            actual_file_sha256 = hashlib.sha256(raw).hexdigest()
+            if expected_file_sha256 and actual_file_sha256 != expected_file_sha256:
+                raise VideoJobError(
+                    "workflow_hash_mismatch", "工作流文件与提交方校验的 SHA-256 不一致",
+                )
+            value = json.loads(raw.decode("utf-8"))
         except VideoJobError:
             raise
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -798,6 +870,129 @@ class VideoJobManager:
             return path / Path(filename).name
         return path
 
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            while block := source.read(1024 * 1024):
+                digest.update(block)
+        return digest.hexdigest()
+
+    def _shared_relative_path(self, job_id: str, output_path: str | None) -> str | None:
+        if not output_path:
+            return None
+        if re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
+            raise VideoJobError("shared_output_path_invalid", "视频任务 ID 无法用于共享输出路径")
+        return (Path("video-jobs") / job_id / Path(output_path).name).as_posix()
+
+    def _shared_target(
+        self, job_id: str, output_path: str, *, create_parent: bool = False,
+    ) -> tuple[Path, str]:
+        try:
+            root = self.shared_output_directory.resolve(strict=True)
+        except OSError as exc:
+            raise VideoJobError(
+                "shared_output_root_unavailable",
+                f"共享输出目录不可用: {self.shared_output_directory}: {exc}",
+            ) from exc
+        if not root.is_dir():
+            raise VideoJobError(
+                "shared_output_root_unavailable",
+                f"共享输出路径不是目录: {self.shared_output_directory}",
+            )
+        relative = self._shared_relative_path(job_id, output_path)
+        if relative is None:
+            raise VideoJobError("shared_output_path_missing", "视频任务没有可发布的输出路径")
+        publish_root = root / "video-jobs"
+        try:
+            if create_parent:
+                publish_root.mkdir(exist_ok=True)
+            resolved_publish_root = publish_root.resolve(strict=True)
+            resolved_publish_root.relative_to(root)
+            target_parent = resolved_publish_root / job_id
+            if create_parent:
+                target_parent.mkdir(exist_ok=True)
+            resolved_parent = target_parent.resolve(strict=True)
+            resolved_parent.relative_to(root)
+        except (OSError, ValueError) as exc:
+            raise VideoJobError(
+                "shared_output_path_invalid",
+                f"共享输出目标越过文件服务根目录: {publish_root / job_id}",
+            ) from exc
+        return resolved_parent / Path(output_path).name, relative
+
+    def _publish_shared_output(self, job_id: str, output_path: str) -> str:
+        source = Path(output_path)
+        if not source.is_file():
+            raise VideoJobError("output_missing", f"待发布的视频输出不存在: {source}")
+        target, relative = self._shared_target(job_id, output_path, create_parent=True)
+        temporary = target.with_name(f".{target.name}.axis-part")
+        try:
+            if os.path.lexists(target):
+                if target.is_symlink() or not target.is_file() \
+                        or source.stat().st_size != target.stat().st_size \
+                        or self._file_sha256(source) != self._file_sha256(target):
+                    raise VideoJobError(
+                        "shared_output_conflict", f"共享输出已存在且内容不同，拒绝覆盖: {target}",
+                    )
+                return relative
+            if os.path.lexists(temporary):
+                temporary.unlink()
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_BINARY"):
+                flags |= os.O_BINARY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(temporary, flags, 0o600)
+            try:
+                with source.open("rb") as input_file, os.fdopen(descriptor, "wb") as output_file:
+                    descriptor = -1
+                    shutil.copyfileobj(input_file, output_file, length=1024 * 1024)
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+            try:
+                os.link(temporary, target)
+            except FileExistsError:
+                if target.is_symlink() or not target.is_file() \
+                        or source.stat().st_size != target.stat().st_size \
+                        or self._file_sha256(source) != self._file_sha256(target):
+                    raise VideoJobError(
+                        "shared_output_conflict", f"共享输出已存在且内容不同，拒绝覆盖: {target}",
+                    )
+            return relative
+        except VideoJobError:
+            raise
+        except OSError as exc:
+            raise VideoJobError(
+                "shared_output_copy_failed", f"复制视频到共享输出目录失败: {exc}",
+            ) from exc
+        finally:
+            with suppress(OSError):
+                temporary.unlink()
+
+    def public_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        relative = str(job.get("shared_output_path") or "").strip() or None
+        available = False
+        if relative:
+            try:
+                expected = self._shared_relative_path(job["id"], job.get("output_path"))
+                if relative == expected:
+                    target, _ = self._shared_target(job["id"], str(job["output_path"]))
+                    available = not target.is_symlink() and target.is_file()
+            except VideoJobError:
+                available = False
+        return {**job, "shared_output_path": relative if available else None}
+
+    def _shared_output_url(self, job: dict[str, Any]) -> str | None:
+        relative = self.public_job(job).get("shared_output_path")
+        if not relative:
+            return None
+        return (
+            f"http://127.0.0.1:{self.file_service_port}/api/v1/files/content?"
+            f"{urlencode({'path': relative})}"
+        )
+
     async def _monitor_prompt(
         self, job_id: str, prompt_id: str, node_names: dict[str, str],
         progress_connection=None,
@@ -917,7 +1112,10 @@ class VideoJobManager:
             batch_id = str(job.get("batch_id") or "")
             if batch_id:
                 batch = self.database.video_jobs_in_batch(batch_id)
-                outputs = [item["output_path"] for item in batch if item.get("output_path")]
+                outputs = [
+                    self._shared_output_url(item) or str(item["output_path"])
+                    for item in batch if item.get("output_path")
+                ]
                 if outcome == "succeeded":
                     return (
                         f"AXIS 视频批次 {batch_id} 的 {len(batch)} 段已全部完成，"
@@ -938,8 +1136,9 @@ class VideoJobManager:
                     f"{original_scene_name}，请继续处理失败。"
                 )
             if outcome == "succeeded":
+                output_link = self._shared_output_url(job) or output_path
                 return (
-                    f"AXIS 视频任务 {job_id} 已完成，输出文件：{output_path}。"
+                    f"AXIS 视频任务 {job_id} 已完成，输出文件：{output_link}。"
                     f"已恢复场景 {original_scene_name}，请继续原任务。"
                 )
             if outcome == "cancelled":
@@ -1044,13 +1243,26 @@ class VideoJobManager:
         if initial_phase in {"restoring_code", "restoring_scene", "verifying_ninfer"}:
             await self._resume_cleanup(initial_job)
             return
-        if initial_phase == "collecting_output" and initial_job.get("output_path") \
+        if initial_phase in {"collecting_output", "publishing_output"} \
+                and initial_job.get("output_path") \
                 and Path(initial_job["output_path"]).is_file():
             outcome = "cancelled" if await self._cancel_requested(job_id) else "succeeded"
             error_code = None
             error_summary = None
             try:
                 await asyncio.to_thread(self.comfy.release_memory)
+                if outcome == "succeeded":
+                    self.database.update_video_job(
+                        job_id, status="publishing_output", phase="publishing_output",
+                    )
+                    shared_output_path = await asyncio.to_thread(
+                        self._publish_shared_output, job_id, str(initial_job["output_path"]),
+                    )
+                    self.database.update_video_job(
+                        job_id, shared_output_path=shared_output_path,
+                    )
+                    if await self._cancel_requested(job_id):
+                        outcome = "cancelled"
             except VideoJobError as exc:
                 outcome = "failed"
                 error_code = exc.code
@@ -1061,6 +1273,12 @@ class VideoJobManager:
             resumed = self.database.get_video_job(job_id, include_internal=True)
             if resumed is None:
                 raise DatabaseError("视频任务在输出恢复时消失")
+            if outcome != "succeeded" and resumed.get("batch_id"):
+                self.database.abort_remaining_batch_jobs(
+                    str(resumed["batch_id"]), int(resumed.get("batch_index") or 1),
+                    f"批次在第 {int(resumed.get('batch_index') or 1)} 段终止："
+                    f"{error_code}: {error_summary}",
+                )
             if resumed.get("batch_id") and int(resumed.get("batch_index") or 1) \
                     < int(resumed.get("batch_size") or 1) and outcome == "succeeded":
                 self.database.finish_video_job_with_audit(
@@ -1074,6 +1292,7 @@ class VideoJobManager:
         error_code: str | None = None
         error_summary: str | None = None
         output_path: str | None = initial_job.get("output_path")
+        memory_released = False
         keep_scene = False
         generation_scene_id = str(initial_job.get("generation_scene_id") or "")
         try:
@@ -1108,11 +1327,6 @@ class VideoJobManager:
                     "original_scene_id": anchor["id"],
                     "original_scene_name": anchor["name"],
                 }
-            started_at = initial_job.get("started_at") or utc_now()
-            self.database.update_video_job(
-                job_id, status="waiting_for_ninfer_idle", phase="waiting_for_ninfer_idle",
-                started_at=started_at,
-            )
             prompt_id = initial_job.get("prompt_id")
             if prompt_id is None and initial_phase == "submitting":
                 prompt_id = await asyncio.to_thread(self.comfy.recover_prompt_id, job_id)
@@ -1122,6 +1336,17 @@ class VideoJobManager:
                         "AXIS 在提交 ComfyUI 时重启且无法确认 prompt_id，拒绝重复提交",
                     )
                 self.database.update_video_job(job_id, prompt_id=prompt_id)
+            started_at = initial_job.get("started_at") or utc_now()
+            if prompt_id is None:
+                self.database.update_video_job(
+                    job_id, status="waiting_for_opencode_idle",
+                    phase="waiting_for_opencode_idle", started_at=started_at,
+                )
+                await self._wait_for_opencode_idle(job_id, initial_job)
+            self.database.update_video_job(
+                job_id, status="waiting_for_ninfer_idle", phase="waiting_for_ninfer_idle",
+                started_at=started_at,
+            )
             if prompt_id is None:
                 if not generation_scene_id:
                     raise VideoJobError(
@@ -1179,7 +1404,21 @@ class VideoJobManager:
                 output_path=output_path,
             )
             await asyncio.to_thread(self.comfy.download_output, descriptor, target)
-            outcome = "cancelled" if await self._cancel_requested(job_id) else "succeeded"
+            if await self._cancel_requested(job_id):
+                outcome = "cancelled"
+            else:
+                await asyncio.to_thread(self.comfy.release_memory)
+                memory_released = True
+                self.database.update_video_job(
+                    job_id, status="publishing_output", phase="publishing_output",
+                )
+                shared_output_path = await asyncio.to_thread(
+                    self._publish_shared_output, job_id, output_path,
+                )
+                self.database.update_video_job(
+                    job_id, shared_output_path=shared_output_path,
+                )
+                outcome = "cancelled" if await self._cancel_requested(job_id) else "succeeded"
             keep_scene = (
                 outcome == "succeeded"
                 and self._generation_scene_active(generation_scene_id)
@@ -1187,7 +1426,9 @@ class VideoJobManager:
                 and int(initial_job.get("batch_index") or 1)
                     < int(initial_job.get("batch_size") or 1)
             )
-            await asyncio.to_thread(self.comfy.release_memory)
+            if outcome == "cancelled" and not memory_released:
+                await asyncio.to_thread(self.comfy.release_memory)
+                memory_released = True
         except asyncio.CancelledError:
             raise
         except VideoJobError as exc:
@@ -1201,11 +1442,13 @@ class VideoJobManager:
                 f"批次在第 {int(initial_job.get('batch_index') or 1)} 段终止："
                 f"{error_code}: {error_summary}",
             )
-            try:
-                await asyncio.to_thread(self.comfy.release_memory)
-            except VideoJobError as exc:
-                error_code = error_code or exc.code
-                error_summary = "; ".join(filter(None, [error_summary, str(exc)]))
+            if not memory_released:
+                try:
+                    await asyncio.to_thread(self.comfy.release_memory)
+                    memory_released = True
+                except VideoJobError as exc:
+                    error_code = error_code or exc.code
+                    error_summary = "; ".join(filter(None, [error_summary, str(exc)]))
         try:
             self.database.update_video_job(
                 job_id, status="restoring_scene",
