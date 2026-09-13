@@ -1,3 +1,3 @@
 """AXIS AI workstation manager backend."""
 
-__version__ = "1.12.0"
+__version__ = "1.12.1"
