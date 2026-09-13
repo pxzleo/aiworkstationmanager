@@ -52,6 +52,8 @@ ENGLISH_ERROR_MESSAGES = {
     "rename_target_exists": "A file or folder with that name already exists and was not overwritten.",
     "rename_access_denied": "The file or folder could not be renamed because access was denied.",
     "rename_failed": "The file or folder could not be renamed.",
+    "recycle_access_denied": "The file or folder could not be moved to the Recycle Bin because access was denied.",
+    "recycle_failed": "The file or folder could not be moved to the Recycle Bin.",
     "invalid_upload_name": "The upload file name is invalid.",
     "upload_file_exists": "A file with the same name already exists and was not overwritten.",
     "upload_access_denied": "Access to the upload destination was denied.",

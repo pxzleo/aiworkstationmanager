@@ -129,6 +129,49 @@ class FileCatalogTests(unittest.TestCase):
         self.assertTrue((self.root / "新链接.txt").is_symlink())
         self.assertEqual(target.read_text(encoding="utf-8"), "中文内容")
 
+    def test_moves_unicode_files_and_nonempty_directories_to_recycle_bin(self) -> None:
+        recycled: list[Path] = []
+        recycle_store = self.root.parent / "模拟回收站"
+        recycle_store.mkdir()
+
+        def fake_recycle(value: str) -> None:
+            path = Path(value)
+            destination = recycle_store / path.name
+            path.rename(destination)
+            recycled.append(destination)
+
+        catalog = FileCatalog(self.root, recycle_entry=fake_recycle)
+        recycled_file = catalog.recycle("资料.bin")
+        self.assertEqual(recycled_file["type"], "file")
+        self.assertFalse((self.root / "资料.bin").exists())
+        recycled_directory = catalog.recycle("子目录")
+        self.assertEqual(recycled_directory["type"], "directory")
+        self.assertFalse((self.root / "子目录").exists())
+        self.assertEqual([item.name for item in recycled], ["资料.bin", "子目录"])
+        self.assertEqual((recycled[1] / "说明.txt").read_text(encoding="utf-8"), "中文内容")
+
+        with self.assertRaisesRegex(FileServiceError, "根目录不能删除"):
+            catalog.recycle("")
+        (self.root / "保留目录").mkdir()
+        with self.assertRaisesRegex(FileServiceError, "根目录不能删除"):
+            catalog.recycle("保留目录/..")
+        with self.assertRaisesRegex(FileServiceError, "根目录之外"):
+            catalog.recycle("../外部.txt")
+        temporary = self.root / ".axis-upload-0123456789abcdef0123456789abcdef.part"
+        temporary.write_bytes(b"uploading")
+        with self.assertRaisesRegex(FileServiceError, "临时文件不能删除"):
+            catalog.recycle(temporary.name)
+        self.assertTrue(temporary.exists())
+
+    def test_keeps_entry_when_recycle_bin_operation_fails(self) -> None:
+        def fail_recycle(_: str) -> None:
+            raise OSError("模拟回收站错误")
+
+        catalog = FileCatalog(self.root, recycle_entry=fail_recycle)
+        with self.assertRaisesRegex(FileServiceError, "移入回收站"):
+            catalog.recycle("资料.bin")
+        self.assertTrue((self.root / "资料.bin").is_file())
+
 
 class StandaloneFileServiceTests(unittest.TestCase):
     def setUp(self) -> None:

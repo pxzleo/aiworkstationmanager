@@ -6,6 +6,7 @@ import re
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator
@@ -14,6 +15,7 @@ from urllib.parse import quote
 import uvicorn
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from send2trash import send2trash
 
 
 class FileServiceError(ValueError):
@@ -26,8 +28,9 @@ class FileServiceError(ValueError):
 
 
 class FileCatalog:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, recycle_entry: Callable[[str], None] | None = None) -> None:
         self.root = root.expanduser().resolve(strict=False)
+        self._recycle_entry = recycle_entry or send2trash
 
     def _resolve(self, relative_path: str, *, expected: str) -> Path:
         if not isinstance(relative_path, str) or "\x00" in relative_path:
@@ -232,6 +235,42 @@ class FileCatalog:
             "type": "directory" if target.is_dir() else "file",
             "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
         }
+
+    def recycle(self, relative_path: str) -> dict[str, Any]:
+        if not isinstance(relative_path, str) or "\x00" in relative_path:
+            raise FileServiceError("invalid_file_path", "文件路径无效", 400)
+        normalized = relative_path.replace("\\", "/").strip("/")
+        if not normalized:
+            raise FileServiceError("invalid_file_path", "根目录不能删除", 400)
+        source = self.root / normalized
+        try:
+            source.parent.resolve(strict=True).relative_to(self.root)
+            resolved_source = source.resolve(strict=False)
+            resolved_source.relative_to(self.root)
+        except FileNotFoundError as exc:
+            raise FileServiceError("file_not_found", "文件或目录不存在", 404) from exc
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise FileServiceError("file_path_outside_root", "禁止删除根目录之外的项目", 403) from exc
+        if resolved_source == self.root:
+            raise FileServiceError("invalid_file_path", "根目录不能删除", 400)
+        if not os.path.lexists(source):
+            raise FileServiceError("file_not_found", "文件或目录不存在", 404)
+        if re.fullmatch(r"\.axis-upload-[0-9a-f]{32}\.part", source.name):
+            raise FileServiceError("invalid_file_path", "上传中的临时文件不能删除", 400)
+        entry = {
+            "name": source.name,
+            "path": source.relative_to(self.root).as_posix(),
+            "type": "directory" if source.is_dir() else "file",
+        }
+        try:
+            self._recycle_entry(str(source))
+        except PermissionError as exc:
+            raise FileServiceError("recycle_access_denied", "没有权限将该项目移入回收站", 403) from exc
+        except OSError as exc:
+            raise FileServiceError("recycle_failed", f"无法将文件或目录移入回收站: {exc}", 500) from exc
+        if os.path.lexists(source):
+            raise FileServiceError("recycle_failed", "回收站操作完成后项目仍然存在", 500)
+        return entry
 
     def complete_upload(self, temporary: Path, target: Path, stream: BinaryIO) -> dict[str, Any]:
         try:

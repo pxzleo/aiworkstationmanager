@@ -1062,6 +1062,44 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             raise DatabaseError("更名完成审计失败，文件名称已恢复") from audit_error
         return {"entry": renamed}
 
+    @app.delete("/api/v1/file-service/entry")
+    async def recycle_file_service_entry(
+        request: Request,
+        path: str = Query(min_length=1, max_length=4096),
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        source_ip = _client_ip(request)
+        audit_id = uuid4().hex
+        audit_summary = {
+            "audit_id": audit_id,
+            "username": session.username,
+            "path": path,
+            "destination": "windows_recycle_bin",
+        }
+        resolved_database.append_audit(
+            source_ip, "management.file.recycle.requested", "success", audit_summary,
+        )
+        try:
+            recycled = await asyncio.to_thread(file_catalog.recycle, path)
+        except FileServiceError as exc:
+            try:
+                resolved_database.append_audit(
+                    source_ip, "management.file.recycle", "failure",
+                    {**audit_summary, "reason": exc.code},
+                )
+            except DatabaseError as audit_error:
+                raise DatabaseError(
+                    f"移入回收站失败且无法写入失败审计: {audit_error}"
+                ) from exc
+            raise
+        try:
+            resolved_database.append_audit(
+                source_ip, "management.file.recycle", "success", audit_summary,
+            )
+        except DatabaseError as exc:
+            raise DatabaseError("项目已移入回收站，但完成审计写入失败") from exc
+        return {"entry": recycled, "recycled": True}
+
     @app.get("/api/v1/audit")
     async def audit(limit: int = Query(default=100, ge=1, le=500),
                     _: AuthenticatedSession = Depends(require_session)) -> dict[str, Any]:

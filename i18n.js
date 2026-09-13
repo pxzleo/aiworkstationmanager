@@ -20,6 +20,7 @@
     '文件查看方式': 'File view', '列表': 'List', '缩略图': 'Thumbnails', '无法进入全屏': 'Unable to enter fullscreen',
     '更名': 'Rename', '新名称': 'New name', '只修改名称，不会移动文件或目录，也不会覆盖同名项目。': 'Only the name changes. The file or folder is not moved, and an existing item is never overwritten.',
     '保存名称': 'Save Name', '请输入新名称。': 'Enter a new name.', '更名完成': 'Rename completed',
+    '删除': 'Delete', '已移入回收站': 'Moved to Recycle Bin',
     'RTX 4090 串行调度': 'RTX 4090 Serial Scheduling', '刷新任务': 'Refresh Jobs',
     '任务仅由本机 OpenCode 提交；这里显示生成阶段、输出和恢复结果，并允许取消。': 'Jobs are submitted only by local OpenCode. This page shows generation stages, output, recovery result, and cancellation control.',
     'AXIS 会等待 NInfer processing 与 deferred 同时为 0，再切换到指定或默认生成场景，完成后恢复原场景。': 'AXIS waits until NInfer processing and deferred are both zero, switches to the selected or default generation scene, then restores the original scene.',

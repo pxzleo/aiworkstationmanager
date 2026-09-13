@@ -972,6 +972,70 @@ class ApiTests(unittest.TestCase):
             for event in audit
         ))
 
+    def test_authenticated_file_service_moves_items_to_recycle_bin(self) -> None:
+        directory = self.settings.file_service_root / "待删除目录"
+        directory.mkdir()
+        (directory / "内容.txt").write_text("内容", encoding="utf-8")
+        recycled: list[str] = []
+        recycle_store = self.settings.file_service_root.parent / "模拟回收站"
+        recycle_store.mkdir()
+
+        def fake_recycle(value: str) -> None:
+            path = Path(value)
+            recycled.append(path.name)
+            path.rename(recycle_store / path.name)
+
+        self.client.app.state.file_catalog._recycle_entry = fake_recycle
+        self.assertEqual(
+            self.client.delete(
+                "/api/v1/file-service/entry", params={"path": "待删除目录"},
+            ).status_code,
+            401,
+        )
+        setup = self.client.post(
+            "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+        )
+        csrf = setup.json()["csrf_token"]
+        self.assertEqual(
+            self.client.delete(
+                "/api/v1/file-service/entry", params={"path": "待删除目录"},
+            ).status_code,
+            403,
+        )
+        deleted = self.client.delete(
+            "/api/v1/file-service/entry",
+            params={"path": "待删除目录"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertTrue(deleted.json()["recycled"])
+        self.assertEqual(recycled, ["待删除目录"])
+        self.assertFalse(directory.exists())
+        self.assertEqual(
+            (recycle_store / "待删除目录" / "内容.txt").read_text(encoding="utf-8"),
+            "内容",
+        )
+        root_delete = self.client.delete(
+            "/api/v1/file-service/entry",
+            params={"path": "/"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(root_delete.status_code, 400, root_delete.text)
+        (self.settings.file_service_root / "点段目录").mkdir()
+        encoded_root_delete = self.client.delete(
+            "/api/v1/file-service/entry?path=%E7%82%B9%E6%AE%B5%E7%9B%AE%E5%BD%95%2F..",
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(encoded_root_delete.status_code, 400, encoded_root_delete.text)
+        self.assertTrue(self.settings.file_service_root.exists())
+        audit = self.client.get("/api/v1/audit?limit=10").json()["events"]
+        self.assertTrue(any(
+            event["event"] == "management.file.recycle"
+            and event["result"] == "success"
+            and event["summary"].get("path") == "待删除目录"
+            for event in audit
+        ))
+
     def test_automatic_tasks_crud_and_opencode_serial_execution(self) -> None:
         self.assertEqual(self.client.get("/api/v1/automatic-tasks").status_code, 401)
         setup = self.client.post(

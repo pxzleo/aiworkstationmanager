@@ -224,7 +224,7 @@ function renderFileBreadcrumbs() {
 function renderFiles() {
   renderFileBreadcrumbs(); const rows = byId('fileRows'); const browser = byId('fileBrowser'); releaseFileThumbnailVideos(rows); rows.replaceChildren(); browser.classList.toggle('list-view', state.fileView === 'list'); browser.classList.toggle('thumbnail-view', state.fileView === 'thumbnail');
   if (!state.files.length) { rows.append(element('p', 'empty-state', '这个目录是空的。')); return; }
-  state.files.forEach((entry) => { const row = element('article', 'file-row'); const name = element('button', 'file-name'); name.type = 'button'; name.setAttribute('aria-label', fileActionLabel(entry)); name.append(icon(entry.type === 'directory' ? 'box' : entry.playable ? 'play' : 'file')); const copy = element('span'); copy.append(userElement('strong', '', entry.name), element('small', '', fileLabel(entry))); name.append(copy); name.addEventListener('click', () => openFileEntry(entry, entry.playable)); const actions = element('span', 'file-actions'); const rename = iconButton('更名', 'edit', 'file-rename-button'); rename.addEventListener('click', () => openFileRenameDialog(entry)); actions.append(rename); if (state.fileView === 'thumbnail') row.append(fileThumbnail(entry)); row.append(name, element('span', 'file-size', entry.type === 'directory' ? '—' : formatFileSize(entry.size)), userElement('time', '', formatDate(entry.modified_at, true)), actions); rows.append(row); });
+  state.files.forEach((entry) => { const row = element('article', 'file-row'); const name = element('button', 'file-name'); name.type = 'button'; name.setAttribute('aria-label', fileActionLabel(entry)); name.append(icon(entry.type === 'directory' ? 'box' : entry.playable ? 'play' : 'file')); const copy = element('span'); copy.append(userElement('strong', '', entry.name), element('small', '', fileLabel(entry))); name.append(copy); name.addEventListener('click', () => openFileEntry(entry, entry.playable)); const actions = element('span', 'file-actions'); const rename = iconButton('更名', 'edit', 'file-rename-button'); rename.addEventListener('click', () => openFileRenameDialog(entry)); const remove = iconButton('删除', 'trash', 'file-delete-button'); remove.addEventListener('click', () => deleteFileEntry(entry)); actions.append(rename, remove); if (state.fileView === 'thumbnail') row.append(fileThumbnail(entry)); row.append(name, element('span', 'file-size', entry.type === 'directory' ? '—' : formatFileSize(entry.size)), userElement('time', '', formatDate(entry.modified_at, true)), actions); rows.append(row); });
 }
 async function refreshFiles(path = '') {
   if (document.hidden) return; const rows = byId('fileRows'); releaseFileThumbnailVideos(rows); rows.setAttribute('aria-busy', 'true');
@@ -265,6 +265,13 @@ async function renameFileEntry(event) {
   if (!newName) return text('fileRenameError', ui('请输入新名称。'));
   try { await api('/file-service/rename', { method: 'POST', body: { path, new_name: newName } }); byId('fileRenameDialog').close(); showToast(ui('更名完成')); await refreshFiles(state.filePath); }
   catch (error) { text('fileRenameError', error.message); }
+}
+async function deleteFileEntry(entry) {
+  const message = window.axisI18n.language === 'zh' ? `将“${entry.name}”移入回收站？之后可从 Windows 回收站恢复。` : `Move “${entry.name}” to the Recycle Bin? You can restore it later from Windows.`;
+  if (!confirm(message)) return;
+  try { await api(`/file-service/entry?path=${encodeURIComponent(entry.path)}`, { method: 'DELETE' }); showToast(ui('已移入回收站')); }
+  catch (error) { showToast(error.message); }
+  finally { await refreshFiles(state.filePath); }
 }
 
 function normalizeGpu(gpu) { return { ...gpu, load_percent: normalizedPercent(gpu.load_percent), memory_percent: normalizedPercent(gpu.memory_percent) }; }

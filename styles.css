@@ -324,9 +324,11 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-name > span { min-width: 0; display: grid; gap: 4px; }
 .file-name strong { overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .file-name small, .file-size, .file-row time { color: var(--muted); font-size: 11px; }
-.file-actions { display: flex; justify-content: flex-end; }
+.file-actions { display: flex; justify-content: flex-end; gap: 4px; }
 .file-rename-button { width: 34px; height: 34px; }
-.file-rename-button svg { width: 14px; height: 14px; }
+.file-rename-button svg, .file-delete-button svg { width: 14px; height: 14px; }
+.file-delete-button { width: 34px; height: 34px; }
+.file-delete-button:hover, .file-delete-button:focus-visible { border-color: color-mix(in srgb, var(--danger) 58%, var(--line)); color: var(--danger); }
 .file-browser [aria-busy="true"] { opacity: .56; pointer-events: none; }
 .file-browser.thumbnail-view > header { display: none; }
 .file-browser.thumbnail-view #fileRows { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; padding: 12px; }
