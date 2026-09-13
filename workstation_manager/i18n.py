@@ -6,6 +6,12 @@ SUPPORTED_LANGUAGES = {"zh", "en"}
 
 ENGLISH_ERROR_MESSAGES = {
     "already_setup": "Administrator setup has already been completed.",
+    "automatic_task_finished": "The automatic task has already finished.",
+    "automatic_task_lease_expired": "The automatic task execution lease has expired.",
+    "automatic_task_not_found": "The automatic task was not found.",
+    "automatic_task_owner_mismatch": "The automatic task is not owned by this OpenCode session.",
+    "automatic_task_running": "A running automatic task cannot be changed.",
+    "automatic_tasks_busy": "Another OpenCode session is running the automatic-task queue.",
     "authentication_required": "Authentication is required.",
     "cannot_delete_current_user": "The currently signed-in user cannot be deleted.",
     "cannot_delete_last_user": "The last user cannot be deleted.",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import secrets
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -12,7 +13,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 30
 
 
 class DatabaseError(RuntimeError):
@@ -28,6 +29,7 @@ def utc_now() -> str:
 
 
 class Database:
+    AUTOMATIC_TASK_LEASE_SECONDS = 30 * 60
     VIDEO_JOB_LIST_COLUMNS = ",".join((
         "id", "idempotency_key", "payload_hash", "session_id", "workflow_path",
         "video_spec", "requested_output_path", "callback_url", "callback_directory",
@@ -124,6 +126,7 @@ class Database:
                         27: self._migrate_to_27,
                         28: self._migrate_to_28,
                         29: self._migrate_to_29,
+                        30: self._migrate_to_30,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -730,6 +733,31 @@ class Database:
         if table is None:
             return
         cls._ensure_column(connection, "video_jobs", "shared_output_path", "TEXT")
+
+    @staticmethod
+    def _migrate_to_30(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS automatic_tasks (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('pending','running','succeeded','failed')),
+                execution_session_id TEXT,
+                execution_token TEXT,
+                lease_expires_at TEXT,
+                result_summary TEXT,
+                error_summary TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT
+            )"""
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_automatic_tasks_status_created "
+            "ON automatic_tasks(status,created_at,id)"
+        )
 
     @classmethod
     def _backfill_video_specs(cls, connection: sqlite3.Connection) -> None:
@@ -1724,6 +1752,282 @@ class Database:
                     )
         except sqlite3.Error as exc:
             raise DatabaseError(f"保存场景排序失败: {exc}") from exc
+
+    @staticmethod
+    def automatic_task_title(content: str, maximum: int = 48) -> str:
+        normalized = " ".join(content.split())
+        normalized = re.sub(r"^(?:[#>*-]+|\d+[.)、])\s*", "", normalized).strip()
+        sentence = re.split(r"(?<=[。！？!?；;])\s*", normalized, maxsplit=1)[0].strip()
+        title = sentence or "自动任务"
+        return title if len(title) <= maximum else f"{title[:maximum - 1].rstrip()}…"
+
+    def create_automatic_task(
+        self, task_id: str, content: str, username: str, source_ip: str,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        title = self.automatic_task_title(content)
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute(
+                        """INSERT INTO automatic_tasks(
+                               id,title,content,status,created_at,updated_at
+                           ) VALUES (?,?,?,'pending',?,?)""",
+                        (task_id, title, content, now, now),
+                    )
+                    self.insert_audit(
+                        connection, source_ip, "management.automatic_task.create", "success",
+                        {"task_id": task_id, "title": title, "requested_by": username},
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM automatic_tasks WHERE id=?", (task_id,),
+                    ).fetchone()
+            if row is None:
+                raise DatabaseError("创建自动任务后无法读回记录")
+            return dict(row)
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError(f"自动任务标识冲突: {exc}") from exc
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"创建自动任务失败: {exc}") from exc
+
+    def list_automatic_tasks(self, limit: int = 500, offset: int = 0) -> list[dict[str, Any]]:
+        try:
+            with self.connect() as connection:
+                rows = connection.execute(
+                    "SELECT * FROM automatic_tasks ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                ).fetchall()
+            return [dict(row) for row in rows]
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取自动任务列表失败: {exc}") from exc
+
+    def automatic_task_summary(self) -> dict[str, int]:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    """SELECT
+                           SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
+                           SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running,
+                           COUNT(*) AS total
+                       FROM automatic_tasks"""
+                ).fetchone()
+            return {
+                "pending": int(row["pending"] or 0),
+                "running": int(row["running"] or 0),
+                "total": int(row["total"] or 0),
+            }
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取自动任务统计失败: {exc}") from exc
+
+    def update_automatic_task(
+        self, task_id: str, content: str, username: str, source_ip: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        now = utc_now()
+        title = self.automatic_task_title(content)
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    existing = connection.execute(
+                        "SELECT status FROM automatic_tasks WHERE id=?", (task_id,),
+                    ).fetchone()
+                    if existing is None:
+                        return "missing", None
+                    if existing["status"] == "running":
+                        return "running", None
+                    connection.execute(
+                        """UPDATE automatic_tasks SET title=?,content=?,status='pending',
+                               execution_session_id=NULL,execution_token=NULL,lease_expires_at=NULL,
+                               result_summary=NULL,error_summary=NULL,
+                               updated_at=?,started_at=NULL,finished_at=NULL WHERE id=?""",
+                        (title, content, now, task_id),
+                    )
+                    self.insert_audit(
+                        connection, source_ip, "management.automatic_task.update", "success",
+                        {"task_id": task_id, "title": title, "requested_by": username},
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM automatic_tasks WHERE id=?", (task_id,),
+                    ).fetchone()
+            return "updated", None if row is None else dict(row)
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"更新自动任务失败: {exc}") from exc
+
+    def delete_automatic_task(
+        self, task_id: str, username: str, source_ip: str,
+    ) -> str:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute(
+                        "SELECT title,status FROM automatic_tasks WHERE id=?", (task_id,),
+                    ).fetchone()
+                    if row is None:
+                        return "missing"
+                    if row["status"] == "running":
+                        return "running"
+                    connection.execute("DELETE FROM automatic_tasks WHERE id=?", (task_id,))
+                    self.insert_audit(
+                        connection, source_ip, "management.automatic_task.delete", "success",
+                        {"task_id": task_id, "title": row["title"], "requested_by": username},
+                    )
+                    return "deleted"
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"删除自动任务失败: {exc}") from exc
+
+    def claim_automatic_task(self, session_id: str) -> tuple[str, dict[str, Any] | None]:
+        now_value = datetime.now(timezone.utc)
+        now = now_value.isoformat()
+        lease_expires_at = (
+            now_value + timedelta(seconds=self.AUTOMATIC_TASK_LEASE_SECONDS)
+        ).isoformat()
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    running = connection.execute(
+                        "SELECT * FROM automatic_tasks WHERE status='running' "
+                        "ORDER BY started_at,id LIMIT 1"
+                    ).fetchone()
+                    if running is not None:
+                        if str(running["lease_expires_at"] or "") > now:
+                            if running["execution_session_id"] == session_id:
+                                return "claimed", dict(running)
+                            return "busy", None
+                        connection.execute(
+                            """UPDATE automatic_tasks SET status='pending',execution_session_id=NULL,
+                                   execution_token=NULL,lease_expires_at=NULL,updated_at=?,started_at=NULL
+                               WHERE id=? AND status='running'""",
+                            (now, running["id"]),
+                        )
+                    row = connection.execute(
+                        "SELECT * FROM automatic_tasks WHERE status='pending' "
+                        "ORDER BY created_at,id LIMIT 1"
+                    ).fetchone()
+                    if row is None:
+                        return "empty", None
+                    execution_token = secrets.token_urlsafe(32)
+                    connection.execute(
+                        """UPDATE automatic_tasks SET status='running',execution_session_id=?,execution_token=?,
+                               lease_expires_at=?,result_summary=NULL,error_summary=NULL,
+                               attempts=attempts+1,updated_at=?,started_at=?,finished_at=NULL
+                           WHERE id=?""",
+                        (session_id, execution_token, lease_expires_at, now, now, row["id"]),
+                    )
+                    claimed = connection.execute(
+                        "SELECT * FROM automatic_tasks WHERE id=?", (row["id"],),
+                    ).fetchone()
+            return "claimed", None if claimed is None else dict(claimed)
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"领取自动任务失败: {exc}") from exc
+
+    def finish_automatic_task(
+        self, task_id: str, session_id: str, execution_token: str,
+        status: str, summary: str | None,
+    ) -> tuple[str, dict[str, Any] | None]:
+        now = utc_now()
+        if status not in {"succeeded", "failed"}:
+            raise DatabaseError("自动任务完成状态无效")
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute(
+                        "SELECT * FROM automatic_tasks WHERE id=?",
+                        (task_id,),
+                    ).fetchone()
+                    if row is None:
+                        return "missing", None
+                    if (row["execution_session_id"] != session_id
+                            or row["execution_token"] != execution_token):
+                        return "owner_mismatch", None
+                    if row["status"] in {"succeeded", "failed"}:
+                        if row["status"] == status:
+                            return "finished", dict(row)
+                        return "already_finished", None
+                    if row["status"] != "running":
+                        return "already_finished", None
+                    if str(row["lease_expires_at"] or "") <= now:
+                        return "lease_expired", None
+                    result_summary = summary if status == "succeeded" else None
+                    error_summary = summary if status == "failed" else None
+                    connection.execute(
+                        """UPDATE automatic_tasks SET status=?,result_summary=?,error_summary=?,
+                               lease_expires_at=NULL,updated_at=?,finished_at=? WHERE id=?""",
+                        (status, result_summary, error_summary, now, now, task_id),
+                    )
+                    finished = connection.execute(
+                        "SELECT * FROM automatic_tasks WHERE id=?", (task_id,),
+                    ).fetchone()
+            return "finished", None if finished is None else dict(finished)
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"完成自动任务失败: {exc}") from exc
+
+    def heartbeat_automatic_task(
+        self, task_id: str, session_id: str, execution_token: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        now_value = datetime.now(timezone.utc)
+        now = now_value.isoformat()
+        lease_expires_at = (
+            now_value + timedelta(seconds=self.AUTOMATIC_TASK_LEASE_SECONDS)
+        ).isoformat()
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute(
+                        "SELECT * FROM automatic_tasks WHERE id=?", (task_id,),
+                    ).fetchone()
+                    if row is None:
+                        return "missing", None
+                    if (row["status"] != "running"
+                            or row["execution_session_id"] != session_id
+                            or row["execution_token"] != execution_token):
+                        return "owner_mismatch", None
+                    if str(row["lease_expires_at"] or "") <= now:
+                        return "lease_expired", None
+                    connection.execute(
+                        "UPDATE automatic_tasks SET lease_expires_at=?,updated_at=? WHERE id=?",
+                        (lease_expires_at, now, task_id),
+                    )
+                    renewed = connection.execute(
+                        "SELECT * FROM automatic_tasks WHERE id=?", (task_id,),
+                    ).fetchone()
+            return "renewed", None if renewed is None else dict(renewed)
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"续期自动任务失败: {exc}") from exc
+
+    def reset_automatic_task(
+        self, task_id: str, username: str, source_ip: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        now = utc_now()
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute(
+                        "SELECT title,status FROM automatic_tasks WHERE id=?", (task_id,),
+                    ).fetchone()
+                    if row is None:
+                        return "missing", None
+                    connection.execute(
+                        """UPDATE automatic_tasks SET status='pending',execution_session_id=NULL,
+                               execution_token=NULL,lease_expires_at=NULL,result_summary=NULL,
+                               error_summary=NULL,updated_at=?,started_at=NULL,finished_at=NULL
+                           WHERE id=?""",
+                        (now, task_id),
+                    )
+                    self.insert_audit(
+                        connection, source_ip, "management.automatic_task.reset", "success",
+                        {"task_id": task_id, "title": row["title"], "requested_by": username},
+                    )
+                    reset = connection.execute(
+                        "SELECT * FROM automatic_tasks WHERE id=?", (task_id,),
+                    ).fetchone()
+            return "reset", None if reset is None else dict(reset)
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"重置自动任务失败: {exc}") from exc
 
     @staticmethod
     def _video_spec(workflow_json: str) -> dict[str, Any]:

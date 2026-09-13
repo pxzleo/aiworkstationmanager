@@ -19,9 +19,77 @@ SHARED_INPUT_RESOLVER = SKILL / "scripts" / "resolve_shared_input.py"
 BASELINE = SKILL / "assets" / "h3-ref2v-8step-api.json"
 FOUR_STEP_BASELINE = SKILL / "assets" / "h3-ref2v-4step-api.json"
 PLUGIN = ROOT / "integrations" / "opencode" / "plugins" / "axis-video.ts"
+AUTOMATIC_TASK_PLUGIN = ROOT / "integrations" / "opencode" / "plugins" / "axis-automatic-tasks.ts"
+AUTOMATIC_TASK_SKILL = ROOT / "integrations" / "opencode" / "skills" / "axis-automatic-tasks" / "SKILL.md"
+AUTOMATIC_TASK_INSTALLER = ROOT / "integrations" / "opencode" / "Install-AxisAutomaticTasks.ps1"
 
 
 class H3WorkflowBuilderTests(unittest.TestCase):
+    def test_automatic_task_skill_claims_finishes_and_repeats_serially(self) -> None:
+        plugin = AUTOMATIC_TASK_PLUGIN.read_text(encoding="utf-8")
+        skill = AUTOMATIC_TASK_SKILL.read_text(encoding="utf-8")
+        installer = AUTOMATIC_TASK_INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("axis_automatic_task_claim", plugin)
+        self.assertIn("axis_automatic_task_finish", plugin)
+        self.assertIn("axis_automatic_task_heartbeat", plugin)
+        self.assertIn("execution_token", plugin)
+        self.assertIn("context.sessionID", plugin)
+        self.assertIn("/api/v1/automatic-tasks/claim", plugin)
+        self.assertIn("直到队列为空", skill)
+        self.assertIn("不得并行领取或执行下一项", skill)
+        self.assertIn("回写完成状态后再调用", skill)
+        self.assertIn("每分钟在后台自动续期", skill)
+        self.assertIn("failed", skill)
+        self.assertIn("axis-automatic-tasks.ts", installer)
+        self.assertIn("skills\\axis-automatic-tasks", installer)
+
+    def test_automatic_task_plugin_heartbeats_during_a_long_tool(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            runner = Path(directory) / "automatic-heartbeat.ts"
+            task_id = "a" * 32
+            runner.write_text(
+                f'''import {{ AxisAutomaticTasksPlugin }} from {json.dumps(AUTOMATIC_TASK_PLUGIN.as_uri())}
+const requests: string[] = []
+globalThis.fetch = async (url) => {{
+  const path = String(url)
+  requests.push(path)
+  if (path.endsWith("/claim")) return new Response(JSON.stringify({{task: {{id: {json.dumps(task_id)}, execution_token: "token-a"}}}}), {{status: 200}})
+  return new Response(JSON.stringify({{task: {{id: {json.dumps(task_id)}}}}}), {{status: 200}})
+}}
+const hooks = await AxisAutomaticTasksPlugin({{}} as never, {{heartbeatIntervalMs: 10}})
+const context = {{sessionID: "session-a"}} as never
+await hooks.tool?.axis_automatic_task_claim.execute({{}}, context)
+await Bun.sleep(45)
+const beforeFinish = requests.filter((path) => path.endsWith("/heartbeat")).length
+if (beforeFinish < 2) throw new Error(`background heartbeat count was ${{beforeFinish}}`)
+await hooks.tool?.axis_automatic_task_finish.execute(
+  {{task_id: {json.dumps(task_id)}, execution_token: "token-a", status: "succeeded", summary: "done"}},
+  context,
+)
+await Bun.sleep(30)
+const afterFinish = requests.filter((path) => path.endsWith("/heartbeat")).length
+if (afterFinish !== beforeFinish) throw new Error("heartbeat continued after finish")
+await hooks.tool?.axis_automatic_task_claim.execute({{}}, {{sessionID: "session-b"}} as never)
+await Bun.sleep(25)
+await hooks.event?.({{event: {{type: "session.idle", properties: {{sessionID: "session-b"}}}} as never}})
+const beforeIdleWait = requests.filter((path) => path.endsWith("/heartbeat")).length
+await Bun.sleep(30)
+const afterIdleWait = requests.filter((path) => path.endsWith("/heartbeat")).length
+if (afterIdleWait !== beforeIdleWait) throw new Error("heartbeat continued after session.idle")
+await hooks.dispose?.()
+''',
+                encoding="utf-8",
+            )
+            bun = ["bun"] if os.name != "nt" else [
+                "powershell", "-NoProfile", "-File",
+                str(Path(os.environ["APPDATA"]) / "npm" / "bun.ps1"),
+            ]
+            result = subprocess.run(
+                [*bun, str(runner)], cwd=ROOT,
+                check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     @staticmethod
     def sha256(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()

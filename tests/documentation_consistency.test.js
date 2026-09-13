@@ -73,7 +73,10 @@ test('release contains runtime language assets and both documentation languages'
   assert.ok(read('DEVELOPMENT.en.md').includes(`schema is ${schema}`));
   for (const file of [
     'integrations\\opencode\\Install-AxisVideo.ps1',
+    'integrations\\opencode\\Install-AxisAutomaticTasks.ps1',
     'integrations\\opencode\\plugins\\axis-video.ts',
+    'integrations\\opencode\\plugins\\axis-automatic-tasks.ts',
+    'integrations\\opencode\\skills\\axis-automatic-tasks\\SKILL.md',
     'integrations\\opencode\\skills\\axis-video\\SKILL.md',
     'integrations\\opencode\\skills\\h3-ref2v-video-pipeline\\SKILL.md',
     'integrations\\opencode\\skills\\h3-ref2v-video-pipeline\\assets\\h3-ref2v-4step-api.json',

@@ -8,7 +8,7 @@
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
   <script src="theme.js?v=20260828-1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260913-7">
+  <link rel="stylesheet" href="styles.css?v=20260913-8">
 </head>
 <body class="auth-pending">
   <svg class="svg-sprite" aria-hidden="true">
@@ -52,6 +52,7 @@
         <button class="nav-item active" data-page="overview"><svg><use href="#i-grid"/></svg><span>总览</span></button>
         <button class="nav-item" data-page="scenes"><svg><use href="#i-layers"/></svg><span>工作场景</span><b id="sceneNavCount">0</b></button>
         <button class="nav-item" data-page="video-jobs"><svg><use href="#i-pulse"/></svg><span>视频任务</span><b id="videoJobNavCount">0</b></button>
+        <button class="nav-item" data-page="automatic-tasks"><svg><use href="#i-check"/></svg><span>自动任务</span><b id="automaticTaskNavCount">0</b></button>
         <button class="nav-item" data-page="files"><svg><use href="#i-file"/></svg><span>文件服务</span></button>
         <button class="nav-item" data-page="environments"><svg><use href="#i-box"/></svg><span>已登记服务</span></button>
         <button class="nav-item" data-page="monitor"><svg><use href="#i-pulse"/></svg><span>资源监控</span></button>
@@ -153,6 +154,12 @@
           <div class="page-heading"><div><p class="eyebrow">RTX 4090 串行调度</p><h1>视频任务</h1><p>任务仅由本机 OpenCode 提交；这里显示生成阶段、输出和恢复结果，并允许取消。</p></div><div class="heading-actions"><span class="status-label partial" id="videoQueuedSegments" data-i18n-skip>等待处理：0 段</span><button class="button secondary" id="refreshVideoJobsButton">刷新任务</button></div></div>
           <div class="status-banner" id="videoJobNotice">AXIS 会等待开发服务空闲后切换到生成场景；批次逐段处理，完成后自动恢复原场景并通知 OpenCode。</div>
           <section class="operation-list video-job-list" id="videoJobList" aria-live="polite"><p class="empty-state">尚无视频任务。</p></section>
+        </section>
+
+        <section class="page" id="page-automatic-tasks" data-title="自动任务">
+          <div class="page-heading"><div><p class="eyebrow">OpenCode 串行队列</p><h1>自动任务</h1><p>在这里准备任务内容；通过 OpenCode 的自动任务 Skill 启动后，将按创建顺序逐项执行。</p></div><div class="heading-actions"><span class="status-label partial" id="automaticTaskQueueStatus" data-i18n-skip>未执行：0 项</span><button class="button secondary" id="refreshAutomaticTasksButton" type="button">刷新任务</button><button class="button primary" id="addAutomaticTaskButton" type="button"><span>＋</span>新增任务</button></div></div>
+          <div class="status-banner">任务标题会根据内容自动生成。执行中的任务不能编辑或删除；单项失败会记录原因并继续下一项。</div>
+          <section class="operation-list automatic-task-list" id="automaticTaskList" aria-live="polite"><p class="empty-state">尚无自动任务。</p></section>
         </section>
 
         <section class="page" id="page-files" data-title="文件服务">
@@ -276,6 +283,16 @@
       <div class="dialog-actions"><button class="button secondary" type="button" data-close="serviceDialog">取消</button><button class="button primary" type="submit">保存服务</button></div>
     </form>
   </dialog>
+  <dialog class="control-dialog editor-dialog" id="automaticTaskDialog">
+    <form id="automaticTaskForm">
+      <input type="hidden" id="automaticTaskId">
+      <div><p class="eyebrow">OpenCode 自动任务</p><h2 id="automaticTaskDialogTitle">新增任务</h2></div>
+      <label>任务内容<textarea id="automaticTaskContent" maxlength="20000" required placeholder="输入希望 OpenCode 完成的完整任务内容"></textarea></label>
+      <p class="dialog-note">保存后自动生成摘要标题；编辑已完成或失败的任务会将其重新设为未执行。</p>
+      <p class="auth-error" id="automaticTaskFormError" role="alert"></p>
+      <div class="dialog-actions"><button class="button secondary" type="button" data-close="automaticTaskDialog">取消</button><button class="button primary" type="submit">保存任务</button></div>
+    </form>
+  </dialog>
   <dialog class="control-dialog media-dialog" id="mediaDialog">
     <div class="media-dialog-shell">
       <header><div><p class="eyebrow">文件服务</p><h2 id="mediaTitle" data-i18n-skip>媒体播放</h2></div><button class="dialog-close" id="closeMediaButton" type="button" aria-label="关闭"><svg><use href="#i-x"/></svg></button></header>
@@ -336,10 +353,10 @@
       <div class="dialog-actions"><button class="button secondary" id="cancelSceneSwitchButton" type="button">终止切换并返回</button><button class="button primary" id="closeSceneProgressButton" type="button" hidden>返回工作场景</button></div>
     </section>
   </dialog>
-  <script src="i18n.js?v=20260913-6"></script>
+  <script src="i18n.js?v=20260913-7"></script>
   <script src="request-guard.js?v=20260827-5"></script>
   <script src="gpu-layout.js?v=20260828-1"></script>
   <script src="monitor-chart.js?v=20260828-6"></script>
-  <script src="app.js?v=20260913-7"></script>
+  <script src="app.js?v=20260913-8"></script>
 </body>
 </html>

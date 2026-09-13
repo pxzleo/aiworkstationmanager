@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -880,6 +882,193 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(traversal.status_code, 400)
         self.assertFalse((self.settings.file_service_root.parent / "outside.bin").exists())
+
+    def test_automatic_tasks_crud_and_opencode_serial_execution(self) -> None:
+        self.assertEqual(self.client.get("/api/v1/automatic-tasks").status_code, 401)
+        setup = self.client.post(
+            "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+        )
+        csrf = setup.json()["csrf_token"]
+        headers = {"X-CSRF-Token": csrf}
+
+        first = self.client.post(
+            "/api/v1/automatic-tasks",
+            json={"content": "# 检查工作站健康状态。\n输出异常服务。"},
+            headers=headers,
+        )
+        second = self.client.post(
+            "/api/v1/automatic-tasks",
+            json={"content": "整理共享目录中的视频文件并报告结果"},
+            headers=headers,
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(first.json()["task"]["title"], "检查工作站健康状态。")
+        self.assertEqual(second.status_code, 201, second.text)
+        first_id = first.json()["task"]["id"]
+        second_id = second.json()["task"]["id"]
+
+        listing = self.client.get("/api/v1/automatic-tasks").json()
+        self.assertEqual(listing["summary"], {"pending": 2, "running": 0, "total": 2})
+        self.assertNotIn("execution_session_id", listing["tasks"][0])
+
+        claimed = self.client.post(
+            "/api/v1/automatic-tasks/claim", json={"session_id": "session-a"}
+        )
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()["task"]["id"], first_id)
+        self.assertEqual(claimed.json()["task"]["status"], "running")
+        first_token = claimed.json()["task"]["execution_token"]
+        self.assertNotIn("execution_token", listing["tasks"][0])
+        busy = self.client.post(
+            "/api/v1/automatic-tasks/claim", json={"session_id": "session-b"},
+            headers={"Accept-Language": "en"},
+        )
+        self.assertEqual(busy.status_code, 409)
+        self.assertEqual(busy.json()["error"]["code"], "automatic_tasks_busy")
+        self.assertEqual(
+            busy.json()["error"]["message"],
+            "Another OpenCode session is running the automatic-task queue.",
+        )
+        self.assertEqual(
+            self.client.put(
+                f"/api/v1/automatic-tasks/{first_id}",
+                json={"content": "不能覆盖运行任务"}, headers=headers,
+            ).status_code,
+            409,
+        )
+        self.assertEqual(
+            self.client.delete(
+                f"/api/v1/automatic-tasks/{first_id}", headers=headers,
+            ).status_code,
+            409,
+        )
+        mismatch = self.client.post(
+            f"/api/v1/automatic-tasks/{first_id}/finish",
+            json={"session_id": "session-b", "execution_token": first_token,
+                  "status": "succeeded", "summary": "错误会话"},
+        )
+        self.assertEqual(mismatch.status_code, 409)
+        finished = self.client.post(
+            f"/api/v1/automatic-tasks/{first_id}/finish",
+            json={"session_id": "session-a", "execution_token": first_token,
+                  "status": "succeeded", "summary": "检查完成"},
+        )
+        self.assertEqual(finished.status_code, 200, finished.text)
+        self.assertEqual(finished.json()["task"]["result_summary"], "检查完成")
+        repeated = self.client.post(
+            f"/api/v1/automatic-tasks/{first_id}/finish",
+            json={"session_id": "session-a", "execution_token": first_token,
+                  "status": "succeeded", "summary": "响应丢失后的重试"},
+        )
+        self.assertEqual(repeated.status_code, 200, repeated.text)
+        self.assertEqual(repeated.json()["task"]["result_summary"], "检查完成")
+
+        next_task = self.client.post(
+            "/api/v1/automatic-tasks/claim", json={"session_id": "session-a"}
+        ).json()["task"]
+        self.assertEqual(next_task["id"], second_id)
+        second_token = next_task["execution_token"]
+        heartbeat = self.client.post(
+            f"/api/v1/automatic-tasks/{second_id}/heartbeat",
+            json={"session_id": "session-a", "execution_token": second_token},
+        )
+        self.assertEqual(heartbeat.status_code, 200, heartbeat.text)
+        self.assertEqual(
+            self.client.post(
+                f"/api/v1/automatic-tasks/{second_id}/finish",
+                json={"session_id": "session-a", "execution_token": second_token,
+                      "status": "failed", "summary": "   "},
+            ).status_code,
+            422,
+        )
+        failed = self.client.post(
+            f"/api/v1/automatic-tasks/{second_id}/finish",
+            json={"session_id": "session-a", "execution_token": second_token,
+                  "status": "failed", "summary": "输入文件不存在"},
+        )
+        self.assertEqual(failed.status_code, 200, failed.text)
+        self.assertEqual(failed.json()["task"]["error_summary"], "输入文件不存在")
+        self.assertIsNone(
+            self.client.post(
+                "/api/v1/automatic-tasks/claim", json={"session_id": "session-a"}
+            ).json()["task"]
+        )
+
+        updated = self.client.put(
+            f"/api/v1/automatic-tasks/{second_id}",
+            json={"content": "重新整理共享目录"}, headers=headers,
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertEqual(updated.json()["task"]["status"], "pending")
+        self.assertIsNone(updated.json()["task"]["error_summary"])
+        deleted = self.client.delete(
+            f"/api/v1/automatic-tasks/{first_id}", headers=headers,
+        )
+        self.assertEqual(deleted.status_code, 204, deleted.text)
+        self.assertEqual(
+            self.client.delete(
+                f"/api/v1/automatic-tasks/{second_id}", headers=headers,
+            ).status_code,
+            204,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/automatic-tasks", json={"content": "   "}, headers=headers,
+            ).status_code,
+            422,
+        )
+
+        expiring = self.client.post(
+            "/api/v1/automatic-tasks", json={"content": "验证租约恢复"}, headers=headers,
+        ).json()["task"]
+        old_claim = self.client.post(
+            "/api/v1/automatic-tasks/claim", json={"session_id": "session-old"},
+        ).json()["task"]
+        old_token = old_claim["execution_token"]
+        with closing(sqlite3.connect(self.settings.database_path)) as connection:
+            connection.execute(
+                "UPDATE automatic_tasks SET lease_expires_at=? WHERE id=?",
+                ("2000-01-01T00:00:00+00:00", expiring["id"]),
+            )
+            connection.commit()
+        reclaimed = self.client.post(
+            "/api/v1/automatic-tasks/claim", json={"session_id": "session-old"},
+        )
+        self.assertEqual(reclaimed.status_code, 200, reclaimed.text)
+        self.assertNotEqual(reclaimed.json()["task"]["execution_token"], old_token)
+        self.assertEqual(reclaimed.json()["task"]["attempts"], 2)
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/automatic-tasks/claim", json={"session_id": "session-new"},
+            ).status_code,
+            409,
+        )
+        late = self.client.post(
+            f"/api/v1/automatic-tasks/{expiring['id']}/finish",
+            json={"session_id": "session-old", "execution_token": old_token,
+                  "status": "succeeded", "summary": "迟到结果"},
+        )
+        self.assertEqual(late.status_code, 409, late.text)
+        reset = self.client.post(
+            f"/api/v1/automatic-tasks/{expiring['id']}/reset", headers=headers,
+        )
+        self.assertEqual(reset.status_code, 200, reset.text)
+        self.assertEqual(reset.json()["task"]["status"], "pending")
+
+        with closing(sqlite3.connect(self.settings.database_path)) as connection:
+            now = datetime.now(timezone.utc).isoformat()
+            connection.executemany(
+                """INSERT INTO automatic_tasks(id,title,content,status,created_at,updated_at)
+                   VALUES (?,?,?,'pending',?,?)""",
+                [(f"{index:032x}", f"分页 {index}", "分页任务", now, now)
+                 for index in range(1, 502)],
+            )
+            connection.commit()
+        page_one = self.client.get("/api/v1/automatic-tasks?limit=500&offset=0").json()
+        page_two = self.client.get("/api/v1/automatic-tasks?limit=500&offset=500").json()
+        self.assertTrue(page_one["has_more"])
+        self.assertEqual(len(page_one["tasks"]), 500)
+        self.assertGreaterEqual(len(page_two["tasks"]), 1)
 
     def test_remember_login_extends_server_session_and_cookie_to_thirty_days(self) -> None:
         setup = self.client.post(

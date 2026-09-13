@@ -5,11 +5,12 @@ import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -144,6 +145,32 @@ class VideoJobBatchPayload(BaseModel):
     callback_directory: str | None = Field(default=None, max_length=2048)
 
 
+class AutomaticTaskPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    content: str = Field(min_length=1, max_length=20_000)
+
+
+class AutomaticTaskClaimPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    session_id: str = Field(min_length=1, max_length=200)
+
+
+class AutomaticTaskFinishPayload(AutomaticTaskClaimPayload):
+    execution_token: str = Field(min_length=1, max_length=200)
+    status: str = Field(pattern=r"^(succeeded|failed)$")
+    summary: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def require_failure_summary(self) -> "AutomaticTaskFinishPayload":
+        if self.status == "failed" and not (self.summary or "").strip():
+            raise ValueError("失败的自动任务必须提供明确原因")
+        return self
+
+
+class AutomaticTaskLeasePayload(AutomaticTaskClaimPayload):
+    execution_token: str = Field(min_length=1, max_length=200)
+
+
 class RequestBodyLimitMiddleware:
     def __init__(self, app: ASGIApp, max_bytes: int) -> None:
         self.app = app
@@ -227,6 +254,19 @@ def _host_services(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {"containers": snapshot.get("containers", snapshot.get("docker", {}).get("containers", [])),
             "listening_ports": snapshot.get("listening_ports", snapshot.get("ports", [])),
             "sampled_at": snapshot.get("sampled_at")}
+
+
+def _public_automatic_task(task: dict[str, Any]) -> dict[str, Any]:
+    item = dict(task)
+    item.pop("execution_session_id", None)
+    item.pop("execution_token", None)
+    return item
+
+
+def _executor_automatic_task(task: dict[str, Any]) -> dict[str, Any]:
+    item = dict(task)
+    item.pop("execution_session_id", None)
+    return item
 
 
 def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
@@ -694,6 +734,140 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     async def operations(limit: int = Query(default=100, ge=1, le=500),
                          _: AuthenticatedSession = Depends(require_session)) -> dict[str, Any]:
         return {"operations": resolved_database.list_operations(limit), "limit": limit}
+
+    @app.get("/api/v1/automatic-tasks")
+    async def automatic_tasks(
+        limit: int = Query(default=500, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+        _: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, Any]:
+        tasks = resolved_database.list_automatic_tasks(limit + 1, offset)
+        return {
+            "tasks": [
+                _public_automatic_task(task)
+                for task in tasks[:limit]
+            ],
+            "summary": resolved_database.automatic_task_summary(),
+            "limit": limit,
+            "offset": offset,
+            "has_more": len(tasks) > limit,
+        }
+
+    @app.post("/api/v1/automatic-tasks", status_code=201)
+    async def create_automatic_task(
+        payload: AutomaticTaskPayload, request: Request,
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        task = resolved_database.create_automatic_task(
+            uuid4().hex, payload.content, session.username, _client_ip(request),
+        )
+        return {"task": _public_automatic_task(task)}
+
+    @app.put("/api/v1/automatic-tasks/{task_id}")
+    async def update_automatic_task(
+        task_id: str, payload: AutomaticTaskPayload, request: Request,
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        if re.fullmatch(r"[0-9a-f]{32}", task_id) is None:
+            raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
+        result, task = resolved_database.update_automatic_task(
+            task_id, payload.content, session.username, _client_ip(request),
+        )
+        if result == "missing":
+            raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
+        if result == "running":
+            raise HTTPException(409, {"error_type": "automatic_task_running", "message": "执行中的自动任务不能编辑"})
+        if task is None:
+            raise DatabaseError("更新自动任务后无法读回记录")
+        return {"task": _public_automatic_task(task)}
+
+    @app.delete("/api/v1/automatic-tasks/{task_id}", status_code=204)
+    async def delete_automatic_task(
+        task_id: str, request: Request,
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> Response:
+        if re.fullmatch(r"[0-9a-f]{32}", task_id) is None:
+            raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
+        result = resolved_database.delete_automatic_task(
+            task_id, session.username, _client_ip(request),
+        )
+        if result == "missing":
+            raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
+        if result == "running":
+            raise HTTPException(409, {"error_type": "automatic_task_running", "message": "执行中的自动任务不能删除"})
+        return Response(status_code=204)
+
+    @app.post("/api/v1/automatic-tasks/{task_id}/reset")
+    async def reset_automatic_task(
+        task_id: str, request: Request,
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        if re.fullmatch(r"[0-9a-f]{32}", task_id) is None:
+            raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
+        result, task = resolved_database.reset_automatic_task(
+            task_id, session.username, _client_ip(request),
+        )
+        if result == "missing":
+            raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
+        if task is None:
+            raise DatabaseError("重置自动任务后无法读回记录")
+        return {"task": _public_automatic_task(task)}
+
+    @app.post("/api/v1/automatic-tasks/claim")
+    async def claim_automatic_task(
+        payload: AutomaticTaskClaimPayload, request: Request,
+    ) -> dict[str, Any]:
+        if not is_loopback(_client_ip(request)):
+            raise HTTPException(403, {"error_type": "loopback_required", "message": "自动任务只允许本机 OpenCode 执行"})
+        result, task = resolved_database.claim_automatic_task(payload.session_id)
+        if result == "busy":
+            raise HTTPException(409, {"error_type": "automatic_tasks_busy", "message": "另一 OpenCode 会话正在执行自动任务"})
+        return {"task": None if task is None else _executor_automatic_task(task)}
+
+    @app.post("/api/v1/automatic-tasks/{task_id}/heartbeat")
+    async def heartbeat_automatic_task(
+        task_id: str, payload: AutomaticTaskLeasePayload, request: Request,
+    ) -> dict[str, Any]:
+        if not is_loopback(_client_ip(request)):
+            raise HTTPException(403, {"error_type": "loopback_required", "message": "自动任务只允许本机 OpenCode 执行"})
+        if re.fullmatch(r"[0-9a-f]{32}", task_id) is None:
+            raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
+        result, task = resolved_database.heartbeat_automatic_task(
+            task_id, payload.session_id, payload.execution_token,
+        )
+        if result == "missing":
+            raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
+        if result == "owner_mismatch":
+            raise HTTPException(409, {"error_type": "automatic_task_owner_mismatch", "message": "自动任务不属于当前 OpenCode 会话"})
+        if result == "lease_expired":
+            raise HTTPException(409, {"error_type": "automatic_task_lease_expired", "message": "自动任务执行租约已过期"})
+        if task is None:
+            raise DatabaseError("续期自动任务后无法读回记录")
+        return {"task": _executor_automatic_task(task)}
+
+    @app.post("/api/v1/automatic-tasks/{task_id}/finish")
+    async def finish_automatic_task(
+        task_id: str, payload: AutomaticTaskFinishPayload, request: Request,
+    ) -> dict[str, Any]:
+        if not is_loopback(_client_ip(request)):
+            raise HTTPException(403, {"error_type": "loopback_required", "message": "自动任务只允许本机 OpenCode 执行"})
+        if re.fullmatch(r"[0-9a-f]{32}", task_id) is None:
+            raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
+        result, task = resolved_database.finish_automatic_task(
+            task_id, payload.session_id, payload.execution_token,
+            payload.status, payload.summary,
+        )
+        if result == "missing":
+            raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
+        if result == "already_finished":
+            raise HTTPException(409, {"error_type": "automatic_task_finished", "message": "自动任务已经结束"})
+        if result == "owner_mismatch":
+            raise HTTPException(409, {"error_type": "automatic_task_owner_mismatch", "message": "自动任务不属于当前 OpenCode 会话"})
+        if result == "lease_expired":
+            raise HTTPException(409, {"error_type": "automatic_task_lease_expired", "message": "自动任务执行租约已过期"})
+        if task is None:
+            raise DatabaseError("完成自动任务后无法读回记录")
+        return {"task": _public_automatic_task(task)}
 
     @app.post("/api/v1/video-jobs", status_code=202)
     async def submit_video_job(

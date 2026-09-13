@@ -93,6 +93,12 @@ Install the OpenCode integration, then restart OpenCode. The installer deploys t
 
 In OpenCode, enter `使用场景切换技能生成视频` (use the scene-switching skill to generate a video), optionally naming the generation scene in the same request. OpenCode prepares the ComfyUI API workflow and calls `axis_video_submit`; without a name, AXIS uses the default generation scene. The plugin obtains the current session ID and directory automatically, while the AXIS Video Jobs page shows progress, restores the original scene, and returns the final result to the original session.
 
+Automatic tasks use a separate OpenCode integration. Run the installer below and restart OpenCode, add tasks on the AXIS **Automatic Tasks** page, then enter `启动自动任务` (start automatic tasks). OpenCode runs every pending item serially in creation order. The execution lease is renewed periodically, recovers after an unexpected exit, and a running task can also be requeued from the page.
+
+```powershell
+.\integrations\opencode\Install-AxisAutomaticTasks.ps1
+```
+
 On a private computer or phone, select **Sign in automatically on this device** to stay signed in for 30 days. AXIS never stores the password in the browser; signing out or changing the password still revokes the session immediately.
 
 ## Common configuration

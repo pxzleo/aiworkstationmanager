@@ -290,9 +290,9 @@ test('scene editor and management log remain wired', () => {
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260913-7'));
-  assert.ok(html.includes('i18n.js?v=20260913-6'));
-  assert.ok(html.includes('app.js?v=20260913-7'));
+  assert.ok(html.includes('styles.css?v=20260913-8'));
+  assert.ok(html.includes('i18n.js?v=20260913-7'));
+  assert.ok(html.includes('app.js?v=20260913-8'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -342,6 +342,23 @@ test('video job page monitors every scheduler stage and exposes cancellation', (
   for (const stage of ['等待 OpenCode 当前响应结束', '等待 NInfer 空闲', '切换生成场景', '检查 ComfyUI', '提交工作流', 'ComfyUI 生成中', '收集输出', '恢复原场景', '回调 OpenCode']) {
     assert.ok(js.includes(stage), `missing video stage ${stage}`);
   }
+});
+
+test('automatic task page manages a serial OpenCode queue', () => {
+  assert.ok(html.includes('data-page="automatic-tasks"'));
+  assert.ok(html.includes('id="automaticTaskList"'));
+  assert.ok(html.includes('id="automaticTaskDialog"'));
+  assert.ok(html.includes('id="automaticTaskContent"'));
+  assert.ok(js.includes('`/automatic-tasks?limit=200&offset=${offset}`'));
+  assert.ok(js.includes('while (result.has_more)'));
+  assert.ok(js.includes("method: id ? 'PUT' : 'POST'"));
+  assert.ok(js.includes("api(`/automatic-tasks/${task.id}`, { method: 'DELETE' })"));
+  assert.ok(js.includes("api(`/automatic-tasks/${task.id}/reset`, { method: 'POST' })"));
+  assert.ok(js.includes("edit.disabled = runningTask"));
+  assert.ok(js.includes("remove.disabled = runningTask"));
+  assert.ok(css.includes('.automatic-task-row'));
+  assert.ok(css.includes('.automatic-task-running'));
+  assert.ok(i18n.includes("'自动任务': 'Automatic Tasks'"));
 });
 
 test('file service page browses folders, downloads files and plays media', () => {
@@ -488,9 +505,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260913-7'));
-  assert.ok(html.includes('i18n.js?v=20260913-6'));
-  assert.ok(html.includes('app.js?v=20260913-7'));
+  assert.ok(html.includes('styles.css?v=20260913-8'));
+  assert.ok(html.includes('i18n.js?v=20260913-7'));
+  assert.ok(html.includes('app.js?v=20260913-8'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

@@ -93,6 +93,12 @@ D:\AIWork\example\manage.ps1 status
 
 之后在 OpenCode 中输入“使用场景切换技能生成视频”，也可以在同一句中指定生成场景名称。OpenCode 会准备 ComfyUI API workflow 并调用 `axis_video_submit`；未指定名称时使用默认生成场景。插件会自动取得当前会话 ID 和工作目录，任务进度在 AXIS 的“视频任务”页面查看，完成后恢复原场景并把结果送回原会话。
 
+自动任务使用独立的 OpenCode 集成。运行下列脚本并重启 OpenCode 后，在 AXIS“自动任务”页面新增任务，再输入“启动自动任务”；OpenCode 会按创建时间串行执行全部未执行任务。执行租约会定期续期，意外退出后可自动恢复，页面也可把执行中任务重新排队。
+
+```powershell
+.\integrations\opencode\Install-AxisAutomaticTasks.ps1
+```
+
 在私人电脑或手机登录时，可以勾选“在该电脑自动登录”保持登录 30 天。AXIS 不会在浏览器中保存密码；主动退出或修改密码仍会立即撤销会话。
 
 ## 常用配置
