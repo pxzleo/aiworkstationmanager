@@ -169,6 +169,7 @@ async function refreshUsers() { if (document.hidden) return; try { const result 
 function fileContentUrl(path, download = false) { const params = new URLSearchParams({ path }); if (download) params.set('download', 'true'); return `${API_PREFIX}/file-service/content?${params}`; }
 function formatFileSize(value) { if (!Number.isFinite(value)) return '—'; if (value < 1024) return `${value} B`; const units = ['KB', 'MB', 'GB', 'TB']; let size = value; let unit = -1; do { size /= 1024; unit += 1; } while (size >= 1024 && unit < units.length - 1); return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unit]}`; }
 function fileLabel(entry) { if (entry.type === 'directory') return '目录'; if (entry.playable) return entry.media_type?.startsWith('audio/') ? '音频' : '视频'; return '文件'; }
+function fileActionLabel(entry) { return `${ui(entry.type === 'directory' ? '打开' : entry.playable ? '播放' : '下载')} ${entry.name}`; }
 function downloadFile(entry) { const link = document.createElement('a'); link.href = fileContentUrl(entry.path, true); link.download = entry.name; document.body.append(link); link.click(); link.remove(); }
 function closeMedia() { const stage = byId('mediaStage'); stage.querySelectorAll('audio, video').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); if (byId('mediaDialog').open) byId('mediaDialog').close(); }
 function requestMediaFullscreen(player) { try { if (player.requestFullscreen) { player.requestFullscreen().catch((error) => showToast(`${ui('无法进入全屏')}：${error.message}`)); } else if (player.webkitEnterFullscreen) { player.webkitEnterFullscreen(); } } catch (error) { showToast(`${ui('无法进入全屏')}：${error.message}`); } }
@@ -185,7 +186,7 @@ function observeFileThumbnail(video, source) {
   fileThumbnailObserver.observe(video);
 }
 function fileThumbnail(entry) {
-  const preview = element('button', 'file-thumbnail'); preview.type = 'button'; preview.setAttribute('aria-label', `${ui(entry.type === 'directory' ? '打开' : entry.playable ? '播放' : '下载')} ${entry.name}`); preview.addEventListener('click', () => openFileEntry(entry, entry.playable));
+  const preview = element('button', 'file-thumbnail'); preview.type = 'button'; preview.setAttribute('aria-label', fileActionLabel(entry)); preview.addEventListener('click', () => openFileEntry(entry, entry.playable));
   if (entry.media_type?.startsWith('image/')) {
     const image = document.createElement('img'); image.src = fileContentUrl(entry.path); image.alt = ''; image.loading = 'lazy'; image.decoding = 'async'; preview.append(image);
   } else if (entry.media_type?.startsWith('video/')) {
@@ -211,7 +212,7 @@ function renderFileBreadcrumbs() {
 function renderFiles() {
   renderFileBreadcrumbs(); const rows = byId('fileRows'); const browser = byId('fileBrowser'); releaseFileThumbnailVideos(rows); rows.replaceChildren(); browser.classList.toggle('list-view', state.fileView === 'list'); browser.classList.toggle('thumbnail-view', state.fileView === 'thumbnail');
   if (!state.files.length) { rows.append(element('p', 'empty-state', '这个目录是空的。')); return; }
-  state.files.forEach((entry) => { const row = element('article', 'file-row'); const name = element('button', 'file-name'); name.type = 'button'; name.append(icon(entry.type === 'directory' ? 'box' : entry.playable ? 'play' : 'file')); const copy = element('span'); copy.append(userElement('strong', '', entry.name), element('small', '', fileLabel(entry))); name.append(copy); name.addEventListener('click', () => openFileEntry(entry, entry.playable)); const action = entry.playable ? null : element('button', 'file-action', entry.type === 'directory' ? ui('打开') : ui('下载')); if (action) { action.type = 'button'; action.addEventListener('click', () => openFileEntry(entry)); } if (state.fileView === 'thumbnail') row.append(fileThumbnail(entry)); row.append(name, element('span', 'file-size', entry.type === 'directory' ? '—' : formatFileSize(entry.size)), userElement('time', '', formatDate(entry.modified_at, true))); if (action) row.append(action); rows.append(row); });
+  state.files.forEach((entry) => { const row = element('article', 'file-row'); const name = element('button', 'file-name'); name.type = 'button'; name.setAttribute('aria-label', fileActionLabel(entry)); name.append(icon(entry.type === 'directory' ? 'box' : entry.playable ? 'play' : 'file')); const copy = element('span'); copy.append(userElement('strong', '', entry.name), element('small', '', fileLabel(entry))); name.append(copy); name.addEventListener('click', () => openFileEntry(entry, entry.playable)); if (state.fileView === 'thumbnail') row.append(fileThumbnail(entry)); row.append(name, element('span', 'file-size', entry.type === 'directory' ? '—' : formatFileSize(entry.size)), userElement('time', '', formatDate(entry.modified_at, true))); rows.append(row); });
 }
 async function refreshFiles(path = '') {
   if (document.hidden) return; const rows = byId('fileRows'); releaseFileThumbnailVideos(rows); rows.setAttribute('aria-busy', 'true');

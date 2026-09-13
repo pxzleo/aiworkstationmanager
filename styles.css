@@ -314,7 +314,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-breadcrumbs button:hover:not(:disabled) { color: var(--accent); }
 .file-breadcrumbs button.current { color: var(--text); font-weight: 720; cursor: default; }
 .file-browser { border: 1px solid var(--line); background: var(--surface); }
-.file-browser > header, .file-row { display: grid; grid-template-columns: minmax(260px, 1fr) 110px 180px 92px; align-items: center; gap: 16px; padding: 0 18px; }
+.file-browser > header, .file-row { display: grid; grid-template-columns: minmax(260px, 1fr) 110px 180px; align-items: center; gap: 16px; padding: 0 18px; }
 .file-browser > header { min-height: 42px; border-bottom: 1px solid var(--line); color: var(--muted-2); font-size: 10px; font-weight: 760; letter-spacing: .08em; text-transform: uppercase; }
 .file-row { min-height: 66px; border-bottom: 1px solid var(--line); transition: background .16s ease, transform .16s ease; }
 .file-row:last-child { border-bottom: 0; }
@@ -324,12 +324,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-name > span { min-width: 0; display: grid; gap: 4px; }
 .file-name strong { overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .file-name small, .file-size, .file-row time { color: var(--muted); font-size: 11px; }
-.file-action { min-height: 34px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 11px; font-weight: 720; cursor: pointer; transition: border-color .16s ease, color .16s ease, background .16s ease; }
-.file-action:hover { border-color: color-mix(in srgb, var(--accent) 52%, var(--line)); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); }
 .file-browser [aria-busy="true"] { opacity: .56; pointer-events: none; }
 .file-browser.thumbnail-view > header { display: none; }
 .file-browser.thumbnail-view #fileRows { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; padding: 12px; }
-.file-browser.thumbnail-view .file-row { min-width: 0; min-height: 270px; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto auto; align-content: start; gap: 9px 12px; padding: 0 12px 13px; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--surface-2); animation: fileViewReveal .18s ease both; }
+.file-browser.thumbnail-view .file-row { min-width: 0; min-height: 270px; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; align-content: start; gap: 9px 12px; padding: 0 12px 13px; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--surface-2); animation: fileViewReveal .18s ease both; }
 .file-browser.thumbnail-view .file-row:hover { border-color: color-mix(in srgb, var(--accent) 36%, var(--line)); transform: translateY(-2px); }
 .file-thumbnail { position: relative; grid-column: 1 / -1; grid-row: 1; width: calc(100% + 24px); aspect-ratio: 9 / 16; margin-left: -12px; display: grid; place-items: center; overflow: hidden; padding: 0; border: 0; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface-3) 78%, var(--bg)); color: inherit; cursor: pointer; appearance: none; }
 .file-thumbnail:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
@@ -341,7 +339,6 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-browser.thumbnail-view .file-name strong { display: -webkit-box; white-space: normal; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .file-browser.thumbnail-view .file-size { grid-column: 1; grid-row: 3; align-self: center; }
 .file-browser.thumbnail-view .file-row time { display: none; }
-.file-browser.thumbnail-view .file-action { grid-column: 2; grid-row: 3; justify-self: end; }
 @keyframes fileViewReveal { from { opacity: .45; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .media-dialog { width: min(920px, calc(100vw - 32px)); padding: 0; }
 .media-dialog-shell { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: min(680px, calc(100vh - 48px)); }
@@ -365,7 +362,6 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   .file-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; padding: 13px 14px; }
   .file-name { grid-column: 1; grid-row: 1 / span 2; }
   .file-size, .file-row time { display: none; }
-  .file-action { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
   .media-dialog-shell { min-height: min(560px, calc(100vh - 24px)); }
   .media-stage { min-height: 240px; padding: 8px; }
 }

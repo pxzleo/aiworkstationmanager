@@ -290,9 +290,9 @@ test('scene editor and management log remain wired', () => {
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260913-5'));
+  assert.ok(html.includes('styles.css?v=20260913-7'));
   assert.ok(html.includes('i18n.js?v=20260913-6'));
-  assert.ok(html.includes('app.js?v=20260913-6'));
+  assert.ok(html.includes('app.js?v=20260913-7'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -379,8 +379,12 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(js.includes('function requestMediaFullscreen(player)'));
   assert.ok(js.includes('player.requestFullscreen'));
   assert.ok(js.includes('player.webkitEnterFullscreen'));
-  assert.ok(js.includes('const action = entry.playable ? null'));
-  assert.ok(!js.includes("entry.playable ? ui('播放')"));
+  assert.ok(!html.includes('<span>操作</span>'));
+  assert.ok(!js.includes("'file-action'"));
+  assert.ok(!css.includes('.file-action'));
+  assert.ok(js.includes("function fileActionLabel(entry)"));
+  assert.ok(js.includes("name.setAttribute('aria-label', fileActionLabel(entry))"));
+  assert.ok(js.includes("preview.setAttribute('aria-label', fileActionLabel(entry))"));
   assert.ok(js.includes("player.preload = 'metadata'"));
   assert.ok(js.includes("player.removeAttribute('src')"));
   assert.ok(css.includes('.file-browser > header, .file-row'));
@@ -484,9 +488,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260913-5'));
+  assert.ok(html.includes('styles.css?v=20260913-7'));
   assert.ok(html.includes('i18n.js?v=20260913-6'));
-  assert.ok(html.includes('app.js?v=20260913-6'));
+  assert.ok(html.includes('app.js?v=20260913-7'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
