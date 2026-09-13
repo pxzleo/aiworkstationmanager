@@ -1223,6 +1223,81 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(page_one["tasks"]), 500)
         self.assertGreaterEqual(len(page_two["tasks"]), 1)
 
+    def test_automatic_tasks_reorder_changes_serial_claim_order(self) -> None:
+        setup = self.client.post(
+            "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+        )
+        csrf = setup.json()["csrf_token"]
+        headers = {"X-CSRF-Token": csrf}
+        task_ids = [
+            self.client.post(
+                "/api/v1/automatic-tasks",
+                json={"content": f"顺序任务 {index}"},
+                headers=headers,
+            ).json()["task"]["id"]
+            for index in range(1, 4)
+        ]
+        reordered_ids = [task_ids[2], task_ids[0], task_ids[1]]
+
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/automatic-tasks/reorder",
+                json={"previous_task_ids": task_ids, "task_ids": reordered_ids},
+            ).status_code,
+            403,
+        )
+        invalid = self.client.post(
+            "/api/v1/automatic-tasks/reorder",
+            json={"previous_task_ids": task_ids, "task_ids": reordered_ids[:-1]},
+            headers=headers,
+        )
+        self.assertEqual(invalid.status_code, 422, invalid.text)
+        reordered = self.client.post(
+            "/api/v1/automatic-tasks/reorder",
+            json={"previous_task_ids": task_ids, "task_ids": reordered_ids},
+            headers=headers,
+        )
+        self.assertEqual(reordered.status_code, 200, reordered.text)
+        self.assertEqual(reordered.json()["task_ids"], reordered_ids)
+        stale = self.client.post(
+            "/api/v1/automatic-tasks/reorder",
+            json={"previous_task_ids": task_ids, "task_ids": [task_ids[1], task_ids[2], task_ids[0]]},
+            headers=headers,
+        )
+        self.assertEqual(stale.status_code, 409, stale.text)
+        current_ids = reordered_ids
+        added = self.client.post(
+            "/api/v1/automatic-tasks",
+            json={"content": "并发新增的任务"},
+            headers=headers,
+        ).json()["task"]["id"]
+        changed_set = self.client.post(
+            "/api/v1/automatic-tasks/reorder",
+            json={"previous_task_ids": current_ids, "task_ids": current_ids},
+            headers=headers,
+        )
+        self.assertEqual(changed_set.status_code, 409, changed_set.text)
+        self.assertEqual(
+            self.client.delete(
+                f"/api/v1/automatic-tasks/{added}", headers=headers,
+            ).status_code,
+            204,
+        )
+        claimed = self.client.post(
+            "/api/v1/automatic-tasks/claim", json={"session_id": "session-order"}
+        )
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()["task"]["id"], reordered_ids[0])
+        reset = self.client.post(
+            f"/api/v1/automatic-tasks/{reordered_ids[0]}/reset", headers=headers,
+        )
+        self.assertEqual(reset.status_code, 200, reset.text)
+        claimed_after_reset = self.client.post(
+            "/api/v1/automatic-tasks/claim", json={"session_id": "session-order"}
+        )
+        self.assertEqual(claimed_after_reset.status_code, 200, claimed_after_reset.text)
+        self.assertEqual(claimed_after_reset.json()["task"]["id"], reordered_ids[1])
+
     def test_remember_login_extends_server_session_and_cookie_to_thirty_days(self) -> None:
         setup = self.client.post(
             "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}

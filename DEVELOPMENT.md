@@ -164,14 +164,15 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 | --- | --- | --- |
 | GET | `/api/v1/automatic-tasks` | 已登录用户分页查看任务列表和统计；`limit` 范围 `1..500`，`offset` 从 0 开始，响应含 `has_more` |
 | POST | `/api/v1/automatic-tasks` | 已登录管理员使用 CSRF 新增任务，只提交 `content` |
+| POST | `/api/v1/automatic-tasks/reorder` | 已登录管理员使用 CSRF 保存执行顺序；`previous_task_ids` 是页面读取的原顺序，`task_ids` 是新顺序，两者必须完整且不重复地包含全部 `pending` 任务；原顺序已变化时返回冲突 |
 | PUT | `/api/v1/automatic-tasks/{id}` | 已登录管理员使用 CSRF 编辑非运行任务，并重置为 `pending` |
 | DELETE | `/api/v1/automatic-tasks/{id}` | 已登录管理员使用 CSRF 删除非运行任务 |
 | POST | `/api/v1/automatic-tasks/{id}/reset` | 已登录管理员使用 CSRF 把任务人工重新排队，并使旧领取令牌失效 |
-| POST | `/api/v1/automatic-tasks/claim` | 仅限本机 OpenCode，使用当前 `session_id` 原子领取最早的 `pending` 任务 |
+| POST | `/api/v1/automatic-tasks/claim` | 仅限本机 OpenCode，使用当前 `session_id` 按已保存队列顺序原子领取首个 `pending` 任务 |
 | POST | `/api/v1/automatic-tasks/{id}/heartbeat` | 仅限领取任务的本机 OpenCode 会话，使用 `execution_token` 续期 |
 | POST | `/api/v1/automatic-tasks/{id}/finish` | 仅限领取任务的本机 OpenCode 会话，使用 `execution_token` 幂等写入终态；失败时必须提供 `summary` |
 
-页面只要求输入任务内容，标题由首个有效句子自动压缩生成，并自动加载全部分页。`axis-automatic-tasks` Skill 调用插件的领取、续期和完成工具，在当前 OpenCode 会话中严格按创建时间逐项执行；插件领取后每分钟后台续期 30 分钟租约，长时间工具调用期间也持续续期。过期领取在下一次领取时自动回收，旧令牌不能回写。完成一项并回写状态后才领取下一项，单项失败会记录原因并继续。运行中的任务不能从页面编辑或删除，但可人工重新排队；另一 OpenCode 会话不能并发领取。运行 `integrations/opencode/Install-AxisAutomaticTasks.ps1` 可把插件和 Skill 安装到当前用户配置目录，重启 OpenCode 后即可通过“启动自动任务”触发。
+页面只要求输入任务内容，标题由首个有效句子自动压缩生成，并通过不随任务状态变化的创建顺序分页完整加载后在页面按执行顺序展示。未执行任务可通过上移、下移按钮调整顺序；保存时服务端原子核对页面读取的旧顺序和全部 `pending` 任务，发现并发变化时明确拒绝，OpenCode 严格按成功保存的顺序领取。执行中的任务人工重新排队时追加到当前队尾。`axis-automatic-tasks` Skill 调用插件的领取、续期和完成工具；插件领取后每分钟后台续期 30 分钟租约，长时间工具调用期间也持续续期。过期领取在下一次领取时自动回收，旧令牌不能回写。完成一项并回写状态后才领取下一项，单项失败会记录原因并继续。运行中的任务不能从页面编辑或删除，但可人工重新排队；另一 OpenCode 会话不能并发领取。运行 `integrations/opencode/Install-AxisAutomaticTasks.ps1` 可把插件和 Skill 安装到当前用户配置目录，重启 OpenCode 后即可通过“启动自动任务”触发。
 
 ### HTTP 文件服务
 
@@ -280,6 +281,6 @@ WM_VIDEO_JOB_GENERATION_TIMEOUT_SECONDS
 
 ## 数据与并发
 
-默认数据库是 `data/workstation-manager.db`，当前 schema 为 30，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置；schema 23 增加旧版场景用途、持久化 `video_jobs` 状态机和 RTX 4090 `resource_leases`；schema 24 删除视频任务的回调认证字段；schema 25 将旧版 `video_gen` 用途迁移为唯一的 `is_default_generation` 勾选项，并为视频任务保存生成场景及原场景；schema 26 增加显式视频批次 ID、段序号和总段数；schema 27 为每段任务持久化从工作流提取的视频规格，避免任务列表重复解析完整工作流；schema 28 在该规格中补充原视频标题或提示词内容说明并回填已有任务；schema 29 持久化已经成功发布到共享文件服务的相对输出路径；schema 30 增加自动任务队列、执行会话所有权和结果状态。旧客户端更新场景时若未提交详细说明或默认生成场景字段，已有值会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
+默认数据库是 `data/workstation-manager.db`，当前 schema 为 31，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置；schema 23 增加旧版场景用途、持久化 `video_jobs` 状态机和 RTX 4090 `resource_leases`；schema 24 删除视频任务的回调认证字段；schema 25 将旧版 `video_gen` 用途迁移为唯一的 `is_default_generation` 勾选项，并为视频任务保存生成场景及原场景；schema 26 增加显式视频批次 ID、段序号和总段数；schema 27 为每段任务持久化从工作流提取的视频规格，避免任务列表重复解析完整工作流；schema 28 在该规格中补充原视频标题或提示词内容说明并回填已有任务；schema 29 持久化已经成功发布到共享文件服务的相对输出路径；schema 30 增加自动任务队列、执行会话所有权和结果状态；schema 31 增加可持久化的未执行任务顺序。旧客户端更新场景时若未提交详细说明或默认生成场景字段，已有值会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
 
 服务控制面分别保存期望状态和实际观察状态。场景、总览及 GPU 服务摘要只使用实际观察状态；状态或错误变化时才写入 SQLite，连续成功检查不会每 5 秒写盘。资源监控定时采样和健康监控都不会调用服务脚本；显式深度检查、无默认场景的启动校准及失败动作校准才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留 24 小时；内存队列固定只保留最近 15 分钟。

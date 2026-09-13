@@ -6,6 +6,7 @@ const HISTORY_INTERVAL_MS = 12000;
 const SERVICE_INTERVAL_MS = 5000;
 const REQUEST_TIMEOUT_MS = 8000;
 const ACTION_TIMEOUT_MS = 30000;
+const PAGE_STORAGE_KEY = 'axis-active-page';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MONITOR_GPU_COLORS = ['#a78bfa', '#fb923c', '#22c55e', '#f472b6', '#38bdf8', '#eab308'];
 const gpuLayout = window.AxisGpuLayout;
@@ -19,6 +20,7 @@ let sceneProgressExpectedTotal = null;
 let progressCancelLabel = '终止切换并返回';
 let draggedSceneId = null;
 let fileThumbnailObserver = null;
+let automaticTaskOrderSaving = false;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
@@ -93,8 +95,14 @@ async function api(path, options = {}) {
 
 const pages = [...document.querySelectorAll('.page')];
 const navItems = [...document.querySelectorAll('.nav-item[data-page]')];
+function rememberedPage() {
+  try { const page = sessionStorage.getItem(PAGE_STORAGE_KEY); return byId(`page-${page}`) ? page : 'overview'; }
+  catch (error) { console.warn('Unable to restore the active page.', error); return 'overview'; }
+}
 function navigate(page) {
   const next = byId(`page-${page}`); if (!next) return;
+  try { sessionStorage.setItem(PAGE_STORAGE_KEY, page); }
+  catch (error) { console.warn('Unable to remember the active page.', error); }
   state.activePage = page; pages.forEach((item) => item.classList.toggle('active', item === next)); navItems.forEach((item) => item.classList.toggle('active', item.dataset.page === page));
   text('pageTitle', next.dataset.title); closeSidebar(mobileViewport.matches); window.scrollTo({ top: 0, behavior: 'smooth' });
   if (page === 'files') refreshFiles(state.filePath).catch(() => {});
@@ -132,7 +140,7 @@ async function bootstrap() {
   try { const status = await api('/auth/status', { authRequest: true }); if (!status.configured) return showAuth('setup'); if (!status.authenticated) return showAuth('login'); const me = await api('/auth/me', { authRequest: true }); state.csrfToken = me.csrf_token; state.username = me.username; enterApplication(); }
   catch (error) { showAuth('login', error.message); }
 }
-function enterApplication() { document.body.classList.remove('auth-pending'); text('logoutButton', (state.username || '管理员').slice(0, 2).toUpperCase()); clearTimers(); refreshAll(); startPolling('snapshot', refreshSnapshot, SNAPSHOT_INTERVAL_MS); startPolling('history', refreshHistory, HISTORY_INTERVAL_MS); startPolling('services', refreshServicesAndScenes, SERVICE_INTERVAL_MS); startPolling('video-jobs', refreshVideoJobs, 2000); startPolling('automatic-tasks', refreshAutomaticTasks, 2000); startPolling('logs', refreshLogs, SERVICE_INTERVAL_MS); }
+function enterApplication() { navigate(rememberedPage()); document.body.classList.remove('auth-pending'); text('logoutButton', (state.username || '管理员').slice(0, 2).toUpperCase()); clearTimers(); refreshAll(); startPolling('snapshot', refreshSnapshot, SNAPSHOT_INTERVAL_MS); startPolling('history', refreshHistory, HISTORY_INTERVAL_MS); startPolling('services', refreshServicesAndScenes, SERVICE_INTERVAL_MS); startPolling('video-jobs', refreshVideoJobs, 2000); startPolling('automatic-tasks', refreshAutomaticTasks, 2000); startPolling('logs', refreshLogs, SERVICE_INTERVAL_MS); }
 async function logout() { try { await api('/auth/logout', { method: 'POST', authRequest: true }); showAuth('login', '已退出登录。'); } catch (error) { showToast(error.message); } }
 
 async function refreshAll() { await Promise.allSettled([refreshSnapshot(), refreshHistory(), refreshServicesAndScenes(), refreshVideoJobs(), refreshAutomaticTasks(), refreshUsers(), refreshLogs(), refreshSystemInfo(), refreshFiles(state.filePath)]); }
@@ -166,13 +174,14 @@ async function refreshServicesAndScenes() {
 async function refreshLogs() { if (document.hidden) return; const [operationRequest, auditRequest] = await Promise.allSettled([api('/operations?limit=50', { resource: 'operations' }), api('/audit?limit=100', { resource: 'audit' })]); if (operationRequest.status === 'rejected') { if (!(operationRequest.reason instanceof StaleRequestError)) showToast(`操作日志读取失败：${operationRequest.reason.message}`); return; } if (auditRequest.status === 'rejected' && !(auditRequest.reason instanceof StaleRequestError)) showToast(`默认场景记录读取失败：${auditRequest.reason.message}`); const auditEvents = auditRequest.status === 'fulfilled' ? auditRequest.value.events || [] : []; const defaultSceneEvents = auditEvents.filter((event) => ['management.scene.default.set', 'management.scene.default.clear'].includes(event.event)).map(defaultSceneOperation); state.operations = [...(operationRequest.value.operations || []), ...defaultSceneEvents].sort((left, right) => new Date(right.created_at) - new Date(left.created_at)).slice(0, 50); renderOperations(); renderOperationTimeline(); }
 async function refreshVideoJobs() { if (document.hidden) return; try { const result = await api('/video-jobs?limit=100', { resource: 'video-jobs' }); state.videoJobs = result.jobs || []; state.videoQueueSummary = result.queue_summary || { queued_segments: 0 }; renderVideoJobs(); } catch (error) { if (!(error instanceof StaleRequestError)) showToast(`视频任务读取失败：${error.message}`); } }
 async function refreshAutomaticTasks() {
-  if (document.hidden) return;
+  if (document.hidden || automaticTaskOrderSaving) return;
   try {
     const tasks = []; let offset = 0; let result;
     do {
       result = await api(`/automatic-tasks?limit=200&offset=${offset}`, { resource: 'automatic-tasks' });
       tasks.push(...(result.tasks || [])); offset = tasks.length;
     } while (result.has_more);
+    tasks.sort((left, right) => { const rank = (task) => task.status === 'running' ? 0 : task.status === 'pending' ? 1 : 2; const rankDelta = rank(left) - rank(right); if (rankDelta) return rankDelta; if (['running', 'pending'].includes(left.status)) return (left.queue_position ?? Number.MAX_SAFE_INTEGER) - (right.queue_position ?? Number.MAX_SAFE_INTEGER); return String(right.updated_at).localeCompare(String(left.updated_at)) || String(right.id).localeCompare(String(left.id)); });
     state.automaticTasks = tasks; state.automaticTaskSummary = result?.summary || { pending: 0, running: 0, total: 0 }; renderAutomaticTasks();
   } catch (error) { if (!(error instanceof StaleRequestError)) showToast(`${ui('自动任务读取失败')}：${error.message}`); }
 }
@@ -657,6 +666,7 @@ function renderAutomaticTasks() {
   text('automaticTaskNavCount', String(pending));
   text('automaticTaskQueueStatus', window.axisI18n.language === 'zh' ? (running ? `执行中：${running} · 未执行：${pending}` : `未执行：${pending} 项`) : (running ? `${running} running · ${pending} pending` : `${pending} pending`));
   if (!state.automaticTasks.length) { list.append(element('p', 'empty-state', ui('尚无自动任务。'))); return; }
+  const pendingTasks = state.automaticTasks.filter((task) => task.status === 'pending');
   state.automaticTasks.forEach((task) => {
     const runningTask = task.status === 'running'; const failed = task.status === 'failed';
     const row = element('article', `operation-row automatic-task-row${runningTask ? ' automatic-task-running' : ''}${failed ? ' operation-failed' : ''}`);
@@ -666,12 +676,24 @@ function renderAutomaticTasks() {
     const badge = element('span', `status-label ${automaticTaskStatusClass(task.status)}`, automaticTaskStatusLabel(task.status));
     const timing = element('div', 'automatic-task-time'); timing.append(element('small', '', ui(task.finished_at ? '完成时间' : task.started_at ? '开始时间' : '创建时间')), userElement('b', '', formatDate(task.finished_at || task.started_at || task.created_at, true)), element('small', '', ui('执行次数')), userElement('b', '', String(task.attempts || 0)));
     const actions = element('span', 'row-buttons automatic-task-actions');
+    if (task.status === 'pending') { const index = pendingTasks.findIndex((item) => item.id === task.id); const reorder = element('span', 'automatic-task-reorder'); const up = iconButton('上移任务', 'arrow-up'); up.disabled = automaticTaskOrderSaving || index === 0; up.addEventListener('click', () => moveAutomaticTask(task.id, -1)); const down = iconButton('下移任务', 'arrow-down'); down.disabled = automaticTaskOrderSaving || index === pendingTasks.length - 1; down.addEventListener('click', () => moveAutomaticTask(task.id, 1)); reorder.append(up, down); actions.append(reorder); }
     const edit = labeledIconButton(ui('编辑'), 'edit', 'button secondary'); edit.disabled = runningTask; edit.title = runningTask ? ui('执行中的任务不能编辑') : ''; edit.addEventListener('click', () => openAutomaticTaskDialog(task));
     const remove = labeledIconButton(ui('删除'), 'trash', 'button secondary'); remove.disabled = runningTask; remove.title = runningTask ? ui('执行中的任务不能删除') : ''; remove.addEventListener('click', () => deleteAutomaticTask(task));
     actions.append(edit, remove);
     if (runningTask) { const reset = labeledIconButton(ui('重新排队'), 'refresh', 'button secondary'); reset.addEventListener('click', () => resetAutomaticTask(task)); actions.append(reset); }
     row.append(copy, badge, timing, actions); list.append(row);
   });
+}
+async function moveAutomaticTask(taskId, offset) {
+  if (automaticTaskOrderSaving) return;
+  const pending = state.automaticTasks.filter((task) => task.status === 'pending'); const index = pending.findIndex((task) => task.id === taskId); const next = index + offset;
+  if (index < 0 || next < 0 || next >= pending.length) return;
+  const previous = [...state.automaticTasks]; const previousTaskIds = pending.map((task) => task.id); [pending[index], pending[next]] = [pending[next], pending[index]]; let pendingIndex = 0; state.automaticTasks = previous.map((task) => task.status === 'pending' ? pending[pendingIndex++] : task); automaticTaskOrderSaving = true; renderAutomaticTasks();
+  let failed = false;
+  try { await api('/automatic-tasks/reorder', { method: 'POST', resource: 'automatic-tasks', body: { previous_task_ids: previousTaskIds, task_ids: pending.map((task) => task.id) } }); showToast(ui('任务顺序已保存')); }
+  catch (error) { failed = true; state.automaticTasks = previous; showToast(error.message); }
+  finally { automaticTaskOrderSaving = false; renderAutomaticTasks(); }
+  if (failed) await refreshAutomaticTasks();
 }
 function openAutomaticTaskDialog(task = null) { byId('automaticTaskForm').reset(); text('automaticTaskFormError', ''); text('automaticTaskDialogTitle', ui(task ? '编辑任务' : '新增任务')); byId('automaticTaskId').value = task?.id || ''; byId('automaticTaskContent').value = task?.content || ''; byId('automaticTaskDialog').showModal(); byId('automaticTaskContent').focus(); }
 async function saveAutomaticTask(event) {

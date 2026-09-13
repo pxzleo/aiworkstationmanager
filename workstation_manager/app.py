@@ -150,6 +150,12 @@ class AutomaticTaskPayload(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
 
 
+class AutomaticTaskOrderPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_ids: list[str] = Field(max_length=10_000)
+    previous_task_ids: list[str] = Field(max_length=10_000)
+
+
 class AutomaticTaskClaimPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     session_id: str = Field(min_length=1, max_length=200)
@@ -768,6 +774,37 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             uuid4().hex, payload.content, session.username, _client_ip(request),
         )
         return {"task": _public_automatic_task(task)}
+
+    @app.post("/api/v1/automatic-tasks/reorder")
+    async def reorder_automatic_tasks(
+        payload: AutomaticTaskOrderPayload, request: Request,
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        if any(
+            len(task_ids) != len(set(task_ids)) or any(
+                re.fullmatch(r"[0-9a-f]{32}", task_id) is None for task_id in task_ids
+            )
+            for task_ids in (payload.task_ids, payload.previous_task_ids)
+        ) or set(payload.task_ids) != set(payload.previous_task_ids):
+            raise HTTPException(422, {
+                "error_type": "invalid_automatic_task_order",
+                "message": "自动任务顺序必须包含全部未执行任务且不能重复",
+            })
+        result = resolved_database.reorder_automatic_tasks(
+            payload.previous_task_ids, payload.task_ids,
+            session.username, _client_ip(request),
+        )
+        if result == "changed":
+            raise HTTPException(409, {
+                "error_type": "automatic_task_order_changed",
+                "message": "自动任务顺序已变化，请刷新后重试",
+            })
+        if result == "invalid":
+            raise HTTPException(422, {
+                "error_type": "invalid_automatic_task_order",
+                "message": "自动任务顺序必须包含全部未执行任务且不能重复",
+            })
+        return {"task_ids": payload.task_ids}
 
     @app.put("/api/v1/automatic-tasks/{task_id}")
     async def update_automatic_task(

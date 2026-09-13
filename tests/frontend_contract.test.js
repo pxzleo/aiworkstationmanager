@@ -290,9 +290,9 @@ test('scene editor and management log remain wired', () => {
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260913-12'));
-  assert.ok(html.includes('i18n.js?v=20260913-9'));
-  assert.ok(html.includes('app.js?v=20260913-12'));
+  assert.ok(html.includes('styles.css?v=20260913-13'));
+  assert.ok(html.includes('i18n.js?v=20260913-10'));
+  assert.ok(html.includes('app.js?v=20260913-13'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -354,11 +354,24 @@ test('automatic task page manages a serial OpenCode queue', () => {
   assert.ok(js.includes("method: id ? 'PUT' : 'POST'"));
   assert.ok(js.includes("api(`/automatic-tasks/${task.id}`, { method: 'DELETE' })"));
   assert.ok(js.includes("api(`/automatic-tasks/${task.id}/reset`, { method: 'POST' })"));
+  assert.ok(js.includes("api('/automatic-tasks/reorder', { method: 'POST'"));
+  assert.ok(js.includes('previous_task_ids: previousTaskIds'));
+  assert.ok(js.includes("resource: 'automatic-tasks'"));
+  assert.ok(js.includes('automaticTaskOrderSaving'));
+  assert.ok(js.includes("iconButton('上移任务', 'arrow-up')"));
+  assert.ok(js.includes("iconButton('下移任务', 'arrow-down')"));
   assert.ok(js.includes("edit.disabled = runningTask"));
   assert.ok(js.includes("remove.disabled = runningTask"));
   assert.ok(css.includes('.automatic-task-row'));
   assert.ok(css.includes('.automatic-task-running'));
   assert.ok(i18n.includes("'自动任务': 'Automatic Tasks'"));
+});
+
+test('refresh restores the current management page', () => {
+  assert.ok(js.includes("const PAGE_STORAGE_KEY = 'axis-active-page';"));
+  assert.ok(js.includes('sessionStorage.setItem(PAGE_STORAGE_KEY, page)'));
+  assert.ok(js.includes('sessionStorage.getItem(PAGE_STORAGE_KEY)'));
+  assert.ok(js.includes('navigate(rememberedPage())'));
 });
 
 test('file service page browses folders, downloads files and plays media', () => {
@@ -523,9 +536,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260913-12'));
-  assert.ok(html.includes('i18n.js?v=20260913-9'));
-  assert.ok(html.includes('app.js?v=20260913-12'));
+  assert.ok(html.includes('styles.css?v=20260913-13'));
+  assert.ok(html.includes('i18n.js?v=20260913-10'));
+  assert.ok(html.includes('app.js?v=20260913-13'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

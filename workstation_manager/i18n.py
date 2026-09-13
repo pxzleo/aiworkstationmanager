@@ -11,6 +11,8 @@ ENGLISH_ERROR_MESSAGES = {
     "automatic_task_not_found": "The automatic task was not found.",
     "automatic_task_owner_mismatch": "The automatic task is not owned by this OpenCode session.",
     "automatic_task_running": "A running automatic task cannot be changed.",
+    "automatic_task_order_changed": "The task order changed. Refresh and try again.",
+    "invalid_automatic_task_order": "The task order must contain every pending task exactly once.",
     "automatic_tasks_busy": "Another OpenCode session is running the automatic-task queue.",
     "authentication_required": "Authentication is required.",
     "cannot_delete_current_user": "The currently signed-in user cannot be deleted.",

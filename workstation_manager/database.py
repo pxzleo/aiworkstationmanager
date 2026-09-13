@@ -13,7 +13,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 30
+SCHEMA_VERSION = 31
 
 
 class DatabaseError(RuntimeError):
@@ -127,6 +127,7 @@ class Database:
                         28: self._migrate_to_28,
                         29: self._migrate_to_29,
                         30: self._migrate_to_30,
+                        31: self._migrate_to_31,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -757,6 +758,24 @@ class Database:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_automatic_tasks_status_created "
             "ON automatic_tasks(status,created_at,id)"
+        )
+
+    @classmethod
+    def _migrate_to_31(cls, connection: sqlite3.Connection) -> None:
+        cls._ensure_column(connection, "automatic_tasks", "queue_position", "INTEGER")
+        maximum = connection.execute(
+            "SELECT COALESCE(MAX(queue_position),-1) FROM automatic_tasks"
+        ).fetchone()[0]
+        rows = connection.execute(
+            "SELECT id FROM automatic_tasks WHERE queue_position IS NULL ORDER BY created_at,id"
+        ).fetchall()
+        connection.executemany(
+            "UPDATE automatic_tasks SET queue_position=? WHERE id=?",
+            [(position, row["id"]) for position, row in enumerate(rows, start=maximum + 1)],
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_automatic_tasks_status_position "
+            "ON automatic_tasks(status,queue_position,id)"
         )
 
     @classmethod
@@ -1771,8 +1790,9 @@ class Database:
                 with connection:
                     connection.execute(
                         """INSERT INTO automatic_tasks(
-                               id,title,content,status,created_at,updated_at
-                           ) VALUES (?,?,?,'pending',?,?)""",
+                               id,title,content,status,queue_position,created_at,updated_at
+                           ) VALUES (?,?,?,'pending',
+                               (SELECT COALESCE(MAX(queue_position),-1)+1 FROM automatic_tasks),?,?)""",
                         (task_id, title, content, now, now),
                     )
                     self.insert_audit(
@@ -1794,7 +1814,7 @@ class Database:
         try:
             with self.connect() as connection:
                 rows = connection.execute(
-                    "SELECT * FROM automatic_tasks ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+                    "SELECT * FROM automatic_tasks ORDER BY created_at,id LIMIT ? OFFSET ?",
                     (limit, offset),
                 ).fetchall()
             return [dict(row) for row in rows]
@@ -1839,6 +1859,8 @@ class Database:
                         """UPDATE automatic_tasks SET title=?,content=?,status='pending',
                                execution_session_id=NULL,execution_token=NULL,lease_expires_at=NULL,
                                result_summary=NULL,error_summary=NULL,
+                               queue_position=CASE WHEN status='pending' THEN queue_position ELSE
+                                   (SELECT COALESCE(MAX(queue_position),-1)+1 FROM automatic_tasks) END,
                                updated_at=?,started_at=NULL,finished_at=NULL WHERE id=?""",
                         (title, content, now, task_id),
                     )
@@ -1876,6 +1898,41 @@ class Database:
         except sqlite3.Error as exc:
             raise DatabaseError(f"删除自动任务失败: {exc}") from exc
 
+    def reorder_automatic_tasks(
+        self, previous_task_ids: list[str], task_ids: list[str],
+        username: str, source_ip: str,
+    ) -> str:
+        if (len(previous_task_ids) != len(set(previous_task_ids))
+                or len(task_ids) != len(set(task_ids))
+                or set(task_ids) != set(previous_task_ids)):
+            return "invalid"
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    pending = [
+                        row["id"] for row in connection.execute(
+                            """SELECT id FROM automatic_tasks WHERE status='pending'
+                               ORDER BY queue_position,created_at,id"""
+                        ).fetchall()
+                    ]
+                    if previous_task_ids != pending:
+                        return "changed"
+                    if set(task_ids) != set(pending):
+                        return "invalid"
+                    now = utc_now()
+                    connection.executemany(
+                        "UPDATE automatic_tasks SET queue_position=?,updated_at=? WHERE id=?",
+                        [(position, now, task_id) for position, task_id in enumerate(task_ids)],
+                    )
+                    self.insert_audit(
+                        connection, source_ip, "management.automatic_task.reorder", "success",
+                        {"task_ids": task_ids, "requested_by": username},
+                    )
+            return "reordered"
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"保存自动任务顺序失败: {exc}") from exc
+
     def claim_automatic_task(self, session_id: str) -> tuple[str, dict[str, Any] | None]:
         now_value = datetime.now(timezone.utc)
         now = now_value.isoformat()
@@ -1903,7 +1960,7 @@ class Database:
                         )
                     row = connection.execute(
                         "SELECT * FROM automatic_tasks WHERE status='pending' "
-                        "ORDER BY created_at,id LIMIT 1"
+                        "ORDER BY queue_position,created_at,id LIMIT 1"
                     ).fetchone()
                     if row is None:
                         return "empty", None
@@ -2014,7 +2071,10 @@ class Database:
                     connection.execute(
                         """UPDATE automatic_tasks SET status='pending',execution_session_id=NULL,
                                execution_token=NULL,lease_expires_at=NULL,result_summary=NULL,
-                               error_summary=NULL,updated_at=?,started_at=NULL,finished_at=NULL
+                               error_summary=NULL,
+                               queue_position=(SELECT COALESCE(MAX(queue_position),-1)+1
+                                               FROM automatic_tasks),
+                               updated_at=?,started_at=NULL,finished_at=NULL
                            WHERE id=?""",
                         (now, task_id),
                     )
