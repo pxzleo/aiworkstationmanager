@@ -13,7 +13,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 32
 
 
 class DatabaseError(RuntimeError):
@@ -128,6 +128,7 @@ class Database:
                         29: self._migrate_to_29,
                         30: self._migrate_to_30,
                         31: self._migrate_to_31,
+                        32: self._migrate_to_32,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -763,19 +764,29 @@ class Database:
     @classmethod
     def _migrate_to_31(cls, connection: sqlite3.Connection) -> None:
         cls._ensure_column(connection, "automatic_tasks", "queue_position", "INTEGER")
+        cls._repair_automatic_task_queue_positions(connection)
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_automatic_tasks_status_position "
+            "ON automatic_tasks(status,queue_position,id)"
+        )
+
+    @classmethod
+    def _migrate_to_32(cls, connection: sqlite3.Connection) -> None:
+        cls._repair_automatic_task_queue_positions(connection)
+
+    @staticmethod
+    def _repair_automatic_task_queue_positions(connection: sqlite3.Connection) -> None:
         maximum = connection.execute(
             "SELECT COALESCE(MAX(queue_position),-1) FROM automatic_tasks"
         ).fetchone()[0]
         rows = connection.execute(
-            "SELECT id FROM automatic_tasks WHERE queue_position IS NULL ORDER BY created_at,id"
+            """SELECT id FROM automatic_tasks
+               WHERE queue_position IS NULL AND status<>'running'
+               ORDER BY created_at,id"""
         ).fetchall()
         connection.executemany(
             "UPDATE automatic_tasks SET queue_position=? WHERE id=?",
             [(position, row["id"]) for position, row in enumerate(rows, start=maximum + 1)],
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_automatic_tasks_status_position "
-            "ON automatic_tasks(status,queue_position,id)"
         )
 
     @classmethod
@@ -1788,6 +1799,8 @@ class Database:
         try:
             with self.connect() as connection:
                 with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._repair_automatic_task_queue_positions(connection)
                     connection.execute(
                         """INSERT INTO automatic_tasks(
                                id,title,content,status,queue_position,created_at,updated_at
@@ -1855,6 +1868,7 @@ class Database:
                         return "missing", None
                     if existing["status"] == "running":
                         return "running", None
+                    self._repair_automatic_task_queue_positions(connection)
                     connection.execute(
                         """UPDATE automatic_tasks SET title=?,content=?,status='pending',
                                execution_session_id=NULL,execution_token=NULL,lease_expires_at=NULL,
@@ -1913,7 +1927,7 @@ class Database:
                     pending = [
                         row["id"] for row in connection.execute(
                             """SELECT id FROM automatic_tasks WHERE status='pending'
-                               ORDER BY queue_position,created_at,id"""
+                               ORDER BY queue_position IS NULL,queue_position,created_at,id"""
                         ).fetchall()
                     ]
                     if previous_task_ids != pending:
@@ -1960,7 +1974,7 @@ class Database:
                         )
                     row = connection.execute(
                         "SELECT * FROM automatic_tasks WHERE status='pending' "
-                        "ORDER BY queue_position,created_at,id LIMIT 1"
+                        "ORDER BY queue_position IS NULL,queue_position,created_at,id LIMIT 1"
                     ).fetchone()
                     if row is None:
                         return "empty", None
@@ -2068,6 +2082,7 @@ class Database:
                     ).fetchone()
                     if row is None:
                         return "missing", None
+                    self._repair_automatic_task_queue_positions(connection)
                     connection.execute(
                         """UPDATE automatic_tasks SET status='pending',execution_session_id=NULL,
                                execution_token=NULL,lease_expires_at=NULL,result_summary=NULL,

@@ -135,6 +135,113 @@ class FakePortProxySynchronizer:
 
 
 class DatabaseRegistryTests(unittest.TestCase):
+    def test_legacy_null_queue_position_is_claimed_after_positioned_pending_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Database(Path(temporary) / "manager.db")
+            positioned = database.create_automatic_task(
+                "a" * 32, "当前第一项", "admin", "127.0.0.1",
+            )
+            with database.connect() as connection:
+                connection.execute(
+                    """INSERT INTO automatic_tasks(
+                           id,title,content,status,queue_position,created_at,updated_at
+                       ) VALUES (?,?,?,'pending',NULL,?,?)""",
+                    ("b" * 32, "旧进程后写", "旧进程后写",
+                     "2026-09-13T01:00:00+00:00", "2026-09-13T01:00:00+00:00"),
+                )
+                connection.commit()
+
+            result, claimed = database.claim_automatic_task("session-order")
+
+            self.assertEqual(result, "claimed")
+            self.assertIsNotNone(claimed)
+            self.assertEqual(claimed["id"], positioned["id"])
+
+    def test_schema_thirty_two_repairs_queue_positions_written_by_an_old_process(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "manager.db"
+            database = Database(path)
+            with database.connect() as connection:
+                connection.execute(
+                    """INSERT INTO automatic_tasks(
+                           id,title,content,status,queue_position,created_at,updated_at
+                       ) VALUES (?,?,?,'succeeded',0,?,?)""",
+                    ("a" * 32, "已完成", "已完成", "2026-09-13T01:00:00+00:00",
+                     "2026-09-13T01:00:00+00:00"),
+                )
+                connection.execute(
+                    """INSERT INTO automatic_tasks(
+                           id,title,content,status,queue_position,created_at,updated_at
+                       ) VALUES (?,?,?,'pending',NULL,?,?)""",
+                    ("b" * 32, "先执行", "先执行", "2026-09-13T02:00:00+00:00",
+                     "2026-09-13T02:00:00+00:00"),
+                )
+                connection.execute(
+                    """INSERT INTO automatic_tasks(
+                           id,title,content,status,queue_position,created_at,updated_at
+                       ) VALUES (?,?,?,'pending',NULL,?,?)""",
+                    ("c" * 32, "后执行", "后执行", "2026-09-13T03:00:00+00:00",
+                     "2026-09-13T03:00:00+00:00"),
+                )
+                connection.execute(
+                    """INSERT INTO automatic_tasks(
+                           id,title,content,status,queue_position,created_at,updated_at
+                       ) VALUES (?,?,?,'running',NULL,?,?)""",
+                    ("d" * 32, "执行中", "执行中", "2026-09-13T04:00:00+00:00",
+                     "2026-09-13T04:00:00+00:00"),
+                )
+                connection.execute("UPDATE schema_version SET version=31")
+                connection.commit()
+
+            reopened = Database(path)
+            with reopened.connect() as connection:
+                connection.execute(
+                    """INSERT INTO automatic_tasks(
+                           id,title,content,status,queue_position,created_at,updated_at
+                       ) VALUES (?,?,?,'pending',NULL,?,?)""",
+                    ("e" * 32, "旧进程后写", "旧进程后写",
+                     "2026-09-13T05:00:00+00:00", "2026-09-13T05:00:00+00:00"),
+                )
+                connection.commit()
+            created = reopened.create_automatic_task(
+                "f" * 32, "新建任务", "admin", "127.0.0.1",
+            )
+            with reopened.connect() as connection:
+                connection.execute(
+                    """INSERT INTO automatic_tasks(
+                           id,title,content,status,queue_position,created_at,updated_at
+                       ) VALUES (?,?,?,'pending',NULL,?,?)""",
+                    ("g" * 32, "再次由旧进程写入", "再次由旧进程写入",
+                     "2026-09-13T06:00:00+00:00", "2026-09-13T06:00:00+00:00"),
+                )
+                connection.commit()
+            reset_result, reset = reopened.reset_automatic_task(
+                "a" * 32, "admin", "127.0.0.1",
+            )
+            with reopened.connect() as connection:
+                version = connection.execute(
+                    "SELECT version FROM schema_version"
+                ).fetchone()["version"]
+                positions = connection.execute(
+                    """SELECT id,status,queue_position FROM automatic_tasks
+                       ORDER BY queue_position IS NULL,queue_position,created_at,id"""
+                ).fetchall()
+
+            self.assertEqual(SCHEMA_VERSION, 32)
+            self.assertEqual(version, 32)
+            self.assertEqual(
+                [(row["id"], row["queue_position"]) for row in positions],
+                [
+                    ("b" * 32, 1), ("c" * 32, 2), ("e" * 32, 3),
+                    ("f" * 32, 4), ("g" * 32, 5), ("a" * 32, 6),
+                    ("d" * 32, None),
+                ],
+            )
+            self.assertEqual(created["queue_position"], 4)
+            self.assertEqual(reset_result, "reset")
+            self.assertIsNotNone(reset)
+            self.assertEqual(reset["queue_position"], 6)
+
     def test_automatic_task_claim_is_atomic_across_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
@@ -206,7 +313,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 version = connection.execute(
                     "SELECT version FROM schema_version"
                 ).fetchone()["version"]
-            self.assertEqual(version, 31)
+            self.assertEqual(version, 32)
             self.assertIsNone(migrated["total_steps"])
 
             database.update_operation("a" * 32, total_steps=3)
@@ -251,7 +358,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                        WHERE type='index' AND name='idx_scenes_single_default'"""
                 ).fetchone()
 
-            self.assertEqual(version, 31)
+            self.assertEqual(version, 32)
             self.assertEqual(scene["is_default"], 0)
             self.assertEqual(scene["detailed_description"], "")
             self.assertIsNotNone(index)
@@ -292,7 +399,7 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 31)
+            self.assertEqual(SCHEMA_VERSION, 32)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -395,7 +502,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-                self.assertEqual(version, 31)
+                self.assertEqual(version, 32)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -438,7 +545,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 31)
+            self.assertEqual(SCHEMA_VERSION, 32)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -504,7 +611,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 60, bucket_seconds=15, now=now + timedelta(seconds=30)
             )
 
-            self.assertEqual(SCHEMA_VERSION, 31)
+            self.assertEqual(SCHEMA_VERSION, 32)
             self.assertEqual(result["stored_sample_count"], 3)
             self.assertEqual(len(result["samples"]), 2)
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
@@ -554,7 +661,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_gpu_samples WHERE sample_id=1"
                 ).fetchone()
 
-            self.assertEqual(version, 31)
+            self.assertEqual(version, 32)
             self.assertEqual(row["temperature_c"], 62)
             self.assertIsNone(row["power_w"])
             self.assertIsNone(row["graphics_clock_mhz"])
@@ -593,7 +700,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_samples"
                 ).fetchone()
 
-            self.assertEqual(version, 31)
+            self.assertEqual(version, 32)
             self.assertEqual(row["memory_percent"], 50)
             self.assertIsNone(row["memory_used_bytes"])
             self.assertIsNone(row["memory_total_bytes"])
