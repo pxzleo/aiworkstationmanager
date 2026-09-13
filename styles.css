@@ -325,7 +325,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-name strong { overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .file-name small, .file-size, .file-row time { color: var(--muted); font-size: 11px; }
 .file-actions { display: flex; justify-content: flex-end; }
-.file-rename-button { min-height: 34px; padding: 0 10px; }
+.file-rename-button { width: 34px; height: 34px; }
 .file-rename-button svg { width: 14px; height: 14px; }
 .file-browser [aria-busy="true"] { opacity: .56; pointer-events: none; }
 .file-browser.thumbnail-view > header { display: none; }
@@ -337,11 +337,11 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-thumbnail img, .file-thumbnail video { width: 100%; height: 100%; display: block; object-fit: cover; background: #050708; }
 .file-thumbnail video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .file-thumbnail > svg { width: 38px; height: 38px; fill: none; stroke: var(--accent); stroke-width: 1.25; opacity: .8; }
-.file-browser.thumbnail-view .file-name { grid-column: 1 / -1; grid-row: 2; align-items: flex-start; padding: 2px 0 0; }
+.file-browser.thumbnail-view .file-name { grid-column: 1; grid-row: 2; align-items: flex-start; padding: 2px 0 0; }
 .file-browser.thumbnail-view .file-name > svg { display: none; }
 .file-browser.thumbnail-view .file-name strong { display: -webkit-box; white-space: normal; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .file-browser.thumbnail-view .file-size { grid-column: 1; grid-row: 3; align-self: center; }
-.file-browser.thumbnail-view .file-actions { grid-column: 2; grid-row: 3; }
+.file-browser.thumbnail-view .file-actions { grid-column: 2; grid-row: 2; align-self: start; }
 .file-browser.thumbnail-view .file-row time { display: none; }
 @keyframes fileViewReveal { from { opacity: .45; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .media-dialog { width: min(920px, calc(100vw - 32px)); padding: 0; }

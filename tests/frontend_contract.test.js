@@ -290,9 +290,9 @@ test('scene editor and management log remain wired', () => {
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260913-9'));
+  assert.ok(html.includes('styles.css?v=20260913-10'));
   assert.ok(html.includes('i18n.js?v=20260913-8'));
-  assert.ok(html.includes('app.js?v=20260913-9'));
+  assert.ok(html.includes('app.js?v=20260913-10'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -410,6 +410,8 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(js.includes("player.removeAttribute('src')"));
   assert.ok(css.includes('.file-browser > header, .file-row'));
   assert.ok(css.includes('.file-actions'));
+  assert.ok(js.includes("iconButton('更名', 'edit', 'file-rename-button')"));
+  assert.ok(css.includes('.file-browser.thumbnail-view .file-actions { grid-column: 2; grid-row: 2;'));
   assert.ok(i18n.includes("'更名': 'Rename'"));
   assert.ok(css.includes('.file-browser.thumbnail-view #fileRows'));
   assert.ok(css.includes('aspect-ratio: 9 / 16'));
@@ -511,9 +513,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260913-9'));
+  assert.ok(html.includes('styles.css?v=20260913-10'));
   assert.ok(html.includes('i18n.js?v=20260913-8'));
-  assert.ok(html.includes('app.js?v=20260913-9'));
+  assert.ok(html.includes('app.js?v=20260913-10'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
