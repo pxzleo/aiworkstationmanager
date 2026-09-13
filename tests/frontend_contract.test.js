@@ -290,9 +290,9 @@ test('scene editor and management log remain wired', () => {
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260913-11'));
+  assert.ok(html.includes('styles.css?v=20260913-12'));
   assert.ok(html.includes('i18n.js?v=20260913-9'));
-  assert.ok(html.includes('app.js?v=20260913-11'));
+  assert.ok(html.includes('app.js?v=20260913-12'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -416,7 +416,12 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(js.includes("method: 'DELETE'"));
   assert.ok(js.includes("之后可从 Windows 回收站恢复"));
   assert.ok(css.includes('.file-delete-button:hover'));
-  assert.ok(css.includes('.file-browser.thumbnail-view .file-actions { grid-column: 2; grid-row: 2;'));
+  assert.ok(js.includes("const meta = element('span', 'file-card-meta')"));
+  assert.ok(js.includes('meta.append(type, actions)'));
+  assert.ok(css.includes('.file-browser.thumbnail-view .file-card-meta { grid-column: 1; grid-row: 3;'));
+  assert.ok(css.includes('.file-browser.thumbnail-view .file-name strong { display: block; overflow: hidden; white-space: nowrap;'));
+  assert.ok(css.includes('.file-browser.thumbnail-view .file-rename-button, .file-browser.thumbnail-view .file-delete-button { width: 30px; height: 30px; min-height: 30px; }'));
+  assert.ok(css.includes('.file-browser.thumbnail-view .file-size { display: none; }'));
   assert.ok(i18n.includes("'更名': 'Rename'"));
   assert.ok(css.includes('.file-browser.thumbnail-view #fileRows'));
   assert.ok(css.includes('aspect-ratio: 9 / 16'));
@@ -518,9 +523,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260913-11'));
+  assert.ok(html.includes('styles.css?v=20260913-12'));
   assert.ok(html.includes('i18n.js?v=20260913-9'));
-  assert.ok(html.includes('app.js?v=20260913-11'));
+  assert.ok(html.includes('app.js?v=20260913-12'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
