@@ -74,6 +74,24 @@ class FileCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(FileServiceError, "不是文件"):
             self.catalog.file_response("子目录")
 
+    def test_concurrent_same_name_uploads_publish_only_once_and_hide_temporary_files(self) -> None:
+        first_temporary, first_target, first_stream = self.catalog.begin_upload("", "并发.bin")
+        second_temporary, second_target, second_stream = self.catalog.begin_upload("", "并发.bin")
+        first_stream.write(b"first")
+        second_stream.write(b"second")
+        names_while_uploading = [
+            entry["name"] for entry in self.catalog.list_directory()["entries"]
+        ]
+        self.assertNotIn(first_temporary.name, names_while_uploading)
+        self.assertNotIn(second_temporary.name, names_while_uploading)
+
+        self.catalog.complete_upload(first_temporary, first_target, first_stream)
+        with self.assertRaisesRegex(FileServiceError, "同名文件已存在"):
+            self.catalog.complete_upload(second_temporary, second_target, second_stream)
+        self.assertEqual((self.root / "并发.bin").read_bytes(), b"first")
+        self.assertFalse(first_temporary.exists())
+        self.assertFalse(second_temporary.exists())
+
 
 class StandaloneFileServiceTests(unittest.TestCase):
     def setUp(self) -> None:

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import mimetypes
 import os
+import re
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator
@@ -62,6 +64,8 @@ class FileCatalog:
         entries: list[dict[str, Any]] = []
         try:
             for child in directory.iterdir():
+                if re.fullmatch(r"\.axis-upload-[0-9a-f]{32}\.part", child.name):
+                    continue
                 try:
                     resolved = child.resolve(strict=False)
                     resolved.relative_to(self.root)
@@ -144,6 +148,77 @@ class FileCatalog:
             opened_path.relative_to(self.root)
         except ValueError as exc:
             raise FileServiceError("file_path_outside_root", "禁止访问根目录之外的路径", 403) from exc
+
+    def begin_upload(self, relative_directory: str, filename: str) -> tuple[Path, Path, BinaryIO]:
+        if not isinstance(filename, str) or not filename.strip() or "\x00" in filename \
+                or filename in {".", ".."} or "/" in filename or "\\" in filename:
+            raise FileServiceError("invalid_upload_name", "上传文件名无效", 400)
+        directory = self._resolve(relative_directory, expected="directory")
+        target = directory / filename
+        try:
+            target.resolve(strict=False).relative_to(self.root)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise FileServiceError("file_path_outside_root", "禁止上传到根目录之外", 403) from exc
+        if os.path.lexists(target):
+            raise FileServiceError("upload_file_exists", "同名文件已存在，未覆盖原文件", 409)
+        temporary = directory / f".axis-upload-{uuid.uuid4().hex}.part"
+        try:
+            stream = temporary.open("xb")
+            self._verify_open_file(stream)
+        except FileServiceError:
+            if 'stream' in locals():
+                stream.close()
+            temporary.unlink(missing_ok=True)
+            raise
+        except PermissionError as exc:
+            temporary.unlink(missing_ok=True)
+            raise FileServiceError("upload_access_denied", "没有权限写入该目录", 403) from exc
+        except OSError as exc:
+            temporary.unlink(missing_ok=True)
+            raise FileServiceError("upload_open_failed", f"无法创建上传文件: {exc}", 500) from exc
+        return temporary, target, stream
+
+    def complete_upload(self, temporary: Path, target: Path, stream: BinaryIO) -> dict[str, Any]:
+        try:
+            stream.flush()
+            os.fsync(stream.fileno())
+            stream.close()
+            try:
+                target.resolve(strict=False).relative_to(self.root)
+            except ValueError as exc:
+                raise FileServiceError(
+                    "file_path_outside_root", "上传目录在写入期间发生变化", 403,
+                ) from exc
+            if os.path.lexists(target):
+                raise FileServiceError("upload_file_exists", "同名文件已存在，未覆盖原文件", 409)
+            os.link(temporary, target, follow_symlinks=False)
+            temporary.unlink()
+            stat = target.stat()
+        except FileServiceError:
+            if not stream.closed:
+                stream.close()
+            temporary.unlink(missing_ok=True)
+            raise
+        except FileExistsError as exc:
+            temporary.unlink(missing_ok=True)
+            raise FileServiceError("upload_file_exists", "同名文件已存在，未覆盖原文件", 409) from exc
+        except PermissionError as exc:
+            temporary.unlink(missing_ok=True)
+            raise FileServiceError("upload_access_denied", "没有权限完成文件上传", 403) from exc
+        except OSError as exc:
+            temporary.unlink(missing_ok=True)
+            raise FileServiceError("upload_write_failed", f"写入上传文件失败: {exc}", 500) from exc
+        return {
+            "name": target.name,
+            "path": target.relative_to(self.root).as_posix(),
+            "size": stat.st_size,
+        }
+
+    @staticmethod
+    def discard_upload(temporary: Path, stream: BinaryIO) -> None:
+        if not stream.closed:
+            stream.close()
+        temporary.unlink(missing_ok=True)
 
     @staticmethod
     def _parse_range(range_header: str | None, size: int) -> tuple[int, int, bool]:

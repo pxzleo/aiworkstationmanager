@@ -125,7 +125,7 @@ Resource monitoring writes one SQLite sample every 5 seconds by default and reta
 
 LAN mode does not provide HTTPS. Credentials travel over unencrypted HTTP, so use it only on a trusted LAN and never expose it directly to the internet.
 
-The sidebar **File Service** page uses the signed-in session to browse the configured root, enter folders, download ordinary files, and play audio or video inline. The standalone `18765` HTTP API is intentionally unauthenticated for direct access by trusted-LAN players and download tools; never expose that port to the public internet.
+The sidebar **File Service** page uses the signed-in session to browse the configured root, enter folders, upload one or more files to the current directory, download ordinary files, and play audio or video inline. Uploads require authentication and never overwrite an existing name. The standalone `18765` HTTP API remains read-only and intentionally unauthenticated for direct access by trusted-LAN players and download tools; never expose that port to the public internet. When video generation receives only an asset name, it resolves images or videos from `file_service_root/输入/` by default.
 
 ## Start with Windows
 

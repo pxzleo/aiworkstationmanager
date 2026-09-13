@@ -158,7 +158,7 @@
         <section class="page" id="page-files" data-title="文件服务">
           <div class="page-heading file-service-heading">
             <div><p class="eyebrow">HTTP 文件服务 · <span id="fileServicePort">:18765</span></p><h1>共享文件</h1><p id="fileServiceRoot" data-i18n-skip>正在读取文件服务配置。</p></div>
-            <button class="button secondary" id="refreshFilesButton"><svg><use href="#i-refresh"/></svg><span>刷新目录</span></button>
+            <div class="heading-actions"><input id="fileUploadInput" type="file" multiple hidden><button class="button primary" id="uploadFilesButton" type="button"><span>上传文件</span></button><button class="button secondary" id="refreshFilesButton" type="button"><svg><use href="#i-refresh"/></svg><span>刷新目录</span></button></div>
           </div>
           <div class="status-banner file-service-status" id="fileServiceStatus" aria-live="polite">正在连接文件服务。</div>
           <div class="file-toolbar">
@@ -336,10 +336,10 @@
       <div class="dialog-actions"><button class="button secondary" id="cancelSceneSwitchButton" type="button">终止切换并返回</button><button class="button primary" id="closeSceneProgressButton" type="button" hidden>返回工作场景</button></div>
     </section>
   </dialog>
-  <script src="i18n.js?v=20260913-5"></script>
+  <script src="i18n.js?v=20260913-6"></script>
   <script src="request-guard.js?v=20260827-5"></script>
   <script src="gpu-layout.js?v=20260828-1"></script>
   <script src="monitor-chart.js?v=20260828-6"></script>
-  <script src="app.js?v=20260913-5"></script>
+  <script src="app.js?v=20260913-6"></script>
 </body>
 </html>

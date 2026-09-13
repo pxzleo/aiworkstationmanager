@@ -167,8 +167,9 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 | GET | `/api/v1/file-service` | 返回端口、根目录和根目录可用状态 |
 | GET | `/api/v1/file-service/files` | 使用可选 `path` 列出根目录或子目录；`sort_by` 支持 `modified`、`name`、`size`，`sort_order` 支持 `asc`、`desc`，默认按修改时间倒序且目录优先 |
 | GET | `/api/v1/file-service/content` | 使用必填 `path` 流式读取文件；`download=true` 返回附件下载 |
+| POST | `/api/v1/file-service/upload` | 已登录管理员使用 CSRF 把原始请求体上传到可选 `path` 目录；`name` 为必填文件名，同名文件返回冲突且不覆盖 |
 
-路径参数统一使用相对根目录的 `/` 分隔路径并支持 UTF-8 中文名称。服务在解析符号链接和规范化路径后验证目标仍位于根目录内，拒绝任何最终指向根目录之外的路径或链接。文件响应使用磁盘流式发送并支持 HTTP Range 请求，满足大文件下载和音视频拖动播放。页面默认使用缩略图视图，并可切换为列表；缩略图使用 `9:16` 竖图图框并直接预览图片和视频，其中视频使用 `object-fit: contain` 完整显示原始画面，其余类型显示文件类型图标；视口不超过 820px 时固定为两列。缩略图和文件名点击后直接执行对应操作；视频会打开播放器并请求全屏，可播放媒体不显示独立播放按钮。
+路径参数统一使用相对根目录的 `/` 分隔路径并支持 UTF-8 中文名称。服务在解析符号链接和规范化路径后验证目标仍位于根目录内，拒绝任何最终指向根目录之外的路径或链接。文件响应使用磁盘流式发送并支持 HTTP Range 请求，满足大文件下载和音视频拖动播放。上传仅在登录保护的主管理端口开放，绕过通用 64 KiB JSON 请求体缓冲后按 1 MiB 批次流式写入同目录临时文件，并以硬链接原子发布来保证同名不覆盖；独立 18765 服务保持只读。页面默认使用缩略图视图，并可切换为列表；缩略图使用 `9:16` 竖图图框并直接预览图片和视频，其中视频使用 `object-fit: contain` 完整显示原始画面，其余类型显示文件类型图标；视口不超过 820px 时固定为两列。缩略图和文件名点击后直接执行对应操作；视频会打开播放器并请求全屏，可播放媒体不显示独立播放按钮。
 
 提交体只引用 OpenCode 已准备好的资源，不在 AXIS 内创建提示词、参考图、音频或工作流：
 
@@ -192,6 +193,8 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 每个成功视频段还会保留原始输出，并将副本原子发布到 `file_service_root/video-jobs/<任务 ID>/<文件名>`。任务列表为已发布副本返回 `shared_output_path`，页面把原完整输出路径显示为可点击的同源文件服务链接；OpenCode 完成回调返回 `http://127.0.0.1:<file_service_port>/api/v1/files/content?path=...` 直接链接。复制失败或同一任务目标中存在不同内容时，任务明确失败而不覆盖文件；AXIS 重启后会从已收集的原始输出继续幂等发布。
 
 `integrations/opencode/plugins/axis-video.ts` 注册单任务 `axis_video_submit` 和多段 `axis_video_submit_batch` 工具并自动读取当前 `sessionID` 与工作目录，同时在随机 loopback 端口创建无认证回调桥；收到 AXIS 汇总结果后通过 OpenCode 内部客户端继续原会话。取消回调把取消定义为生成终态，明确禁止 OpenCode 自动重新生成、重新提交或继续批次后续片段；只有用户在取消之后提出新的明确生成要求时才允许创建新任务。回调开始前已接受的取消覆盖成功或失败结果；任务进入 `callback_pending` 后不再接受取消，前端同时隐藏取消按钮，形成明确的取消截止点。项目在 `integrations/opencode/skills/` 中同时保留 `axis-video` 调度 Skill 和 `h3-ref2v-video-pipeline` 工作流 Skill，后者包含去敏的 4/8 步基线、API 图构建、直接提交和成片收尾脚本。运行 `integrations/opencode/Install-AxisVideo.ps1` 可把插件及两项 Skill 安装到当前用户的 OpenCode 配置目录，重启 OpenCode 后输入“使用场景切换技能生成视频”即可触发。
+
+当生成请求只给出素材名称而没有下载链接或绝对路径时，两项 Skill 统一调用 `h3-ref2v-video-pipeline/scripts/resolve_shared_input.py`，仅从 `file_service_root/输入/` 解析视频或图片。可传 `--root` 使用非默认根目录，名称可为完整文件名或唯一文件 stem；目录片段、非媒体文件、缺失和多重匹配都会明确失败。`build_api.py --source` 对仅含文件名的值自动执行相同的视频解析。
 
 插件按任务或批次分别记录当前会话的未就绪状态，并通过 `GET /session/{session_id}/handoff_ready/{job_or_batch_id}` 向 AXIS 暴露空闲握手：OpenCode 会话为 `busy`/`retry` 时返回 `425`，触发 `session.idle` 或状态变为 `idle` 后返回 `204`。完成回调或用户普通消息触发的新响应都会重新阻止同一会话的其他待执行任务，避免并发任务绕过握手。AXIS 只有在收到 `204` 后才检查 NInfer 空闲并切换视频场景；握手超时则保持 NInfer 运行并以 `opencode_handoff_timeout` 失败。对没有该路由而返回 `404`/`405` 的旧插件保持兼容。
 

@@ -153,6 +153,9 @@ class RequestBodyLimitMiddleware:
         if scope["type"] != "http" or scope.get("method") not in {"POST", "PUT", "PATCH"}:
             await self.app(scope, receive, send)
             return
+        if scope.get("method") == "POST" and scope.get("path") == "/api/v1/file-service/upload":
+            await self.app(scope, receive, send)
+            return
         messages: list[Message] = []
         total = 0
         while True:
@@ -777,6 +780,46 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             download=download,
             range_header=request.headers.get("range"),
         )
+
+    @app.post("/api/v1/file-service/upload", status_code=201)
+    async def upload_file_service_file(
+        request: Request,
+        path: str = Query(default="", max_length=4096),
+        name: str = Query(min_length=1, max_length=255),
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        temporary, target, stream = file_catalog.begin_upload(path, name)
+        try:
+            pending = bytearray()
+            async for chunk in request.stream():
+                pending.extend(chunk)
+                if len(pending) >= 1024 * 1024:
+                    await asyncio.to_thread(stream.write, bytes(pending))
+                    pending.clear()
+            if pending:
+                await asyncio.to_thread(stream.write, bytes(pending))
+            uploaded = await asyncio.to_thread(
+                file_catalog.complete_upload, temporary, target, stream,
+            )
+        except OSError as exc:
+            try:
+                await asyncio.to_thread(file_catalog.discard_upload, temporary, stream)
+            except OSError as cleanup_error:
+                exc.add_note(f"上传临时文件清理失败: {cleanup_error}")
+            raise FileServiceError(
+                "upload_write_failed", f"写入上传文件失败: {exc}", 500,
+            ) from exc
+        except BaseException as exc:
+            try:
+                await asyncio.to_thread(file_catalog.discard_upload, temporary, stream)
+            except OSError as cleanup_error:
+                exc.add_note(f"上传临时文件清理失败: {cleanup_error}")
+            raise
+        resolved_database.append_audit(
+            _client_ip(request), "management.file.upload", "success",
+            {"username": session.username, "path": uploaded["path"], "size": uploaded["size"]},
+        )
+        return {"file": uploaded}
 
     @app.get("/api/v1/audit")
     async def audit(limit: int = Query(default=100, ge=1, le=500),

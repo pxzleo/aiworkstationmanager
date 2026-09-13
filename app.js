@@ -61,13 +61,15 @@ async function api(path, options = {}) {
   const controller = new AbortController();
   const abortLifecycle = () => controller.abort('lifecycle');
   if (ticket.signal.aborted) abortLifecycle(); else ticket.signal.addEventListener('abort', abortLifecycle, { once: true });
-  const timeout = setTimeout(() => controller.abort('timeout'), options.timeout || REQUEST_TIMEOUT_MS);
+  const timeout = options.timeout === null ? null : setTimeout(() => controller.abort('timeout'), options.timeout || REQUEST_TIMEOUT_MS);
   const headers = new Headers(options.headers || {});
   headers.set('Accept-Language', window.axisI18n.language);
   if (options.body !== undefined) headers.set('Content-Type', 'application/json');
+  if (options.rawBody !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/octet-stream');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && state.csrfToken && !options.skipCsrf) headers.set('X-CSRF-Token', state.csrfToken);
   try {
-    const response = await fetch(`${API_PREFIX}${path}`, { method, headers, credentials: 'same-origin', cache: 'no-store', signal: controller.signal, body: options.body === undefined ? undefined : JSON.stringify(options.body) });
+    const body = options.rawBody !== undefined ? options.rawBody : options.body === undefined ? undefined : JSON.stringify(options.body);
+    const response = await fetch(`${API_PREFIX}${path}`, { method, headers, credentials: 'same-origin', cache: 'no-store', signal: controller.signal, body });
     let payload = {};
     if (response.status !== 204) {
       try { payload = await response.json(); }
@@ -86,7 +88,7 @@ async function api(path, options = {}) {
     if (error.name === 'AbortError') throw new ApiError(0, 'timeout', '连接管理器超时。');
     if (error instanceof ApiError) throw error;
     throw new ApiError(0, 'network_error', '无法连接管理器。');
-  } finally { clearTimeout(timeout); ticket.signal.removeEventListener('abort', abortLifecycle); }
+  } finally { if (timeout !== null) clearTimeout(timeout); ticket.signal.removeEventListener('abort', abortLifecycle); }
 }
 
 const pages = [...document.querySelectorAll('.page')];
@@ -220,6 +222,26 @@ async function refreshFiles(path = '') {
   } catch (error) {
     if (error instanceof StaleRequestError) return; state.files = []; rows.replaceChildren(element('p', 'empty-state', `目录加载失败：${error.message}`)); text('fileServiceStatus', error.message); byId('fileServiceStatus').classList.add('error'); throw error;
   } finally { rows.removeAttribute('aria-busy'); }
+}
+
+async function uploadSelectedFiles(files) {
+  if (!files.length) return;
+  const uploadPath = state.filePath; const button = byId('uploadFilesButton'); const original = button.querySelector('span').textContent;
+  button.disabled = true;
+  try {
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index]; button.querySelector('span').textContent = window.axisI18n.language === 'zh' ? `上传中 ${index + 1}/${files.length}` : `Uploading ${index + 1}/${files.length}`;
+      const params = new URLSearchParams({ path: uploadPath, name: file.name });
+      await api(`/file-service/upload?${params}`, { method: 'POST', rawBody: file, timeout: null });
+    }
+    showToast(window.axisI18n.language === 'zh' ? `${files.length} 个文件上传完成` : `${files.length} files uploaded`);
+    if (state.filePath === uploadPath) await refreshFiles(uploadPath);
+  } catch (error) {
+    showToast(`${window.axisI18n.language === 'zh' ? '上传失败' : 'Upload failed'}：${error.message}`);
+    if (state.filePath === uploadPath) await refreshFiles(uploadPath).catch(() => {});
+  } finally {
+    button.disabled = false; button.querySelector('span').textContent = original; byId('fileUploadInput').value = '';
+  }
 }
 
 function normalizeGpu(gpu) { return { ...gpu, load_percent: normalizedPercent(gpu.load_percent), memory_percent: normalizedPercent(gpu.memory_percent) }; }
@@ -603,6 +625,8 @@ byId('monitorTabbar').addEventListener('click', (event) => { const button = even
 document.addEventListener('languagechange', () => { buildMonitorCharts(); if (state.snapshot) renderSnapshot(); renderServices(); renderScenes(); renderUsers(); renderOperations(); renderOperationTimeline(); renderVideoJobs(); renderFiles(); text('pageTitle', byId(`page-${state.activePage}`)?.dataset.title || ''); });
 byId('refreshVideoJobsButton').addEventListener('click', refreshVideoJobs);
 byId('refreshFilesButton').addEventListener('click', () => refreshFiles(state.filePath).catch(() => {}));
+byId('uploadFilesButton').addEventListener('click', () => byId('fileUploadInput').click());
+byId('fileUploadInput').addEventListener('change', (event) => uploadSelectedFiles([...event.target.files]));
 byId('fileSortSelect').addEventListener('change', (event) => { state.fileSort = event.target.value; refreshFiles(state.filePath).catch(() => {}); });
 byId('fileBrowser').parentElement.querySelector('.file-view-switch').addEventListener('click', (event) => { const button = event.target.closest('[data-file-view]'); if (button) setFileView(button.dataset.fileView); });
 byId('closeMediaButton').addEventListener('click', closeMedia);

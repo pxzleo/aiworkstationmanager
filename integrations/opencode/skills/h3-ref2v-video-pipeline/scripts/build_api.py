@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
+from resolve_shared_input import resolve_shared_input
+
 
 REQUIRED_NODES = {
     "92": "SaveVideo",
@@ -26,6 +28,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline", required=True, help="baseline API graph JSON")
     parser.add_argument("--out", required=True, help="output API graph JSON")
     parser.add_argument("--source", required=True, help="existing source video path")
+    parser.add_argument(
+        "--shared-root", type=Path,
+        help="AXIS file_service_root used when --source contains only a file name",
+    )
     parser.add_argument(
         "--detection-report", required=True,
         help="current source_detection_report.json produced from isolated visual agents",
@@ -241,7 +247,9 @@ def main() -> None:
     if not task_id:
         raise ValueError("task-id must not be empty")
     baseline = require_file(args.baseline, "baseline")
-    source = require_file(args.source, "source")
+    source_value = Path(args.source)
+    source = require_file(args.source, "source") if source_value.is_absolute() \
+        else resolve_shared_input(args.source, args.shared_root, "video")
     detection_report = require_file(args.detection_report, "detection-report")
     prompt_file = require_file(args.prompt_file, "prompt-file")
     report = validate_detection_report(detection_report, source, prompt_file, task_id)

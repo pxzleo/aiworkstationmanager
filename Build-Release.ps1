@@ -29,6 +29,7 @@ $files = @(
     "integrations\opencode\skills\h3-ref2v-video-pipeline\assets\h3-ref2v-4step-api.json",
     "integrations\opencode\skills\h3-ref2v-video-pipeline\assets\h3-ref2v-8step-api.json",
     "integrations\opencode\skills\h3-ref2v-video-pipeline\scripts\build_api.py",
+    "integrations\opencode\skills\h3-ref2v-video-pipeline\scripts\resolve_shared_input.py",
     "integrations\opencode\skills\h3-ref2v-video-pipeline\scripts\build_api_batch.py",
     "integrations\opencode\skills\h3-ref2v-video-pipeline\scripts\finish_video.py",
     "integrations\opencode\skills\h3-ref2v-video-pipeline\scripts\submit_multi.ps1",

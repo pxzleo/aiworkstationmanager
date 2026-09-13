@@ -8,7 +8,7 @@
     '已登记服务': 'Registered Services', '已启动服务': 'Running Services', '资源监控': 'Resource Monitor',
     '用户管理': 'User Management', '日志中心': 'Operation Log', '视频任务': 'Video Jobs', '文件服务': 'File Service',
     'HTTP 文件服务 · ': 'HTTP File Service · ', '共享文件': 'Shared Files',
-    '正在读取文件服务配置。': 'Loading file service configuration.', '刷新目录': 'Refresh Folder',
+    '正在读取文件服务配置。': 'Loading file service configuration.', '上传文件': 'Upload Files', '刷新目录': 'Refresh Folder',
     '正在连接文件服务。': 'Connecting to the file service.', '当前目录': 'Current folder',
     '文件和目录': 'Files and folders', '名称': 'Name', '大小': 'Size', '修改时间': 'Modified', '操作': 'Action',
     '正在加载目录。': 'Loading folder.', '根目录': 'Root', '目录': 'Folder', '音频': 'Audio', '视频': 'Video', '文件': 'File',

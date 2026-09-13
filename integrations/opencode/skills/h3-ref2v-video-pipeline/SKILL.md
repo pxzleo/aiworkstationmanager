@@ -7,6 +7,10 @@ description: Build and finish local MiniMax H3 reference-to-video workflows for 
 
 本 Skill 负责探测素材、构建单分支 ComfyUI API workflow、规划多段任务和完成成片收尾。场景切换、RTX 4090 独占、任务排队、ComfyUI 提交、进度监控、恢复原场景和回调必须交给 `axis-video` Skill 提供的工具；不要直接启停 NInfer、ComfyUI 或 AXIS 管理的其他服务。
 
+## 输入素材
+
+用户提供下载链接时先按既有浏览器获取流程下载；用户提供绝对路径时直接核验。用户没有提供下载链接或路径、只说了视频或图片名称时，先运行 `scripts/resolve_shared_input.py <名称>`，默认从 AXIS `file_service_root` 下的 `输入/` 目录解析；根目录已配置为非默认值时传 `--root <实际根目录>`。解析器只接受单个文件名或唯一的不带扩展名名称，只允许视频和图片；找不到、重名或最终路径逃逸时直接报告，禁止改查工作目录、下载目录或其他位置。`build_api.py --source` 也遵循同一规则，并将解析出的绝对视频路径写入 workflow。
+
 ## 执行模式
 
 - 正常模式：允许先做短预览，正式生成后检查媒体流并抽帧验收。

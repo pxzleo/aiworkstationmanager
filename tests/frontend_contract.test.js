@@ -291,8 +291,8 @@ test('scene editor and management log remain wired', () => {
 
 test('scene generation controls use the current frontend asset cache key', () => {
   assert.ok(html.includes('styles.css?v=20260913-5'));
-  assert.ok(html.includes('i18n.js?v=20260913-5'));
-  assert.ok(html.includes('app.js?v=20260913-5'));
+  assert.ok(html.includes('i18n.js?v=20260913-6'));
+  assert.ok(html.includes('app.js?v=20260913-6'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -349,6 +349,8 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(html.includes('id="page-files"'));
   assert.ok(html.includes('id="fileBreadcrumbs"'));
   assert.ok(html.includes('id="fileRows"'));
+  assert.ok(html.includes('id="uploadFilesButton"'));
+  assert.ok(html.includes('id="fileUploadInput" type="file" multiple hidden'));
   assert.ok(html.includes('id="fileSortSelect"'));
   assert.ok(html.includes('data-file-view="list"'));
   assert.ok(html.includes('data-file-view="thumbnail"'));
@@ -358,6 +360,10 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(js.includes("api('/file-service'"));
   assert.ok(js.includes('`/file-service/files?${params}`'));
   assert.ok(js.includes("fileSort: 'modified-desc'"));
+  assert.ok(js.includes('async function uploadSelectedFiles(files)'));
+  assert.ok(js.includes('const uploadPath = state.filePath'));
+  assert.ok(js.includes("rawBody: file, timeout: null"));
+  assert.ok(js.includes("new URLSearchParams({ path: uploadPath, name: file.name })"));
   assert.ok(js.includes("sort_by: sortBy, sort_order: sortOrder"));
   assert.ok(js.includes("function fileThumbnail(entry)"));
   assert.ok(js.includes("const preview = element('button', 'file-thumbnail')"));
@@ -479,8 +485,8 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
   assert.ok(html.includes('styles.css?v=20260913-5'));
-  assert.ok(html.includes('i18n.js?v=20260913-5'));
-  assert.ok(html.includes('app.js?v=20260913-5'));
+  assert.ok(html.includes('i18n.js?v=20260913-6'));
+  assert.ok(html.includes('app.js?v=20260913-6'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

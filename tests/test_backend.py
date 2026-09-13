@@ -828,6 +828,59 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(partial.status_code, 206)
         self.assertEqual(partial.content, b"ell")
 
+    def test_authenticated_file_service_streams_upload_without_overwriting(self) -> None:
+        payload = b"x" * (2 * 1024 * 1024 + 37)
+        upload_directory = self.settings.file_service_root / "输入"
+        upload_directory.mkdir()
+        unauthenticated = self.client.post(
+            "/api/v1/file-service/upload",
+            params={"path": "输入", "name": "未登录.bin"},
+            content=payload,
+        )
+        self.assertEqual(unauthenticated.status_code, 401)
+        setup = self.client.post(
+            "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+        )
+        csrf = setup.json()["csrf_token"]
+        missing_csrf = self.client.post(
+            "/api/v1/file-service/upload",
+            params={"path": "输入", "name": "无令牌.bin"},
+            content=payload,
+        )
+        self.assertEqual(missing_csrf.status_code, 403)
+
+        uploaded = self.client.post(
+            "/api/v1/file-service/upload",
+            params={"path": "输入", "name": "中文上传.bin"},
+            content=payload,
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(uploaded.status_code, 201, uploaded.text)
+        self.assertEqual(uploaded.json()["file"]["path"], "输入/中文上传.bin")
+        self.assertEqual(uploaded.json()["file"]["size"], len(payload))
+        self.assertEqual(
+            (upload_directory / "中文上传.bin").read_bytes(), payload,
+        )
+        duplicate = self.client.post(
+            "/api/v1/file-service/upload",
+            params={"path": "输入", "name": "中文上传.bin"},
+            content=b"changed",
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertEqual(duplicate.json()["error"]["code"], "upload_file_exists")
+        self.assertEqual(
+            (upload_directory / "中文上传.bin").read_bytes(), payload,
+        )
+        traversal = self.client.post(
+            "/api/v1/file-service/upload",
+            params={"path": "输入", "name": "../outside.bin"},
+            content=b"blocked",
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(traversal.status_code, 400)
+        self.assertFalse((self.settings.file_service_root.parent / "outside.bin").exists())
+
     def test_remember_login_extends_server_session_and_cookie_to_thirty_days(self) -> None:
         setup = self.client.post(
             "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}

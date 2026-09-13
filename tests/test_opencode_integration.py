@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "integrations" / "opencode" / "skills" / "h3-ref2v-video-pipeline"
 AXIS_SKILL = ROOT / "integrations" / "opencode" / "skills" / "axis-video" / "SKILL.md"
 BUILDER = SKILL / "scripts" / "build_api.py"
+SHARED_INPUT_RESOLVER = SKILL / "scripts" / "resolve_shared_input.py"
 BASELINE = SKILL / "assets" / "h3-ref2v-8step-api.json"
 FOUR_STEP_BASELINE = SKILL / "assets" / "h3-ref2v-4step-api.json"
 PLUGIN = ROOT / "integrations" / "opencode" / "plugins" / "axis-video.ts"
@@ -37,6 +38,75 @@ class H3WorkflowBuilderTests(unittest.TestCase):
             self.assertIn("取消是终态", skill)
             self.assertIn("新的明确生成要求", skill)
             self.assertIn("不得重新生成", skill)
+
+    def test_shared_input_resolver_accepts_media_names_and_rejects_unsafe_or_ambiguous_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_directory = root / "输入"
+            input_directory.mkdir()
+            video = input_directory / "中文视频.mp4"
+            image = input_directory / "封面.png"
+            video.write_bytes(b"video")
+            image.write_bytes(b"image")
+            resolved = subprocess.run(
+                [sys.executable, str(SHARED_INPUT_RESOLVER), "中文视频", "--root", str(root), "--kind", "video"],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(resolved.returncode, 0, resolved.stderr)
+            self.assertEqual(Path(resolved.stdout.strip()).resolve(), video.resolve())
+            rejected = subprocess.run(
+                [sys.executable, str(SHARED_INPUT_RESOLVER), "../封面.png", "--root", str(root)],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("without directory components", rejected.stderr)
+            (input_directory / "中文视频.mov").write_bytes(b"video-2")
+            ambiguous = subprocess.run(
+                [sys.executable, str(SHARED_INPUT_RESOLVER), "中文视频", "--root", str(root)],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertNotEqual(ambiguous.returncode, 0)
+            self.assertIn("ambiguous", ambiguous.stderr)
+
+            nested = root / "nested"
+            nested.mkdir()
+            (nested / "local.mp4").write_bytes(b"must-not-be-used")
+            bypass = subprocess.run(
+                [
+                    sys.executable, str(BUILDER), "--baseline", str(BASELINE),
+                    "--source", str(Path("nested") / "local.mp4"), "--shared-root", str(root),
+                    "--detection-report", str(root / "missing.json"), "--task-id", "test-task",
+                    "--width", "768", "--height", "1344", "--length", "107",
+                    "--prompt-file", str(root / "missing.txt"), "--prefix", "test/source",
+                    "--out", str(root / "workflow.json"),
+                ],
+                cwd=root, check=False, capture_output=True, text=True,
+            )
+            self.assertNotEqual(bypass.returncode, 0)
+            self.assertIn("without directory components", bypass.stderr)
+
+            outside = root / "outside"
+            outside.mkdir()
+            (outside / "escaped.mp4").write_bytes(b"outside")
+            linked_root = root / "linked-root"
+            linked_root.mkdir()
+            try:
+                os.symlink(outside, linked_root / "输入", target_is_directory=True)
+            except OSError:
+                pass
+            else:
+                escaped = subprocess.run(
+                    [sys.executable, str(SHARED_INPUT_RESOLVER), "escaped.mp4", "--root", str(linked_root)],
+                    check=False, capture_output=True, text=True,
+                )
+                self.assertNotEqual(escaped.returncode, 0)
+                self.assertIn("outside the shared root", escaped.stderr)
+
+        axis_skill = AXIS_SKILL.read_text(encoding="utf-8")
+        pipeline_skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        for content in (axis_skill, pipeline_skill):
+            self.assertIn("resolve_shared_input.py", content)
+            self.assertIn("输入/", content)
 
     def test_skill_requires_coherent_anatomy_and_natural_skin_completion(self) -> None:
         skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
