@@ -1147,6 +1147,41 @@ class ApiTests(unittest.TestCase):
             ).json()["task"]
         )
 
+        rerun = self.client.post(
+            f"/api/v1/automatic-tasks/{first_id}/reset", headers=headers,
+        )
+        self.assertEqual(rerun.status_code, 200, rerun.text)
+        self.assertEqual(rerun.json()["task"]["status"], "pending")
+        self.assertEqual(rerun.json()["task"]["attempts"], 1)
+        self.assertIsNone(rerun.json()["task"]["result_summary"])
+        rejected_old_result = self.client.post(
+            f"/api/v1/automatic-tasks/{first_id}/finish",
+            json={"session_id": "session-a", "execution_token": first_token,
+                  "status": "succeeded", "summary": "旧执行结果"},
+        )
+        self.assertEqual(rejected_old_result.status_code, 409, rejected_old_result.text)
+        rerun_claim = self.client.post(
+            "/api/v1/automatic-tasks/claim", json={"session_id": "session-a"}
+        )
+        self.assertEqual(rerun_claim.status_code, 200, rerun_claim.text)
+        self.assertEqual(rerun_claim.json()["task"]["id"], first_id)
+        self.assertEqual(rerun_claim.json()["task"]["attempts"], 2)
+        rerun_token = rerun_claim.json()["task"]["execution_token"]
+        rerun_finished = self.client.post(
+            f"/api/v1/automatic-tasks/{first_id}/finish",
+            json={"session_id": "session-a", "execution_token": rerun_token,
+                  "status": "succeeded", "summary": "再次检查完成"},
+        )
+        self.assertEqual(rerun_finished.status_code, 200, rerun_finished.text)
+        self.assertEqual(rerun_finished.json()["task"]["attempts"], 2)
+        failed_rerun = self.client.post(
+            f"/api/v1/automatic-tasks/{second_id}/reset", headers=headers,
+        )
+        self.assertEqual(failed_rerun.status_code, 200, failed_rerun.text)
+        self.assertEqual(failed_rerun.json()["task"]["status"], "pending")
+        self.assertEqual(failed_rerun.json()["task"]["attempts"], 1)
+        self.assertIsNone(failed_rerun.json()["task"]["error_summary"])
+
         updated = self.client.put(
             f"/api/v1/automatic-tasks/{second_id}",
             json={"content": "重新整理共享目录"}, headers=headers,
