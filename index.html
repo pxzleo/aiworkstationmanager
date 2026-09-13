@@ -8,7 +8,7 @@
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
   <script src="theme.js?v=20260828-1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260913-8">
+  <link rel="stylesheet" href="styles.css?v=20260913-9">
 </head>
 <body class="auth-pending">
   <svg class="svg-sprite" aria-hidden="true">
@@ -174,7 +174,7 @@
           </div>
           <nav class="file-breadcrumbs" id="fileBreadcrumbs" aria-label="当前目录"></nav>
           <section class="file-browser list-view" id="fileBrowser" aria-label="文件和目录">
-            <header><span>名称</span><span>大小</span><span>修改时间</span></header>
+            <header><span>名称</span><span>大小</span><span>修改时间</span><span>操作</span></header>
             <div id="fileRows" aria-live="polite"><p class="empty-state">正在加载目录。</p></div>
           </section>
         </section>
@@ -300,6 +300,16 @@
       <footer><a class="button secondary" id="mediaDownloadLink" download><span>下载文件</span></a></footer>
     </div>
   </dialog>
+  <dialog class="control-dialog editor-dialog" id="fileRenameDialog">
+    <form id="fileRenameForm">
+      <input id="fileRenamePath" type="hidden">
+      <div><p class="eyebrow">文件服务</p><h2>更名</h2></div>
+      <label>新名称<input id="fileRenameName" maxlength="255" required></label>
+      <p class="dialog-note">只修改名称，不会移动文件或目录，也不会覆盖同名项目。</p>
+      <p class="auth-error" id="fileRenameError" role="alert"></p>
+      <div class="dialog-actions"><button class="button secondary" type="button" data-close="fileRenameDialog">取消</button><button class="button primary" type="submit">保存名称</button></div>
+    </form>
+  </dialog>
   <dialog class="control-dialog editor-dialog scene-editor-dialog" id="sceneDialog">
     <form class="dialog-shell" id="sceneForm">
       <header class="dialog-header"><div><p class="eyebrow">场景编辑器</p><h2 id="sceneDialogTitle">添加场景</h2></div><button class="dialog-close" type="button" data-close="sceneDialog" aria-label="关闭"><svg><use href="#i-x"/></svg></button></header>
@@ -353,10 +363,10 @@
       <div class="dialog-actions"><button class="button secondary" id="cancelSceneSwitchButton" type="button">终止切换并返回</button><button class="button primary" id="closeSceneProgressButton" type="button" hidden>返回工作场景</button></div>
     </section>
   </dialog>
-  <script src="i18n.js?v=20260913-7"></script>
+  <script src="i18n.js?v=20260913-8"></script>
   <script src="request-guard.js?v=20260827-5"></script>
   <script src="gpu-layout.js?v=20260828-1"></script>
   <script src="monitor-chart.js?v=20260828-6"></script>
-  <script src="app.js?v=20260913-8"></script>
+  <script src="app.js?v=20260913-9"></script>
 </body>
 </html>

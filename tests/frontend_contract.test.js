@@ -290,9 +290,9 @@ test('scene editor and management log remain wired', () => {
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260913-8'));
-  assert.ok(html.includes('i18n.js?v=20260913-7'));
-  assert.ok(html.includes('app.js?v=20260913-8'));
+  assert.ok(html.includes('styles.css?v=20260913-9'));
+  assert.ok(html.includes('i18n.js?v=20260913-8'));
+  assert.ok(html.includes('app.js?v=20260913-9'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -367,6 +367,8 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(html.includes('id="fileBreadcrumbs"'));
   assert.ok(html.includes('id="fileRows"'));
   assert.ok(html.includes('id="uploadFilesButton"'));
+  assert.ok(html.includes('id="fileRenameDialog"'));
+  assert.ok(html.includes('id="fileRenameForm"'));
   assert.ok(html.includes('id="fileUploadInput" type="file" multiple hidden'));
   assert.ok(html.includes('id="fileSortSelect"'));
   assert.ok(html.includes('data-file-view="list"'));
@@ -378,6 +380,9 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(js.includes('`/file-service/files?${params}`'));
   assert.ok(js.includes("fileSort: 'modified-desc'"));
   assert.ok(js.includes('async function uploadSelectedFiles(files)'));
+  assert.ok(js.includes('async function renameFileEntry(event)'));
+  assert.ok(js.includes("api('/file-service/rename'"));
+  assert.ok(js.includes("openFileRenameDialog(entry)"));
   assert.ok(js.includes('const uploadPath = state.filePath'));
   assert.ok(js.includes("rawBody: file, timeout: null"));
   assert.ok(js.includes("new URLSearchParams({ path: uploadPath, name: file.name })"));
@@ -396,15 +401,16 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(js.includes('function requestMediaFullscreen(player)'));
   assert.ok(js.includes('player.requestFullscreen'));
   assert.ok(js.includes('player.webkitEnterFullscreen'));
-  assert.ok(!html.includes('<span>操作</span>'));
-  assert.ok(!js.includes("'file-action'"));
-  assert.ok(!css.includes('.file-action'));
+  assert.ok(html.includes('<span>操作</span>'));
+  assert.ok(!js.includes("fileActionLabel(entry), 'play'"));
   assert.ok(js.includes("function fileActionLabel(entry)"));
   assert.ok(js.includes("name.setAttribute('aria-label', fileActionLabel(entry))"));
   assert.ok(js.includes("preview.setAttribute('aria-label', fileActionLabel(entry))"));
   assert.ok(js.includes("player.preload = 'metadata'"));
   assert.ok(js.includes("player.removeAttribute('src')"));
   assert.ok(css.includes('.file-browser > header, .file-row'));
+  assert.ok(css.includes('.file-actions'));
+  assert.ok(i18n.includes("'更名': 'Rename'"));
   assert.ok(css.includes('.file-browser.thumbnail-view #fileRows'));
   assert.ok(css.includes('aspect-ratio: 9 / 16'));
   assert.ok(css.includes('.file-browser.thumbnail-view #fileRows { grid-template-columns: repeat(2, minmax(0, 1fr));'));
@@ -505,9 +511,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260913-8'));
-  assert.ok(html.includes('i18n.js?v=20260913-7'));
-  assert.ok(html.includes('app.js?v=20260913-8'));
+  assert.ok(html.includes('styles.css?v=20260913-9'));
+  assert.ok(html.includes('i18n.js?v=20260913-8'));
+  assert.ok(html.includes('app.js?v=20260913-9'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

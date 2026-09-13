@@ -171,6 +171,12 @@ class AutomaticTaskLeasePayload(AutomaticTaskClaimPayload):
     execution_token: str = Field(min_length=1, max_length=200)
 
 
+class FileRenamePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    path: str = Field(min_length=1, max_length=4096)
+    new_name: str = Field(min_length=1, max_length=255)
+
+
 class RequestBodyLimitMiddleware:
     def __init__(self, app: ASGIApp, max_bytes: int) -> None:
         self.app = app
@@ -994,6 +1000,67 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             {"username": session.username, "path": uploaded["path"], "size": uploaded["size"]},
         )
         return {"file": uploaded}
+
+    @app.post("/api/v1/file-service/rename")
+    async def rename_file_service_entry(
+        payload: FileRenamePayload, request: Request,
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        source_ip = _client_ip(request)
+        audit_id = uuid4().hex
+        audit_summary = {
+            "audit_id": audit_id,
+            "username": session.username,
+            "source_path": payload.path,
+            "new_name": payload.new_name,
+        }
+        resolved_database.append_audit(
+            source_ip, "management.file.rename.requested", "success", audit_summary,
+        )
+        try:
+            renamed = await asyncio.to_thread(
+                file_catalog.rename_entry, payload.path, payload.new_name,
+            )
+        except FileServiceError as exc:
+            try:
+                resolved_database.append_audit(
+                    source_ip, "management.file.rename", "failure",
+                    {**audit_summary, "reason": exc.code},
+                )
+            except DatabaseError as audit_error:
+                raise DatabaseError(
+                    f"文件更名失败且无法写入失败审计: {audit_error}"
+                ) from exc
+            raise
+        try:
+            resolved_database.append_audit(
+                source_ip, "management.file.rename", "success",
+                {
+                    "audit_id": audit_id,
+                    "username": session.username,
+                    "source_path": payload.path,
+                    "destination_path": renamed["path"],
+                },
+            )
+        except DatabaseError as audit_error:
+            original_name = payload.path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+            try:
+                await asyncio.to_thread(
+                    file_catalog.rename_entry, renamed["path"], original_name,
+                )
+            except FileServiceError as rollback_error:
+                raise DatabaseError(
+                    f"更名成功后审计失败，且无法恢复原名称: {rollback_error}"
+                ) from audit_error
+            try:
+                resolved_database.append_audit(
+                    source_ip, "management.file.rename", "failure",
+                    {**audit_summary, "reason": "final_audit_failed_rolled_back"},
+                )
+            except DatabaseError as failure_audit_error:
+                audit_error.add_note(f"回滚后的失败审计也未写入: {failure_audit_error}")
+            raise DatabaseError("更名完成审计失败，文件名称已恢复") from audit_error
+        return {"entry": renamed}
 
     @app.get("/api/v1/audit")
     async def audit(limit: int = Query(default=100, ge=1, le=500),

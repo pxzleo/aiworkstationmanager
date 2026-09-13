@@ -224,7 +224,7 @@ function renderFileBreadcrumbs() {
 function renderFiles() {
   renderFileBreadcrumbs(); const rows = byId('fileRows'); const browser = byId('fileBrowser'); releaseFileThumbnailVideos(rows); rows.replaceChildren(); browser.classList.toggle('list-view', state.fileView === 'list'); browser.classList.toggle('thumbnail-view', state.fileView === 'thumbnail');
   if (!state.files.length) { rows.append(element('p', 'empty-state', '这个目录是空的。')); return; }
-  state.files.forEach((entry) => { const row = element('article', 'file-row'); const name = element('button', 'file-name'); name.type = 'button'; name.setAttribute('aria-label', fileActionLabel(entry)); name.append(icon(entry.type === 'directory' ? 'box' : entry.playable ? 'play' : 'file')); const copy = element('span'); copy.append(userElement('strong', '', entry.name), element('small', '', fileLabel(entry))); name.append(copy); name.addEventListener('click', () => openFileEntry(entry, entry.playable)); if (state.fileView === 'thumbnail') row.append(fileThumbnail(entry)); row.append(name, element('span', 'file-size', entry.type === 'directory' ? '—' : formatFileSize(entry.size)), userElement('time', '', formatDate(entry.modified_at, true))); rows.append(row); });
+  state.files.forEach((entry) => { const row = element('article', 'file-row'); const name = element('button', 'file-name'); name.type = 'button'; name.setAttribute('aria-label', fileActionLabel(entry)); name.append(icon(entry.type === 'directory' ? 'box' : entry.playable ? 'play' : 'file')); const copy = element('span'); copy.append(userElement('strong', '', entry.name), element('small', '', fileLabel(entry))); name.append(copy); name.addEventListener('click', () => openFileEntry(entry, entry.playable)); const actions = element('span', 'file-actions'); const rename = labeledIconButton(ui('更名'), 'edit', 'button secondary file-rename-button'); rename.addEventListener('click', () => openFileRenameDialog(entry)); actions.append(rename); if (state.fileView === 'thumbnail') row.append(fileThumbnail(entry)); row.append(name, element('span', 'file-size', entry.type === 'directory' ? '—' : formatFileSize(entry.size)), userElement('time', '', formatDate(entry.modified_at, true)), actions); rows.append(row); });
 }
 async function refreshFiles(path = '') {
   if (document.hidden) return; const rows = byId('fileRows'); releaseFileThumbnailVideos(rows); rows.setAttribute('aria-busy', 'true');
@@ -255,6 +255,16 @@ async function uploadSelectedFiles(files) {
   } finally {
     button.disabled = false; button.querySelector('span').textContent = original; byId('fileUploadInput').value = '';
   }
+}
+
+function openFileRenameDialog(entry) {
+  byId('fileRenameForm').reset(); text('fileRenameError', ''); byId('fileRenamePath').value = entry.path; byId('fileRenameName').value = entry.name; byId('fileRenameDialog').showModal(); byId('fileRenameName').focus(); byId('fileRenameName').select();
+}
+async function renameFileEntry(event) {
+  event.preventDefault(); const path = byId('fileRenamePath').value; const newName = byId('fileRenameName').value.trim();
+  if (!newName) return text('fileRenameError', ui('请输入新名称。'));
+  try { await api('/file-service/rename', { method: 'POST', body: { path, new_name: newName } }); byId('fileRenameDialog').close(); showToast(ui('更名完成')); await refreshFiles(state.filePath); }
+  catch (error) { text('fileRenameError', error.message); }
 }
 
 function normalizeGpu(gpu) { return { ...gpu, load_percent: normalizedPercent(gpu.load_percent), memory_percent: normalizedPercent(gpu.memory_percent) }; }
@@ -674,6 +684,7 @@ byId('refreshAutomaticTasksButton').addEventListener('click', refreshAutomaticTa
 byId('refreshFilesButton').addEventListener('click', () => refreshFiles(state.filePath).catch(() => {}));
 byId('uploadFilesButton').addEventListener('click', () => byId('fileUploadInput').click());
 byId('fileUploadInput').addEventListener('change', (event) => uploadSelectedFiles([...event.target.files]));
+byId('fileRenameForm').addEventListener('submit', renameFileEntry);
 byId('fileSortSelect').addEventListener('change', (event) => { state.fileSort = event.target.value; refreshFiles(state.filePath).catch(() => {}); });
 byId('fileBrowser').parentElement.querySelector('.file-view-switch').addEventListener('click', (event) => { const button = event.target.closest('[data-file-view]'); if (button) setFileView(button.dataset.fileView); });
 byId('closeMediaButton').addEventListener('click', closeMedia);

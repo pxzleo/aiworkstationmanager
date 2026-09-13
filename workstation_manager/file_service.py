@@ -178,6 +178,61 @@ class FileCatalog:
             raise FileServiceError("upload_open_failed", f"无法创建上传文件: {exc}", 500) from exc
         return temporary, target, stream
 
+    def rename_entry(self, relative_path: str, new_name: str) -> dict[str, Any]:
+        if not isinstance(new_name, str) or not new_name.strip() or "\x00" in new_name \
+                or new_name in {".", ".."} or "/" in new_name or "\\" in new_name \
+                or re.fullmatch(r"\.axis-upload-[0-9a-f]{32}\.part", new_name):
+            raise FileServiceError("invalid_rename_name", "新名称无效", 400)
+        normalized = relative_path.replace("\\", "/").strip("/")
+        if not normalized:
+            raise FileServiceError("invalid_file_path", "根目录不能更名", 400)
+        source = self.root / normalized
+        try:
+            source.parent.resolve(strict=True).relative_to(self.root)
+            source.resolve(strict=False).relative_to(self.root)
+        except FileNotFoundError as exc:
+            raise FileServiceError("file_not_found", "文件或目录不存在", 404) from exc
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise FileServiceError("file_path_outside_root", "禁止更名根目录之外的项目", 403) from exc
+        if not os.path.lexists(source):
+            raise FileServiceError("file_not_found", "文件或目录不存在", 404)
+        if re.fullmatch(r"\.axis-upload-[0-9a-f]{32}\.part", source.name):
+            raise FileServiceError("invalid_file_path", "上传中的临时文件不能更名", 400)
+        target = source.with_name(new_name)
+        try:
+            target.resolve(strict=False).relative_to(self.root)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise FileServiceError("file_path_outside_root", "禁止更名到根目录之外", 403) from exc
+        if source.name == new_name:
+            stat = source.stat()
+            return {
+                "name": source.name,
+                "path": source.relative_to(self.root).as_posix(),
+                "type": "directory" if source.is_dir() else "file",
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+            }
+        try:
+            target_exists = os.path.lexists(target)
+            same_entry = target_exists and os.path.samefile(source, target)
+            if target_exists and not same_entry:
+                raise FileServiceError("rename_target_exists", "同名文件或目录已存在，未覆盖", 409)
+            source.rename(target)
+            stat = target.stat()
+        except FileServiceError:
+            raise
+        except FileExistsError as exc:
+            raise FileServiceError("rename_target_exists", "同名文件或目录已存在，未覆盖", 409) from exc
+        except PermissionError as exc:
+            raise FileServiceError("rename_access_denied", "没有权限更名该文件或目录", 403) from exc
+        except OSError as exc:
+            raise FileServiceError("rename_failed", f"文件或目录更名失败: {exc}", 500) from exc
+        return {
+            "name": target.name,
+            "path": target.relative_to(self.root).as_posix(),
+            "type": "directory" if target.is_dir() else "file",
+            "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        }
+
     def complete_upload(self, temporary: Path, target: Path, stream: BinaryIO) -> dict[str, Any]:
         try:
             stream.flush()

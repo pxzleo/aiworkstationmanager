@@ -92,6 +92,43 @@ class FileCatalogTests(unittest.TestCase):
         self.assertFalse(first_temporary.exists())
         self.assertFalse(second_temporary.exists())
 
+    def test_renames_unicode_files_and_directories_without_overwriting(self) -> None:
+        renamed_file = self.catalog.rename_entry("资料.bin", "新资料.bin")
+        self.assertEqual(renamed_file["path"], "新资料.bin")
+        self.assertTrue((self.root / "新资料.bin").is_file())
+        self.assertFalse((self.root / "资料.bin").exists())
+
+        renamed_directory = self.catalog.rename_entry("子目录", "新目录")
+        self.assertEqual(renamed_directory["type"], "directory")
+        self.assertEqual(
+            (self.root / "新目录" / "说明.txt").read_text(encoding="utf-8"),
+            "中文内容",
+        )
+
+        (self.root / "冲突.bin").write_bytes(b"existing")
+        with self.assertRaisesRegex(FileServiceError, "同名"):
+            self.catalog.rename_entry("新资料.bin", "冲突.bin")
+        self.assertEqual((self.root / "冲突.bin").read_bytes(), b"existing")
+        with self.assertRaisesRegex(FileServiceError, "新名称无效"):
+            self.catalog.rename_entry("新资料.bin", "../越界.bin")
+        with self.assertRaisesRegex(FileServiceError, "根目录不能更名"):
+            self.catalog.rename_entry("", "新根目录")
+
+    def test_renames_a_symlink_entry_without_renaming_its_target(self) -> None:
+        target = self.root / "子目录" / "说明.txt"
+        link = self.root / "说明链接.txt"
+        try:
+            link.symlink_to(target)
+        except OSError as exc:
+            self.skipTest(f"当前环境无法创建符号链接: {exc}")
+
+        renamed = self.catalog.rename_entry("说明链接.txt", "新链接.txt")
+
+        self.assertEqual(renamed["path"], "新链接.txt")
+        self.assertFalse(os.path.lexists(link))
+        self.assertTrue((self.root / "新链接.txt").is_symlink())
+        self.assertEqual(target.read_text(encoding="utf-8"), "中文内容")
+
 
 class StandaloneFileServiceTests(unittest.TestCase):
     def setUp(self) -> None:

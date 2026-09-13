@@ -27,6 +27,7 @@ from workstation_manager.collectors import (
     collect_gpu_processes, collect_gpus, collect_snapshot, collect_wsl_resources,
 )
 from workstation_manager.config import ConfigError, Settings, load_settings
+from workstation_manager.database import Database, DatabaseError
 from workstation_manager.history import (
     CollectionTimeoutError,
     HistoryStore,
@@ -882,6 +883,94 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(traversal.status_code, 400)
         self.assertFalse((self.settings.file_service_root.parent / "outside.bin").exists())
+
+    def test_authenticated_file_service_renames_files_and_directories(self) -> None:
+        directory = self.settings.file_service_root / "旧目录"
+        directory.mkdir()
+        (directory / "内容.txt").write_text("内容", encoding="utf-8")
+        (self.settings.file_service_root / "已存在.txt").write_text("保留", encoding="utf-8")
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/file-service/rename",
+                json={"path": "旧目录", "new_name": "新目录"},
+            ).status_code,
+            401,
+        )
+        setup = self.client.post(
+            "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+        )
+        csrf = setup.json()["csrf_token"]
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/file-service/rename",
+                json={"path": "旧目录", "new_name": "新目录"},
+            ).status_code,
+            403,
+        )
+        renamed = self.client.post(
+            "/api/v1/file-service/rename",
+            json={"path": "旧目录", "new_name": "新目录"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(renamed.status_code, 200, renamed.text)
+        self.assertEqual(renamed.json()["entry"]["path"], "新目录")
+        self.assertEqual(
+            (self.settings.file_service_root / "新目录" / "内容.txt").read_text(encoding="utf-8"),
+            "内容",
+        )
+        conflict = self.client.post(
+            "/api/v1/file-service/rename",
+            json={"path": "测试.txt", "new_name": "已存在.txt"},
+            headers={"X-CSRF-Token": csrf, "Accept-Language": "en"},
+        )
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        self.assertEqual(conflict.json()["error"]["code"], "rename_target_exists")
+        self.assertEqual(
+            conflict.json()["error"]["message"],
+            "A file or folder with that name already exists and was not overwritten.",
+        )
+        traversal = self.client.post(
+            "/api/v1/file-service/rename",
+            json={"path": "测试.txt", "new_name": "../越界.txt"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(traversal.status_code, 400, traversal.text)
+        audit = self.client.get("/api/v1/audit?limit=10").json()["events"]
+        self.assertIn("management.file.rename", [event["event"] for event in audit])
+
+        audit_source = self.settings.file_service_root / "审计前.txt"
+        audit_source.write_text("审计", encoding="utf-8")
+        original_append_audit = Database.append_audit
+
+        def fail_final_audit(
+            database: Database, source_ip: str, event: str, result: str, summary: dict,
+        ) -> None:
+            if event == "management.file.rename" and result == "success":
+                raise DatabaseError("模拟最终审计失败")
+            original_append_audit(database, source_ip, event, result, summary)
+
+        with patch.object(Database, "append_audit", new=fail_final_audit):
+            audit_failure = self.client.post(
+                "/api/v1/file-service/rename",
+                json={"path": "审计前.txt", "new_name": "审计后.txt"},
+                headers={"X-CSRF-Token": csrf},
+            )
+        self.assertEqual(audit_failure.status_code, 500, audit_failure.text)
+        self.assertTrue((self.settings.file_service_root / "审计前.txt").is_file())
+        self.assertFalse((self.settings.file_service_root / "审计后.txt").exists())
+        audit = self.client.get("/api/v1/audit?limit=20").json()["events"]
+        requested = [
+            event for event in audit
+            if event["event"] == "management.file.rename.requested"
+            and event["summary"].get("source_path") == "审计前.txt"
+        ]
+        self.assertEqual(len(requested), 1)
+        self.assertTrue(any(
+            event["event"] == "management.file.rename"
+            and event["result"] == "failure"
+            and event["summary"].get("reason") == "final_audit_failed_rolled_back"
+            for event in audit
+        ))
 
     def test_automatic_tasks_crud_and_opencode_serial_execution(self) -> None:
         self.assertEqual(self.client.get("/api/v1/automatic-tasks").status_code, 401)
