@@ -2255,9 +2255,19 @@ class Database:
                 raise DatabaseError(f"视频任务进度数据损坏: {exc}") from exc
         else:
             item["progress"] = None
+        source_videos = item["video_spec"].pop("_source_videos", None)
+        if include_internal:
+            item["source_videos"] = source_videos
         if not include_internal:
             item.pop("workflow_json", None)
         return item
+
+    @classmethod
+    def _stored_video_spec(cls, item: dict[str, Any]) -> str:
+        spec = cls._video_spec(item["workflow_json"])
+        if "source_videos" in item:
+            spec["_source_videos"] = item["source_videos"]
+        return json.dumps(spec, separators=(",", ":"))
 
     def create_video_job(self, item: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         now = utc_now()
@@ -2281,7 +2291,7 @@ class Database:
                         (
                             item["id"], item["idempotency_key"], item["payload_hash"],
                             item["session_id"], item["workflow_path"], item["workflow_json"],
-                            json.dumps(self._video_spec(item["workflow_json"]), separators=(",", ":")),
+                            self._stored_video_spec(item),
                              item.get("requested_output_path"), item["callback_url"],
                              item.get("callback_directory"),
                              item["generation_scene_id"], item["generation_scene_name"],
@@ -2328,7 +2338,7 @@ class Database:
                             (
                                 item["id"], item["idempotency_key"], item["payload_hash"],
                                 item["session_id"], item["workflow_path"], item["workflow_json"],
-                                json.dumps(self._video_spec(item["workflow_json"]), separators=(",", ":")),
+                                self._stored_video_spec(item),
                                 item.get("requested_output_path"), item["callback_url"],
                                 item.get("callback_directory"), item["generation_scene_id"],
                                 item["generation_scene_name"], item["batch_id"],

@@ -25,7 +25,9 @@ from .registry import RegisteredServiceManager, RegistryError
 
 GPU_4090_LEASE = "gpu:4090"
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
-VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
+VIDEO_EXTENSIONS = {
+    ".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".mts", ".webm", ".wmv",
+}
 METRIC_RE = re.compile(r"^(?:llamacpp|ninfer):requests_(processing|deferred)\s+([0-9]+(?:\.[0-9]+)?)$")
 MAX_VIDEO_BYTES = 16 * 1024 * 1024 * 1024
 MIN_AVAILABLE_MEMORY_BYTES = 24 * 1024 * 1024 * 1024
@@ -530,12 +532,14 @@ class VideoJobManager:
             raise VideoJobError(
                 "default_generation_scene_missing", "尚未设置默认生成场景"
             )
+        source_videos = self._source_video_records(workflow_json)
         canonical = {
             "session_id": session_id, "workflow_path": str(workflow_path.resolve()),
             "output_path": output_text, "callback_url": callback_url,
             "callback_directory": callback_directory,
             "generation_scene_id": generation_scene["id"],
             "workflow_sha256": workflow_sha256,
+            "source_videos": source_videos,
         }
         payload_hash = hashlib.sha256(
             json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -550,6 +554,7 @@ class VideoJobManager:
             "generation_scene_id": generation_scene["id"],
             "generation_scene_name": generation_scene["name"],
             "batch_id": batch_id, "batch_index": batch_index, "batch_size": batch_size,
+            "source_videos": source_videos,
         }
         return item, payload_hash
 
@@ -885,9 +890,7 @@ class VideoJobManager:
             raise VideoJobError("shared_output_path_invalid", "视频任务 ID 无法用于共享输出路径")
         return (Path("video-jobs") / job_id / Path(output_path).name).as_posix()
 
-    def _shared_target(
-        self, job_id: str, output_path: str, *, create_parent: bool = False,
-    ) -> tuple[Path, str]:
+    def _shared_root(self) -> Path:
         try:
             root = self.shared_output_directory.resolve(strict=True)
         except OSError as exc:
@@ -900,6 +903,12 @@ class VideoJobManager:
                 "shared_output_root_unavailable",
                 f"共享输出路径不是目录: {self.shared_output_directory}",
             )
+        return root
+
+    def _shared_target(
+        self, job_id: str, output_path: str, *, create_parent: bool = False,
+    ) -> tuple[Path, str]:
+        root = self._shared_root()
         relative = self._shared_relative_path(job_id, output_path)
         if relative is None:
             raise VideoJobError("shared_output_path_missing", "视频任务没有可发布的输出路径")
@@ -921,23 +930,27 @@ class VideoJobManager:
             ) from exc
         return resolved_parent / Path(output_path).name, relative
 
-    def _publish_shared_output(self, job_id: str, output_path: str) -> str:
-        source = Path(output_path)
-        if not source.is_file():
-            raise VideoJobError("output_missing", f"待发布的视频输出不存在: {source}")
-        target, relative = self._shared_target(job_id, output_path, create_parent=True)
-        temporary = target.with_name(f".{target.name}.axis-part")
+    def _copy_shared_file(
+        self, source: Path, target: Path, relative: str, *, conflict_code: str,
+        conflict_label: str, copy_code: str, copy_label: str,
+        expected_sha256: str | None = None,
+    ) -> str:
+        temporary = target.with_name(f".axis-upload-{uuid.uuid4().hex}.part")
         try:
+            source_sha256 = self._file_sha256(source) if expected_sha256 is not None else None
+            if expected_sha256 is not None and source_sha256 != expected_sha256:
+                raise VideoJobError("source_video_changed", f"原视频内容在任务执行期间已改变: {source}")
             if os.path.lexists(target):
+                source_sha256 = source_sha256 or self._file_sha256(source)
                 if target.is_symlink() or not target.is_file() \
                         or source.stat().st_size != target.stat().st_size \
-                        or self._file_sha256(source) != self._file_sha256(target):
+                        or source_sha256 != self._file_sha256(target):
                     raise VideoJobError(
-                        "shared_output_conflict", f"共享输出已存在且内容不同，拒绝覆盖: {target}",
+                        conflict_code, f"{conflict_label}已存在且内容不同，拒绝覆盖: {target}",
                     )
                 return relative
             if os.path.lexists(temporary):
-                temporary.unlink()
+                raise VideoJobError(copy_code, f"{copy_label}失败: 临时文件已存在: {temporary}")
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
             if hasattr(os, "O_BINARY"):
                 flags |= os.O_BINARY
@@ -951,25 +964,131 @@ class VideoJobManager:
             finally:
                 if descriptor >= 0:
                     os.close(descriptor)
+            if expected_sha256 is not None and self._file_sha256(temporary) != expected_sha256:
+                raise VideoJobError("source_video_changed", f"原视频在复制期间已改变: {source}")
             try:
                 os.link(temporary, target)
             except FileExistsError:
+                source_sha256 = source_sha256 or self._file_sha256(source)
                 if target.is_symlink() or not target.is_file() \
                         or source.stat().st_size != target.stat().st_size \
-                        or self._file_sha256(source) != self._file_sha256(target):
+                        or source_sha256 != self._file_sha256(target):
                     raise VideoJobError(
-                        "shared_output_conflict", f"共享输出已存在且内容不同，拒绝覆盖: {target}",
+                        conflict_code, f"{conflict_label}已存在且内容不同，拒绝覆盖: {target}",
                     )
             return relative
         except VideoJobError:
             raise
         except OSError as exc:
             raise VideoJobError(
-                "shared_output_copy_failed", f"复制视频到共享输出目录失败: {exc}",
+                copy_code, f"{copy_label}失败: {exc}",
             ) from exc
         finally:
             with suppress(OSError):
                 temporary.unlink()
+
+    def _publish_shared_output(self, job_id: str, output_path: str) -> str:
+        source = Path(output_path)
+        if not source.is_file():
+            raise VideoJobError("output_missing", f"待发布的视频输出不存在: {source}")
+        target, relative = self._shared_target(job_id, output_path, create_parent=True)
+        return self._copy_shared_file(
+            source, target, relative, conflict_code="shared_output_conflict",
+            conflict_label="共享输出", copy_code="shared_output_copy_failed",
+            copy_label="复制视频到共享输出目录",
+        )
+
+    @staticmethod
+    def _source_video_paths(workflow_json: str) -> list[Path]:
+        try:
+            workflow = json.loads(workflow_json)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise VideoJobError("workflow_snapshot_invalid", "持久化工作流快照损坏") from exc
+        if not isinstance(workflow, dict):
+            raise VideoJobError("workflow_snapshot_invalid", "持久化工作流快照格式无效")
+        sources: list[Path] = []
+        seen: set[str] = set()
+        for node in workflow.values():
+            if not isinstance(node, dict) or "loadvideo" not in str(
+                node.get("class_type") or ""
+            ).casefold():
+                continue
+            inputs = node.get("inputs")
+            if not isinstance(inputs, dict):
+                continue
+            for value in inputs.values():
+                if not isinstance(value, str) or Path(value).suffix.casefold() not in VIDEO_EXTENSIONS:
+                    continue
+                candidate = Path(value).expanduser()
+                if not candidate.is_absolute() or not candidate.is_file():
+                    raise VideoJobError("source_video_missing", f"原视频路径不存在或不是绝对路径: {candidate}")
+                resolved = candidate.resolve(strict=True)
+                key = os.path.normcase(str(resolved))
+                if key not in seen:
+                    seen.add(key)
+                    sources.append(resolved)
+        return sources
+
+    def _source_video_records(self, workflow_json: str) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for source in self._source_video_paths(workflow_json):
+            try:
+                before = source.stat()
+                sha256 = self._file_sha256(source)
+                after = source.stat()
+            except OSError as exc:
+                raise VideoJobError("source_video_read_failed", f"无法读取原视频: {source}: {exc}") from exc
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                raise VideoJobError("source_video_changed", f"原视频在读取期间已改变: {source}")
+            records.append({"path": str(source), "size": after.st_size, "sha256": sha256})
+        return records
+
+    def _publish_source_videos(
+        self, workflow_json: str, source_records: list[dict[str, Any]] | None = None,
+    ) -> list[str]:
+        sources = self._source_video_paths(workflow_json)
+        if not sources:
+            return []
+        if source_records is None:
+            source_records = self._source_video_records(workflow_json)
+        expected_by_path = {
+            os.path.normcase(str(Path(str(record.get("path") or "")))): record
+            for record in source_records if isinstance(record, dict) and record.get("path")
+        }
+        if set(expected_by_path) != {os.path.normcase(str(source)) for source in sources}:
+            raise VideoJobError("source_video_identity_invalid", "原视频内容身份与已固化工作流不一致")
+        root = self._shared_root()
+        output_directory = root / "输出"
+        try:
+            output_directory.mkdir(exist_ok=True)
+            resolved_output = output_directory.resolve(strict=True)
+            resolved_output.relative_to(root)
+        except (OSError, ValueError) as exc:
+            raise VideoJobError(
+                "source_video_path_invalid", f"原视频共享输出目录越过文件服务根目录: {output_directory}",
+            ) from exc
+        published: list[str] = []
+        for source in sources:
+            record = expected_by_path[os.path.normcase(str(source))]
+            expected_size = record.get("size")
+            expected_sha256 = record.get("sha256")
+            try:
+                size_matches = source.stat().st_size == expected_size
+            except OSError as exc:
+                raise VideoJobError("source_video_read_failed", f"无法读取原视频: {source}: {exc}") from exc
+            if not isinstance(expected_size, int) or expected_size < 0 \
+                    or not isinstance(expected_sha256, str) \
+                    or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None \
+                    or not size_matches:
+                raise VideoJobError("source_video_changed", f"原视频内容在任务执行期间已改变: {source}")
+            relative = (Path("输出") / source.name).as_posix()
+            published.append(self._copy_shared_file(
+                source, resolved_output / source.name, relative,
+                conflict_code="source_video_conflict", conflict_label="原视频",
+                copy_code="source_video_copy_failed", copy_label="复制原视频到共享输出目录",
+                expected_sha256=expected_sha256,
+            ))
+        return published
 
     def public_job(self, job: dict[str, Any]) -> dict[str, Any]:
         relative = str(job.get("shared_output_path") or "").strip() or None
@@ -1255,6 +1374,10 @@ class VideoJobManager:
                     self.database.update_video_job(
                         job_id, status="publishing_output", phase="publishing_output",
                     )
+                    await asyncio.to_thread(
+                        self._publish_source_videos, str(initial_job.get("workflow_json") or ""),
+                        initial_job.get("source_videos"),
+                    )
                     shared_output_path = await asyncio.to_thread(
                         self._publish_shared_output, job_id, str(initial_job["output_path"]),
                     )
@@ -1411,6 +1534,10 @@ class VideoJobManager:
                 memory_released = True
                 self.database.update_video_job(
                     job_id, status="publishing_output", phase="publishing_output",
+                )
+                await asyncio.to_thread(
+                    self._publish_source_videos, str(initial_job.get("workflow_json") or ""),
+                    initial_job.get("source_videos"),
                 )
                 shared_output_path = await asyncio.to_thread(
                     self._publish_shared_output, job_id, output_path,

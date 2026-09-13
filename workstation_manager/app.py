@@ -918,7 +918,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     ) -> dict[str, Any]:
         if not is_loopback(_client_ip(request)):
             raise VideoJobError("loopback_required", "视频任务只允许从本机提交")
-        job, created = resolved_video_jobs.submit(payload.model_dump())
+        job, created = await asyncio.to_thread(resolved_video_jobs.submit, payload.model_dump())
         response.status_code = 202 if created else 200
         return {"job": job, "created": created}
 
@@ -928,7 +928,9 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     ) -> dict[str, Any]:
         if not is_loopback(_client_ip(request)):
             raise VideoJobError("loopback_required", "视频任务只允许从本机提交")
-        jobs, created = resolved_video_jobs.submit_batch(payload.model_dump())
+        jobs, created = await asyncio.to_thread(
+            resolved_video_jobs.submit_batch, payload.model_dump(),
+        )
         response.status_code = 202 if created else 200
         return {"jobs": jobs, "batch_id": jobs[0]["batch_id"], "created": created}
 

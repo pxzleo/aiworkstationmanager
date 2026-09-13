@@ -210,7 +210,7 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 
 多段视频使用 `/api/v1/video-job-batches`，其中 `workflows` 为 1..100 个按顺序排列的 `{workflow_path, workflow_file_sha256, output_path}` 对象。AXIS 持久化 `batch_id`、`batch_index`、`batch_size`，每段完成后调用 ComfyUI `/free`，中间段不回切场景和回调，批尾或首次失败时只回调一次。任务列表响应同时返回权威 `queue_summary`，其中 `queued_segments` 只统计状态为 `queued` 的待处理段。
 
-每个成功视频段还会保留原始输出，并将副本原子发布到 `file_service_root/video-jobs/<任务 ID>/<文件名>`。任务列表为已发布副本返回 `shared_output_path`，页面把原完整输出路径显示为可点击的同源文件服务链接；OpenCode 完成回调返回 `http://127.0.0.1:<file_service_port>/api/v1/files/content?path=...` 直接链接。复制失败或同一任务目标中存在不同内容时，任务明确失败而不覆盖文件；AXIS 重启后会从已收集的原始输出继续幂等发布。
+每个成功视频段还会保留原始输出，并将副本原子发布到 `file_service_root/video-jobs/<任务 ID>/<文件名>`。如果已固化的 workflow 含本地原视频，提交时会持久化其绝对路径、大小和 SHA-256，任务成功链路再把同一内容的原视频复制到 `file_service_root/输出/<原文件名>`；相同内容幂等复用，内容变化、同名不同内容、非绝对路径、路径越界或复制失败都会使任务明确失败。任务列表为已发布副本返回 `shared_output_path`，页面把原完整输出路径显示为可点击的同源文件服务链接；OpenCode 完成回调返回 `http://127.0.0.1:<file_service_port>/api/v1/files/content?path=...` 直接链接。复制失败或同一任务目标中存在不同内容时，任务明确失败而不覆盖文件；AXIS 重启后会从已收集的原始输出继续幂等发布。
 
 `integrations/opencode/plugins/axis-video.ts` 注册单任务 `axis_video_submit` 和多段 `axis_video_submit_batch` 工具并自动读取当前 `sessionID` 与工作目录，同时在随机 loopback 端口创建无认证回调桥；收到 AXIS 汇总结果后通过 OpenCode 内部客户端继续原会话。取消回调把取消定义为生成终态，明确禁止 OpenCode 自动重新生成、重新提交或继续批次后续片段；只有用户在取消之后提出新的明确生成要求时才允许创建新任务。回调开始前已接受的取消覆盖成功或失败结果；任务进入 `callback_pending` 后不再接受取消，前端同时隐藏取消按钮，形成明确的取消截止点。项目在 `integrations/opencode/skills/` 中同时保留 `axis-video` 调度 Skill 和 `h3-ref2v-video-pipeline` 工作流 Skill，后者包含去敏的 4/8 步基线、API 图构建、直接提交和成片收尾脚本。运行 `integrations/opencode/Install-AxisVideo.ps1` 可把插件及两项 Skill 安装到当前用户的 OpenCode 配置目录，重启 OpenCode 后输入“使用场景切换技能生成视频”即可触发。
 

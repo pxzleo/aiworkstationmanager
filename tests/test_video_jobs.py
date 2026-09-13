@@ -4,10 +4,13 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Barrier
 from unittest.mock import AsyncMock, patch
 from urllib.error import HTTPError, URLError
 
@@ -440,9 +443,13 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(Database._video_title(workflow), "A dancer crosses a snowy stage.")
 
     def test_schema_28_backfills_existing_video_titles(self) -> None:
+        project = self.root / "雪场_全裸_工作流交接"
+        project.mkdir()
+        source = project / "源片.mp4"
+        source.write_bytes(b"video")
         self.workflow.write_text(json.dumps({
             "1": {"class_type": "VHS_LoadVideoPath", "inputs": {
-                "video": r"D:\共享\雪场_全裸_工作流交接\源片.mp4",
+                "video": str(source),
             }},
         }), encoding="utf-8")
         job, _ = self.manager().submit(self.payload("title-backfill"))
@@ -698,6 +705,91 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(callback.handoff_checks, 1)
         self.assertIsNone(self.database.resource_lease_owner("gpu:4090"))
 
+    async def test_success_copies_original_video_to_shared_output_directory(self) -> None:
+        source = self.root / "原视频.mp4"
+        source.write_bytes(b"original-video")
+        self.workflow.write_text(json.dumps({
+            "1": {"class_type": "VHS_LoadVideoPath", "inputs": {"video": str(source)}},
+            "2": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {}},
+        }), encoding="utf-8")
+        manager = self.manager()
+        job, _ = manager.submit(self.payload("publish-original-video"))
+
+        await manager._process(self.database.next_video_job())
+
+        finished = self.database.get_video_job(job["id"])
+        self.assertEqual(finished["status"], "succeeded")
+        self.assertEqual(
+            (self.shared_output_directory / "输出" / source.name).read_bytes(),
+            b"original-video",
+        )
+
+    async def test_original_video_conflict_fails_without_overwriting(self) -> None:
+        source = self.root / "source.mp4"
+        source.write_bytes(b"original-video")
+        self.workflow.write_text(json.dumps({
+            "1": {"class_type": "VHS_LoadVideoPath", "inputs": {"video": str(source)}},
+        }), encoding="utf-8")
+        existing = self.shared_output_directory / "输出" / source.name
+        existing.parent.mkdir()
+        existing.write_bytes(b"different")
+        callback = RecordingCallback()
+        manager = self.manager(callback=callback)
+        job, _ = manager.submit(self.payload("original-video-conflict"))
+
+        await manager._process(self.database.next_video_job())
+
+        finished = self.database.get_video_job(job["id"])
+        self.assertEqual(finished["status"], "failed")
+        self.assertEqual(finished["error_code"], "source_video_conflict")
+        self.assertEqual(existing.read_bytes(), b"different")
+        self.assertIn("原视频已存在且内容不同", callback.messages[0])
+
+    async def test_changed_original_video_fails_instead_of_publishing_other_content(self) -> None:
+        source = self.root / "source.mp4"
+        source.write_bytes(b"original-video")
+        self.workflow.write_text(json.dumps({
+            "1": {"class_type": "VHS_LoadVideoPath", "inputs": {"video": str(source)}},
+        }), encoding="utf-8")
+        callback = RecordingCallback()
+        manager = self.manager(callback=callback)
+        job, _ = manager.submit(self.payload("changed-original-video"))
+        source.write_bytes(b"replaced-video")
+
+        await manager._process(self.database.next_video_job())
+
+        finished = self.database.get_video_job(job["id"])
+        self.assertEqual(finished["status"], "failed")
+        self.assertEqual(finished["error_code"], "source_video_changed")
+        self.assertFalse((self.shared_output_directory / "输出" / source.name).exists())
+        self.assertIn("原视频内容在任务执行期间已改变", callback.messages[0])
+
+    def test_concurrent_original_video_publish_is_idempotent(self) -> None:
+        source = self.root / "same-source.mp4"
+        source.write_bytes(b"original-video")
+        workflow_json = json.dumps({
+            "1": {"class_type": "VHS_LoadVideoPath", "inputs": {"video": str(source)}},
+        })
+        manager = self.manager()
+        barrier = Barrier(2)
+        copyfileobj = shutil.copyfileobj
+
+        def synchronized_copy(input_file, output_file, length=0):
+            copyfileobj(input_file, output_file, length=length)
+            barrier.wait(timeout=5)
+
+        with patch("workstation_manager.video_jobs.shutil.copyfileobj", synchronized_copy):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(
+                    lambda _: manager._publish_source_videos(workflow_json), range(2),
+                ))
+
+        self.assertEqual(results, [["输出/same-source.mp4"], ["输出/same-source.mp4"]])
+        self.assertEqual(
+            (self.shared_output_directory / "输出" / source.name).read_bytes(),
+            b"original-video",
+        )
+
     async def test_waits_for_opencode_session_idle_before_switching_scene(self) -> None:
         callback = WaitingHandoffCallback(ready_after=2)
         manager = self.manager(callback=callback)
@@ -817,6 +909,11 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
     async def test_restart_after_output_download_does_not_download_again(self) -> None:
         comfy = CompletedComfy()
         manager = self.manager(comfy=comfy)
+        source = self.root / "restart-source.mp4"
+        source.write_bytes(b"original-video")
+        self.workflow.write_text(json.dumps({
+            "1": {"class_type": "VHS_LoadVideoPath", "inputs": {"video": str(source)}},
+        }), encoding="utf-8")
         job, _ = manager.submit(self.payload("collected-key"))
         output = self.root / "already-collected.mp4"
         output.write_bytes(b"video")
@@ -834,6 +931,10 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             (self.shared_output_directory / "video-jobs" / job["id"] / output.name).read_bytes(),
             b"video",
+        )
+        self.assertEqual(
+            (self.shared_output_directory / "输出" / source.name).read_bytes(),
+            b"original-video",
         )
         self.assertEqual(comfy.submit_calls, 0)
         self.assertEqual(comfy.release_calls, 1)
@@ -899,17 +1000,22 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
         manager = self.manager()
         job_id = "e" * 32
         target, _ = manager._shared_target(job_id, str(source), create_parent=True)
-        temporary = target.with_name(f".{target.name}.axis-part")
+        temporary_id = "1" * 32
+        temporary = target.with_name(f".axis-upload-{temporary_id}.part")
         outside = self.root / "outside.mp4"
         try:
             temporary.symlink_to(outside)
         except OSError as exc:
             self.skipTest(f"当前平台不能创建文件符号链接: {exc}")
 
-        manager._publish_shared_output(job_id, str(source))
+        fixed_uuid = type("FixedUuid", (), {"hex": temporary_id})()
+        with patch("workstation_manager.video_jobs.uuid.uuid4", return_value=fixed_uuid):
+            with self.assertRaises(VideoJobError) as raised:
+                manager._publish_shared_output(job_id, str(source))
 
         self.assertFalse(outside.exists())
-        self.assertEqual(target.read_bytes(), b"video")
+        self.assertEqual(raised.exception.code, "shared_output_copy_failed")
+        self.assertFalse(target.exists())
 
     def test_shared_output_final_symlink_is_not_accepted_as_published_file(self) -> None:
         source = self.root / "result.mp4"
@@ -1068,6 +1174,8 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             accepted = client.post("/api/v1/video-jobs", json=self.payload("api-1"))
             self.assertEqual(accepted.status_code, 202, accepted.text)
             self.assertNotIn("workflow_json", accepted.json()["job"])
+            self.assertNotIn("source_videos", accepted.json()["job"])
+            self.assertNotIn("_source_videos", accepted.json()["job"]["video_spec"])
             legacy = self.payload("api-legacy")
             legacy["callback_authorization"] = "Basic obsolete"
             self.assertEqual(client.post("/api/v1/video-jobs", json=legacy).status_code, 422)
