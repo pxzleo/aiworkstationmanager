@@ -3,18 +3,23 @@ from __future__ import annotations
 import json
 import hashlib
 import base64
+import contextlib
+import io
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "integrations" / "opencode" / "skills" / "h3-ref2v-video-pipeline"
 AXIS_SKILL = ROOT / "integrations" / "opencode" / "skills" / "axis-video" / "SKILL.md"
 BUILDER = SKILL / "scripts" / "build_api.py"
+FINISHER = SKILL / "scripts" / "finish_video.py"
 SHARED_INPUT_RESOLVER = SKILL / "scripts" / "resolve_shared_input.py"
 BASELINE = SKILL / "assets" / "h3-ref2v-8step-api.json"
 FOUR_STEP_BASELINE = SKILL / "assets" / "h3-ref2v-4step-api.json"
@@ -641,6 +646,73 @@ try {{
             self.assertIn("历史结果对比", skill)
             self.assertIn("source_detection_report.json", skill)
             self.assertIn("免检快速模式", skill)
+
+    def test_video_skills_default_to_no_verification_unless_explicitly_requested(self) -> None:
+        for path in (AXIS_SKILL, SKILL / "SKILL.md"):
+            skill = path.read_text(encoding="utf-8")
+            self.assertIn("默认使用免检快速模式", skill)
+            self.assertIn("只有用户明确要求", skill)
+            self.assertIn("源片视觉分析", skill)
+            self.assertIn("默认免检，结果未检验", skill)
+
+        axis_skill = AXIS_SKILL.read_text(encoding="utf-8")
+        self.assertNotIn("正常模式任务完成（AXIS 回传输出文件）后必须先验收再交付", axis_skill)
+
+    def test_finisher_verifies_only_when_explicitly_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mp4"
+            generated = root / "generated.mp4"
+            source.write_bytes(b"source")
+            generated.write_bytes(b"generated")
+
+            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                Path(command[-1]).write_bytes(b"finished")
+                return subprocess.CompletedProcess(command, 0)
+
+            def fake_check_output(command: list[str], **_kwargs: object) -> bytes:
+                joined = " ".join(command)
+                if "packet=pts_time" in joined:
+                    return b'{"packets": []}'
+                if "format=duration" in joined:
+                    return b'{"streams": [], "format": {"duration": "1.0"}}'
+                if command[0] == "ffprobe":
+                    return b'{"streams": [{"codec_type": "video", "width": 16, "height": 16, "r_frame_rate": "24/1", "duration": "1.0"}]}'
+                return b"identical-audio"
+
+            def execute(extra_args: list[str]) -> tuple[Path, mock.Mock]:
+                output = root / f"output-{len(extra_args)}.mp4"
+                argv = [
+                    str(FINISHER), "--workdir", str(root), "--generated", str(generated), "--source", str(source),
+                    "--output", str(output), *extra_args,
+                ]
+                with (
+                    mock.patch.object(sys, "argv", argv),
+                    mock.patch("subprocess.run", side_effect=fake_run),
+                    mock.patch("subprocess.check_output", side_effect=fake_check_output) as check_output,
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    try:
+                        runpy.run_path(str(FINISHER), run_name="__main__")
+                    except SystemExit as exc:
+                        self.assertEqual(exc.code, 0)
+                return output, check_output
+
+            default_output, default_checks = execute([])
+            self.assertTrue(default_output.exists())
+            self.assertEqual(default_checks.call_count, 1)
+
+            report = root / "verification.json"
+            verified_output, verified_checks = execute(["--verify", "--report", report.name])
+            self.assertTrue(verified_output.exists())
+            self.assertGreater(verified_checks.call_count, 1)
+            self.assertTrue(json.loads(report.read_text(encoding="utf-8"))["verified"])
+
+            legacy_report = root / "legacy-verification.json"
+            legacy_output, legacy_checks = execute(["--report", legacy_report.name])
+            self.assertTrue(legacy_output.exists())
+            self.assertGreater(legacy_checks.call_count, 1)
+            self.assertTrue(json.loads(legacy_report.read_text(encoding="utf-8"))["verified"])
 
     def test_builder_rejects_frames_outside_the_h3_grid(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

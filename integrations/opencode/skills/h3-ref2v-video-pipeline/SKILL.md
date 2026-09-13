@@ -1,6 +1,6 @@
 ---
 name: h3-ref2v-video-pipeline
-description: Build and finish local MiniMax H3 reference-to-video workflows for AXIS-managed ComfyUI generation. Use for reference-video editing that must preserve timing, camera motion, scene continuity, and optional source audio; supports multi-segment jobs, normal visual QA, and an explicit no-preview/no-verification fast path. Not for text-only video, hosted provider APIs, or direct service lifecycle control.
+description: Build and finish local MiniMax H3 reference-to-video workflows for AXIS-managed ComfyUI generation. Use for reference-video editing that must preserve timing, camera motion, scene continuity, and optional source audio; clothing-change and occlusion-removal tasks default to no preview or final verification and verify only when explicitly requested. Not for text-only video, hosted provider APIs, or direct service lifecycle control.
 ---
 
 # H3 Ref2V 视频流水线
@@ -13,9 +13,10 @@ description: Build and finish local MiniMax H3 reference-to-video workflows for 
 
 ## 执行模式
 
-- 正常模式：允许先做短预览，正式生成后检查媒体流并抽帧验收。
-- 免检快速模式：用户明确说“跳过检验”“跳过验收”“不要样片”或“直接正式生成”时立即启用。保留生成提示词所必需的源片参数探测和源片视觉分析，但禁止生成 preview/sample，禁止生成用于成片验收的截图，禁止视觉验收、成片 `ffprobe` 检查和音频哈希检查，也不得后台补做；源片分析完成后直接构建并提交正式工作流。交付时标注“按用户要求未检验”，不得声称 PASS。
-- 免检只省略样片和验收，不放宽单分支、帧数、资源门槛、AXIS 串行调度或不覆盖原文件等规则。
+- 视频换装或移除遮挡物任务默认使用免检快速模式：除非用户明确要求“检验”“验证”“验收”“检查成片”或“制作样片”，否则禁止生成 preview/sample，禁止生成用于成片验收的截图，禁止视觉验收、成片 `ffprobe` 检查和音频哈希检查，也不得后台补做。保留生成提示词所必需的源片参数探测和源片视觉分析，源片分析完成后直接构建并提交正式工作流。交付时标注“默认免检，结果未检验”，不得声称 PASS。
+- 换装或移除遮挡物任务的明确检验模式：只有用户明确要求检验时才启用，并且只执行用户要求的检验范围。用户笼统要求检验、验证或验收时，正式生成后检查用户要求的媒体流并按截图隔离规则抽帧验收；用户只要求样片时仅制作并检查样片，不自动扩大到成片验收。
+- 免检只省略样片和成片检验，不放宽单分支、帧数、资源门槛、AXIS 串行调度、不覆盖原文件、安全分段、拼接、格式转换或音频回填等规则。
+- 其他类型的 Ref2V 任务继续使用正常模式：可先做短预览，正式生成后检查媒体流并抽帧验收。
 
 ## 所有截图的强制隔离
 
@@ -103,9 +104,9 @@ python scripts\build_api.py `
 - 多段正式任务把全部单分支 JSON 按顺序一次传给 `axis_video_submit_batch`。AXIS 会逐段释放生成模型，批内不恢复场景、不回调，批尾统一恢复并回调一次。
 - 失败后只重建、重提失败片段；保留已完成片段，不得重复生成。
 - 取消是终态。收到取消结果后不得重新生成或重新提交已取消任务，也不得继续同批后续片段；只有用户在取消之后提出新的明确生成要求时，才可创建新任务。取消不得套用失败重试规则。
-- AXIS 输出可直接传给 `finish_video.py --generated <video>`，回填源片原音频并裁到目标时长。输出已存在时脚本必须拒绝覆盖。
+- AXIS 输出可直接传给 `finish_video.py --generated <video>`，回填源片原音频并裁到目标时长。换装或移除遮挡物任务默认免检时不要传 `--verify` 或 `--report`；这些任务被明确要求检验音频时，以及其他 Ref2V 任务按正常模式收尾时，都传 `--verify --report <报告名>`。输出已存在时脚本必须拒绝覆盖。
 
-正常模式下，先用 `ffprobe` 确认用户要求的音视频流和时长，再按“所有截图的强制隔离”执行视觉验收。免检快速模式只跳过预览和验收截图；为本次提示词生成源片检测报告仍是必需步骤，并同样受截图隔离规则约束。
+换装或移除遮挡物任务中，用户明确要求检验时按其要求用 `ffprobe` 确认相应音视频流和时长，并按“所有截图的强制隔离”执行所需视觉验收；默认免检快速模式跳过预览和成片验收。为本次提示词生成源片检测报告仍是必需步骤，并同样受截图隔离规则约束。其他类型的 Ref2V 任务仍按正常模式验收。
 
 需要局域网交付时，复用 AXIS 的固定 HTTP 文件服务，当前约定端口为 `18765`、根目录为 `D:/共享/`。它不是 `python -m http.server`：健康检查使用 `GET /health`，目录列表使用 `GET /api/v1/files`，文件读取使用 `GET /api/v1/files/content?path=<URL 编码的相对路径>`。根路径 `/` 返回 404、文件内容接口对 `HEAD` 返回 405 都不表示服务异常。工具调用之间不共享 PowerShell 变量；每次调用必须在同一条命令内定义并使用变量，且在读取响应头前先确认请求成功。不得另外启动临时文件服务，也不得停止或接管未知监听。交付前验证真实局域网 URL 返回 HTTP 200。
 
@@ -119,6 +120,6 @@ python scripts\build_api.py `
 - `scripts/build_api_batch.py`：仅用于读取或迁移旧的多分支图；不得将其输出提交给 AXIS。
 - `scripts/submit_wait.ps1`：仅在明确要求绕过 AXIS、直接调试独立 ComfyUI 时提交并等待单个 prompt；不能用于场景切换任务。
 - `scripts/submit_multi.ps1`：仅在明确要求绕过 AXIS、直接调试独立 ComfyUI 时提交多个独立 prompt；不能用于场景切换任务。
-- `scripts/finish_video.py`：按源片参数收尾并在正常模式下验证原音频一致性。
+- `scripts/finish_video.py`：按源片参数收尾；默认不检验，新调用只有传入 `--verify --report <报告名>` 时才验证原音频一致性并写报告。为兼容旧调用，单独传入 `--report` 也视为明确启用检验。
 
 所有脚本错误必须直接报告根因。AXIS 工具报错时原样说明，不要绕过调度器继续切换服务或重复提交。

@@ -214,6 +214,8 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 
 `integrations/opencode/plugins/axis-video.ts` 注册单任务 `axis_video_submit` 和多段 `axis_video_submit_batch` 工具并自动读取当前 `sessionID` 与工作目录，同时在随机 loopback 端口创建无认证回调桥；收到 AXIS 汇总结果后通过 OpenCode 内部客户端继续原会话。取消回调把取消定义为生成终态，明确禁止 OpenCode 自动重新生成、重新提交或继续批次后续片段；只有用户在取消之后提出新的明确生成要求时才允许创建新任务。回调开始前已接受的取消覆盖成功或失败结果；任务进入 `callback_pending` 后不再接受取消，前端同时隐藏取消按钮，形成明确的取消截止点。项目在 `integrations/opencode/skills/` 中同时保留 `axis-video` 调度 Skill 和 `h3-ref2v-video-pipeline` 工作流 Skill，后者包含去敏的 4/8 步基线、API 图构建、直接提交和成片收尾脚本。运行 `integrations/opencode/Install-AxisVideo.ps1` 可把插件及两项 Skill 安装到当前用户的 OpenCode 配置目录，重启 OpenCode 后输入“使用场景切换技能生成视频”即可触发。
 
+两项视频 Skill 对视频换装或移除遮挡物任务默认使用免检快速模式，不制作样片，也不执行成片抽帧、媒体流或音频哈希检验；只有用户明确要求检验、验证、验收、检查成片或制作样片时，才执行用户要求的检验范围。默认免检仍保留生成提示词所需的源片参数探测和独立视觉分析，以及安全分段、正式生成、拼接、格式转换和音频回填。`finish_video.py` 默认只收尾；换装任务被明确要求检验或其他 Ref2V 任务按正常模式收尾时，新调用传入 `--verify --report <报告名>` 执行原音频一致性检验。为兼容已运行的旧 Skill 调用，单独传入旧版必填参数 `--report` 也视为明确启用检验。其他视频任务继续使用原有验收规则。
+
 当生成请求只给出素材名称而没有下载链接或绝对路径时，两项 Skill 统一调用 `h3-ref2v-video-pipeline/scripts/resolve_shared_input.py`，仅从 `file_service_root/输入/` 解析视频或图片。可传 `--root` 使用非默认根目录，名称可为完整文件名或唯一文件 stem；目录片段、非媒体文件、缺失和多重匹配都会明确失败。`build_api.py --source` 对仅含文件名的值自动执行相同的视频解析。
 
 插件按任务或批次分别记录当前会话的未就绪状态，并通过 `GET /session/{session_id}/handoff_ready/{job_or_batch_id}` 向 AXIS 暴露空闲握手：OpenCode 会话为 `busy`/`retry` 时返回 `425`，触发 `session.idle` 或状态变为 `idle` 后返回 `204`。完成回调或用户普通消息触发的新响应都会重新阻止同一会话的其他待执行任务，避免并发任务绕过握手。AXIS 只有在收到 `204` 后才检查 NInfer 空闲并切换视频场景；握手超时则保持 NInfer 运行并以 `opencode_handoff_timeout` 失败。对没有该路由而返回 `404`/`405` 的旧插件保持兼容。
