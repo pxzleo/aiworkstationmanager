@@ -8,9 +8,9 @@
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
   <script src="theme.js?v=20260828-1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260913-13">
+  <link rel="stylesheet" href="styles.css?v=20260913-14">
 </head>
-<body class="auth-pending">
+<body class="auth-pending app-initializing">
   <svg class="svg-sprite" aria-hidden="true">
     <symbol id="i-grid" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></symbol>
     <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Zm-7.5 9 7.5 4 7.5-4M4.5 16l7.5 4 7.5-4"/></symbol>
@@ -40,6 +40,11 @@
     <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5V4Zm3 0v6h8V4M8 20v-6h8v6"/></symbol>
     <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
   </svg>
+
+  <div class="startup-screen" id="startupScreen" role="status" aria-label="正在载入 AXIS">
+    <div class="brand startup-brand"><div class="brand-mark"><span></span><span></span></div><div><strong>AXIS</strong><small>AI WORKSTATION</small></div></div>
+    <span class="startup-progress" aria-hidden="true"></span>
+  </div>
 
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
@@ -363,10 +368,10 @@
       <div class="dialog-actions"><button class="button secondary" id="cancelSceneSwitchButton" type="button">终止切换并返回</button><button class="button primary" id="closeSceneProgressButton" type="button" hidden>返回工作场景</button></div>
     </section>
   </dialog>
-  <script src="i18n.js?v=20260913-10"></script>
+  <script src="i18n.js?v=20260913-11"></script>
   <script src="request-guard.js?v=20260827-5"></script>
   <script src="gpu-layout.js?v=20260828-1"></script>
   <script src="monitor-chart.js?v=20260828-6"></script>
-  <script src="app.js?v=20260913-13"></script>
+  <script src="app.js?v=20260913-14"></script>
 </body>
 </html>

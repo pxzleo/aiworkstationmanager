@@ -29,7 +29,7 @@ Release packages contain neither `requirements-dev.txt` nor `tests/`; their deve
 
 The API prefix is `/api/v1`; requests and responses use JSON. Error responses keep a stable `error.code` and localize the message from `Accept-Language`.
 
-Initial `auth/setup` is restricted to direct loopback access. After setup, read endpoints other than health, authentication status, and login require a session. Every write except `auth/setup` and `auth/login`, including `auth/logout`, also requires the current session token in `X-CSRF-Token`. The session cookie is `HttpOnly` and `SameSite=Strict`.
+Initial `auth/setup` is restricted to direct loopback access. While the frontend checks the session it shows only the AXIS startup screen, not the login form; the login UI appears only after an unauthenticated result or a failed check. After setup, read endpoints other than health, authentication status, and login require a session. Every write except `auth/setup` and `auth/login`, including `auth/logout`, also requires the current session token in `X-CSRF-Token`. The session cookie is `HttpOnly` and `SameSite=Strict`.
 
 Successful endpoints return JSON objects. Create endpoints return `201`, asynchronous actions return `202`, delete endpoints return an empty `204`, and other successful endpoints return `200`. Errors use `{"error":{"code":"...","message":"...","details":...}}`; validation failures return `422`, missing authentication returns `401`, CSRF or source restrictions return `403`, missing targets return `404`, and conflicts or an existing active operation return `409`.
 

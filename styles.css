@@ -697,6 +697,13 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .toast svg { width: 13px; }
 
 .auth-gate { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: radial-gradient(circle at 50% 22%, rgba(var(--accent-rgb),.055), transparent 36%), var(--bg); }
+.startup-screen { position: fixed; inset: 0; z-index: 101; display: grid; place-content: center; justify-items: center; gap: 22px; background: var(--bg); }
+body:not(.app-initializing) .startup-screen { display: none; }
+.app-initializing .auth-gate { display: none; }
+.startup-brand { padding: 0; }
+.startup-progress { width: 80px; height: 2px; overflow: hidden; background: var(--line); }
+.startup-progress::after { content: ''; display: block; width: 36px; height: 100%; background: var(--accent); animation: startupProgress 1s ease-in-out infinite alternate; }
+@keyframes startupProgress { from { transform: translateX(-36px); } to { transform: translateX(80px); } }
 body:not(.auth-pending) .auth-gate { display: none; }
 .auth-pending .app-shell { visibility: hidden; }
 .auth-panel { position: relative; width: min(420px, 100%); padding: 32px; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 30px 90px rgba(0,0,0,.48); }

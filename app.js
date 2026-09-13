@@ -123,7 +123,7 @@ function clearTimers() { state.timers.forEach(clearTimeout); state.timers.clear(
 function startPolling(name, operation, interval) { const generation = requestGuard.generation; const run = async () => { if (generation !== requestGuard.generation || document.body.classList.contains('auth-pending')) return; try { await operation(); } catch (_) {} if (generation !== requestGuard.generation) return; state.timers.set(name, setTimeout(run, interval)); }; state.timers.set(name, setTimeout(run, interval)); }
 
 function showAuth(mode, message = '') {
-  clearTimers(); state.authMode = mode; state.csrfToken = null; document.body.classList.add('auth-pending');
+  clearTimers(); state.authMode = mode; state.csrfToken = null; document.body.classList.remove('app-initializing'); document.body.classList.add('auth-pending');
   const setup = mode === 'setup'; text('authEyebrow', setup ? '首次设置' : '安全访问'); text('authTitle', setup ? '创建本机管理员' : '登录工作站'); text('authDescription', setup ? '首次设置仅允许在本机完成。密码至少 4 个字符。' : '使用管理员账户继续。'); text('authSubmit', setup ? '创建管理员并进入' : '登录'); text('authError', message);
   byId('authForm').hidden = false; byId('confirmPasswordLabel').hidden = !setup; byId('confirmPasswordInput').hidden = !setup; byId('confirmPasswordInput').required = setup; byId('rememberLoginLabel').hidden = setup; byId('rememberLoginInput').disabled = setup;
 }
@@ -140,7 +140,7 @@ async function bootstrap() {
   try { const status = await api('/auth/status', { authRequest: true }); if (!status.configured) return showAuth('setup'); if (!status.authenticated) return showAuth('login'); const me = await api('/auth/me', { authRequest: true }); state.csrfToken = me.csrf_token; state.username = me.username; enterApplication(); }
   catch (error) { showAuth('login', error.message); }
 }
-function enterApplication() { navigate(rememberedPage()); document.body.classList.remove('auth-pending'); text('logoutButton', (state.username || '管理员').slice(0, 2).toUpperCase()); clearTimers(); refreshAll(); startPolling('snapshot', refreshSnapshot, SNAPSHOT_INTERVAL_MS); startPolling('history', refreshHistory, HISTORY_INTERVAL_MS); startPolling('services', refreshServicesAndScenes, SERVICE_INTERVAL_MS); startPolling('video-jobs', refreshVideoJobs, 2000); startPolling('automatic-tasks', refreshAutomaticTasks, 2000); startPolling('logs', refreshLogs, SERVICE_INTERVAL_MS); }
+function enterApplication() { navigate(rememberedPage()); document.body.classList.remove('auth-pending', 'app-initializing'); text('logoutButton', (state.username || '管理员').slice(0, 2).toUpperCase()); clearTimers(); refreshAll(); startPolling('snapshot', refreshSnapshot, SNAPSHOT_INTERVAL_MS); startPolling('history', refreshHistory, HISTORY_INTERVAL_MS); startPolling('services', refreshServicesAndScenes, SERVICE_INTERVAL_MS); startPolling('video-jobs', refreshVideoJobs, 2000); startPolling('automatic-tasks', refreshAutomaticTasks, 2000); startPolling('logs', refreshLogs, SERVICE_INTERVAL_MS); }
 async function logout() { try { await api('/auth/logout', { method: 'POST', authRequest: true }); showAuth('login', '已退出登录。'); } catch (error) { showToast(error.message); } }
 
 async function refreshAll() { await Promise.allSettled([refreshSnapshot(), refreshHistory(), refreshServicesAndScenes(), refreshVideoJobs(), refreshAutomaticTasks(), refreshUsers(), refreshLogs(), refreshSystemInfo(), refreshFiles(state.filePath)]); }

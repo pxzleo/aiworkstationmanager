@@ -289,10 +289,20 @@ test('scene editor and management log remain wired', () => {
   assert.ok(css.includes('overflow-wrap: anywhere'));
 });
 
+test('authenticated refresh keeps the login panel hidden while the session is checked', () => {
+  assert.ok(html.includes('<body class="auth-pending app-initializing">'));
+  assert.ok(html.includes('id="startupScreen"'));
+  assert.ok(css.includes('.app-initializing .auth-gate { display: none; }'));
+  assert.ok(css.includes('body:not(.app-initializing) .startup-screen { display: none; }'));
+  assert.ok(js.includes("document.body.classList.remove('app-initializing')"));
+  assert.ok(js.includes("document.body.classList.remove('auth-pending', 'app-initializing')"));
+  assert.ok(i18n.includes("'正在载入 AXIS': 'Loading AXIS'"));
+});
+
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260913-13'));
-  assert.ok(html.includes('i18n.js?v=20260913-10'));
-  assert.ok(html.includes('app.js?v=20260913-13'));
+  assert.ok(html.includes('styles.css?v=20260913-14'));
+  assert.ok(html.includes('i18n.js?v=20260913-11'));
+  assert.ok(html.includes('app.js?v=20260913-14'));
 });
 
 test('video job page monitors every scheduler stage and exposes cancellation', () => {
@@ -536,9 +546,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260913-13'));
-  assert.ok(html.includes('i18n.js?v=20260913-10'));
-  assert.ok(html.includes('app.js?v=20260913-13'));
+  assert.ok(html.includes('styles.css?v=20260913-14'));
+  assert.ok(html.includes('i18n.js?v=20260913-11'));
+  assert.ok(html.includes('app.js?v=20260913-14'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
