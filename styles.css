@@ -350,13 +350,16 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-browser.thumbnail-view .file-row time { display: none; }
 @keyframes fileViewReveal { from { opacity: .45; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .media-dialog { width: min(920px, calc(100vw - 32px)); padding: 0; }
-.media-dialog-shell { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: min(680px, calc(100vh - 48px)); }
+.media-dialog-shell { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: min(680px, calc(100vh - 48px)); }
 .media-dialog-shell > header, .media-dialog-shell > footer { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
 .media-dialog-shell > header h2 { max-width: 700px; margin: 3px 0 0; overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .media-dialog-shell > footer { min-height: 64px; justify-content: flex-end; border-top: 1px solid var(--line); border-bottom: 0; }
 .media-stage { min-height: 320px; display: grid; place-items: center; padding: 20px; background: #050708; }
-.media-stage video { width: 100%; max-height: min(68vh, 560px); background: #000; }
+.media-stage video { width: 100%; max-height: min(68vh, 560px); background: #000; touch-action: pan-x pinch-zoom; }
 .media-stage audio { width: min(680px, 100%); }
+.media-swipe-notice { position: absolute; z-index: 3; left: 50%; bottom: 78px; max-width: calc(100% - 32px); margin: 0; padding: 8px 12px; overflow: hidden; border-radius: 999px; background: rgba(5, 7, 8, .82); color: #fff; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; opacity: 0; transform: translate(-50%, 8px); transition: opacity .16s ease, transform .16s ease; }
+.media-swipe-notice.show { opacity: 1; transform: translate(-50%, 0); }
+.media-dialog-shell:fullscreen { width: 100vw; height: 100vh; min-height: 100%; background: var(--surface); }
 
 @media (max-width: 820px) {
   .file-service-heading .heading-actions { width: 100%; }

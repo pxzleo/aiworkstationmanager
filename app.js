@@ -9,6 +9,8 @@ const ACTION_TIMEOUT_MS = 30000;
 const READ_RETRY_DELAYS_MS = [400, 1200];
 const NETWORK_NOTICE_COOLDOWN_MS = 15000;
 const PAGE_STORAGE_KEY = 'axis-active-page';
+const MEDIA_SWIPE_MIN_DISTANCE_PX = 56;
+const MEDIA_SWIPE_AXIS_RATIO = 1.2;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MONITOR_GPU_COLORS = ['#a78bfa', '#fb923c', '#22c55e', '#f472b6', '#38bdf8', '#eab308'];
 const gpuLayout = window.AxisGpuLayout;
@@ -23,10 +25,11 @@ let progressCancelLabel = '终止切换并返回';
 let draggedSceneId = null;
 let fileThumbnailObserver = null;
 let automaticTaskOrderSaving = false;
+let mediaSwipeNoticeTimer = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
-  fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail',
+  fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', mediaPath: '',
   historyWindowMinutes: 15, historyLoading: false,
   chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
@@ -230,9 +233,21 @@ function formatFileSize(value) { if (!Number.isFinite(value)) return '—'; if (
 function fileLabel(entry) { if (entry.type === 'directory') return '目录'; if (entry.playable) return entry.media_type?.startsWith('audio/') ? '音频' : '视频'; return '文件'; }
 function fileActionLabel(entry) { return `${ui(entry.type === 'directory' ? '打开' : entry.playable ? '播放' : '下载')} ${entry.name}`; }
 function downloadFile(entry) { const link = document.createElement('a'); link.href = fileContentUrl(entry.path, true); link.download = entry.name; document.body.append(link); link.click(); link.remove(); }
-function closeMedia() { const stage = byId('mediaStage'); stage.querySelectorAll('audio, video').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); if (byId('mediaDialog').open) byId('mediaDialog').close(); }
-function requestMediaFullscreen(player) { try { if (player.requestFullscreen) { player.requestFullscreen().catch((error) => showToast(`${ui('无法进入全屏')}：${error.message}`)); } else if (player.webkitEnterFullscreen) { player.webkitEnterFullscreen(); } } catch (error) { showToast(`${ui('无法进入全屏')}：${error.message}`); } }
-function openMedia(entry, fullscreen = false) { const kind = entry.media_type?.startsWith('audio/') ? 'audio' : 'video'; const player = document.createElement(kind); player.controls = true; player.autoplay = true; player.preload = 'metadata'; player.src = fileContentUrl(entry.path); player.dataset.i18nSkip = ''; text('mediaTitle', entry.name); const download = byId('mediaDownloadLink'); download.href = fileContentUrl(entry.path, true); download.download = entry.name; byId('mediaStage').replaceChildren(player); byId('mediaDialog').showModal(); if (fullscreen && kind === 'video') requestMediaFullscreen(player); }
+function releaseMedia() { const stage = byId('mediaStage'); stage.querySelectorAll('audio, video').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); state.mediaPath = ''; clearTimeout(mediaSwipeNoticeTimer); byId('mediaSwipeNotice').classList.remove('show'); text('mediaSwipeNotice', ''); }
+async function closeMedia() { const shell = byId('mediaDialog').querySelector('.media-dialog-shell'); if (document.fullscreenElement === shell) { try { await document.exitFullscreen(); } catch (error) { showMediaSwipeNotice(`${ui('无法退出全屏')}：${error.message}`); return; } } releaseMedia(); if (byId('mediaDialog').open) byId('mediaDialog').close(); }
+function requestMediaFullscreen(player) { const target = byId('mediaDialog').querySelector('.media-dialog-shell'); try { if (target.requestFullscreen) { target.requestFullscreen().catch((error) => showToast(`${ui('无法进入全屏')}：${error.message}`)); } else if (player.webkitEnterFullscreen) { player.webkitEnterFullscreen(); } } catch (error) { showToast(`${ui('无法进入全屏')}：${error.message}`); } }
+function setMediaEntry(entry, player) { state.mediaPath = entry.path; text('mediaTitle', entry.name); const download = byId('mediaDownloadLink'); download.href = fileContentUrl(entry.path, true); download.download = entry.name; player.src = fileContentUrl(entry.path); }
+function adjacentMediaVideo(offset) { const videos = state.files.filter((item) => item.media_type?.startsWith('video/')); const current = videos.findIndex((item) => item.path === state.mediaPath); return current < 0 ? null : videos[current + offset] || null; }
+function showMediaSwipeNotice(message) { const notice = byId('mediaSwipeNotice'); text('mediaSwipeNotice', message); notice.classList.add('show'); clearTimeout(mediaSwipeNoticeTimer); mediaSwipeNoticeTimer = setTimeout(() => notice.classList.remove('show'), 1800); }
+function switchMediaVideo(offset) { const player = byId('mediaStage').querySelector('video'); if (!player) return; const entry = adjacentMediaVideo(offset); if (!entry) { showMediaSwipeNotice(ui(offset < 0 ? '已经是第一个视频' : '已经是最后一个视频')); return; } showMediaSwipeNotice(entry.name); player.pause(); setMediaEntry(entry, player); player.load(); player.play().catch((error) => showMediaSwipeNotice(`${ui('视频播放失败')}：${error.message}`)); }
+function bindMediaSwipe(player) {
+  let start = null;
+  player.addEventListener('touchstart', (event) => { const touch = event.touches.length === 1 ? event.touches[0] : null; start = touch ? { x: touch.clientX, y: touch.clientY } : null; }, { passive: true });
+  player.addEventListener('touchmove', (event) => { if (!start || event.touches.length !== 1) return; const touch = event.touches[0]; const deltaX = touch.clientX - start.x; const deltaY = touch.clientY - start.y; if (Math.abs(deltaY) >= 12 && Math.abs(deltaY) > Math.abs(deltaX) * MEDIA_SWIPE_AXIS_RATIO) event.preventDefault(); }, { passive: false });
+  player.addEventListener('touchend', (event) => { if (!start || !event.changedTouches.length) { start = null; return; } const touch = event.changedTouches[0]; const deltaX = touch.clientX - start.x; const deltaY = touch.clientY - start.y; start = null; if (Math.abs(deltaY) < MEDIA_SWIPE_MIN_DISTANCE_PX || Math.abs(deltaY) <= Math.abs(deltaX) * MEDIA_SWIPE_AXIS_RATIO) return; event.preventDefault(); switchMediaVideo(deltaY < 0 ? 1 : -1); }, { passive: false });
+  player.addEventListener('touchcancel', () => { start = null; }, { passive: true });
+}
+function openMedia(entry, fullscreen = false) { const kind = entry.media_type?.startsWith('audio/') ? 'audio' : 'video'; const player = document.createElement(kind); player.controls = true; player.autoplay = true; player.preload = 'metadata'; player.dataset.i18nSkip = ''; setMediaEntry(entry, player); if (kind === 'video') bindMediaSwipe(player); byId('mediaStage').replaceChildren(player); byId('mediaDialog').showModal(); if (fullscreen && kind === 'video') requestMediaFullscreen(player); }
 function openFileEntry(entry, fullscreen = false) { if (entry.type === 'directory') refreshFiles(entry.path).catch(() => {}); else if (entry.playable) openMedia(entry, fullscreen); else downloadFile(entry); }
 function releaseFileThumbnailVideos(rows = byId('fileRows')) {
   fileThumbnailObserver?.disconnect(); fileThumbnailObserver = null;
@@ -755,6 +770,6 @@ byId('fileRenameForm').addEventListener('submit', renameFileEntry);
 byId('fileSortSelect').addEventListener('change', (event) => { state.fileSort = event.target.value; refreshFiles(state.filePath).catch(() => {}); });
 byId('fileBrowser').parentElement.querySelector('.file-view-switch').addEventListener('click', (event) => { const button = event.target.closest('[data-file-view]'); if (button) setFileView(button.dataset.fileView); });
 byId('closeMediaButton').addEventListener('click', closeMedia);
-byId('mediaDialog').addEventListener('close', () => { const stage = byId('mediaStage'); stage.querySelectorAll('audio, video').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); });
+byId('mediaDialog').addEventListener('close', releaseMedia);
 
 bootstrap();

@@ -300,9 +300,9 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260913-14'));
-  assert.ok(html.includes('i18n.js?v=20260913-11'));
-  assert.ok(html.includes('app.js?v=20260913-17'));
+  assert.ok(html.includes('styles.css?v=20260913-15'));
+  assert.ok(html.includes('i18n.js?v=20260913-12'));
+  assert.ok(html.includes('app.js?v=20260913-18'));
 });
 
 test('read polling tolerates transient network failures without retrying writes', () => {
@@ -435,8 +435,21 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(js.includes('fileContentUrl(entry.path, true)'));
   assert.ok(js.includes("entry.media_type?.startsWith('audio/') ? 'audio' : 'video'"));
   assert.ok(js.includes('function requestMediaFullscreen(player)'));
-  assert.ok(js.includes('player.requestFullscreen'));
+  assert.ok(js.includes("const target = byId('mediaDialog').querySelector('.media-dialog-shell')"));
+  assert.ok(js.includes('target.requestFullscreen'));
   assert.ok(js.includes('player.webkitEnterFullscreen'));
+  assert.ok(js.includes('document.fullscreenElement === shell'));
+  assert.ok(js.includes('await document.exitFullscreen()'));
+  assert.ok(js.includes("showMediaSwipeNotice(`${ui('无法退出全屏')}：${error.message}`)"));
+  assert.ok(js.includes('function adjacentMediaVideo(offset)'));
+  assert.ok(js.includes("state.files.filter((item) => item.media_type?.startsWith('video/'))"));
+  assert.ok(js.includes("player.addEventListener('touchstart'"));
+  assert.ok(js.includes("player.addEventListener('touchmove'"));
+  assert.ok(js.includes("player.addEventListener('touchend'"));
+  assert.ok(js.includes('deltaY < 0 ? 1 : -1'));
+  assert.ok(js.includes('Math.abs(deltaY) < MEDIA_SWIPE_MIN_DISTANCE_PX'));
+  assert.ok(js.includes("showMediaSwipeNotice(ui(offset < 0 ? '已经是第一个视频' : '已经是最后一个视频'))"));
+  assert.ok(html.includes('id="mediaSwipeNotice" role="status" aria-live="polite"'));
   assert.ok(html.includes('<span>操作</span>'));
   assert.ok(!js.includes("fileActionLabel(entry), 'play'"));
   assert.ok(js.includes("function fileActionLabel(entry)"));
@@ -459,12 +472,17 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(css.includes('.file-browser.thumbnail-view .file-rename-button, .file-browser.thumbnail-view .file-delete-button { width: 30px; height: 30px; min-height: 30px; }'));
   assert.ok(css.includes('.file-browser.thumbnail-view .file-size { display: none; }'));
   assert.ok(i18n.includes("'更名': 'Rename'"));
+  assert.ok(i18n.includes("'已经是第一个视频': 'This is the first video'"));
+  assert.ok(i18n.includes("'已经是最后一个视频': 'This is the last video'"));
   assert.ok(css.includes('.file-browser.thumbnail-view #fileRows'));
   assert.ok(css.includes('aspect-ratio: 9 / 16'));
   assert.ok(css.includes('.file-browser.thumbnail-view #fileRows { grid-template-columns: repeat(2, minmax(0, 1fr));'));
   assert.ok(css.includes('.file-thumbnail img, .file-thumbnail video'));
   assert.ok(css.includes('.file-thumbnail video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }'));
   assert.ok(css.includes('.media-stage video'));
+  assert.ok(css.includes('touch-action: pan-x pinch-zoom'));
+  assert.ok(css.includes('.media-dialog-shell:fullscreen'));
+  assert.ok(css.includes('.media-swipe-notice.show'));
   assert.ok(i18n.includes("'文件服务': 'File Service'"));
 });
 
@@ -559,9 +577,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260913-14'));
-  assert.ok(html.includes('i18n.js?v=20260913-11'));
-  assert.ok(html.includes('app.js?v=20260913-17'));
+  assert.ok(html.includes('styles.css?v=20260913-15'));
+  assert.ok(html.includes('i18n.js?v=20260913-12'));
+  assert.ok(html.includes('app.js?v=20260913-18'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
