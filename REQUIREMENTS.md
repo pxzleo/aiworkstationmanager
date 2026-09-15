@@ -93,15 +93,17 @@
 
 ### 3.5 当前 NInfer 4090 参数快照
 
-当前运行模型为 `qwen3.8-27b`，支持视觉输入，关键参数包括：
+当前运行模型为 `qwen3.8-27b`，支持视觉输入。NInfer 4090 提供 `48G8并发`
+和 `32G4并发` 两个 WebUI 配置模板，当前运行的是 `32G4并发`，关键参数包括：
 
 - 最大上下文：262,144
-- KV capacity：600,000
-- 最大并发：8
+- KV capacity：360,000
+- 最大并发：4
 - 最大等待请求：16
 - KV 类型：INT8
 - MTP speculative decoding：3 个 draft tokens
 - reasoning effort：`xhigh`
+- 单张图片 token 预算：2,048
 - 模型目录以只读方式挂载到容器
 - API 当前发布到 `0.0.0.0:8080`
 
@@ -148,11 +150,13 @@ ASR 与 TTS 使用独立的 user systemd unit `sensevoice-asr-api.service`、`in
 
 ### 3.8 现有启动脚本资产
 
-桌面目录 `C:\Users\xu\Desktop\本地模型启动` 是当前本机 AI 框架启动入口清单。已只读确认以下 7 个入口：
+桌面目录 `C:\Users\xu\Desktop\本地模型启动` 是当前本机 AI 框架启动入口清单。NInfer 4090
+按显存与并发模板提供两个独立登记入口，其余入口继续沿用既有脚本：
 
 | 入口 | 框架/用途 | 底层管理方式 | 主要端口 | GPU/冲突关系 |
 |---|---|---|---|---|
-| `4090-NInfer.cmd` | NInfer + Qwen3.8-27B + NInfer UI | WSL Docker Compose + user systemd | API 8080、UI 8081 | RTX 4090；与 q27 共用 8080；与 vLLM 互斥 |
+| `4090-NInfer-服务管理.ps1` | NInfer + Qwen3.8-27B + NInfer UI，`48G8并发` 模板 | WebUI 模板启动 + WSL Docker Compose + user systemd | API 8080、UI 8081 | RTX 4090；与 vLLM 及 32G4并发入口互斥 |
+| `4090-NInfer-32G4并发-服务管理.ps1` | NInfer + Qwen3.8-27B + NInfer UI，`32G4并发` 模板 | 复用 48G8并发入口的安全启停逻辑 | API 8080、UI 8081 | RTX 4090；与 vLLM 及 48G8并发入口互斥 |
 | `4090-q27.cmd` | q27 Qwen3.8-27B Q6_K | WSL systemd | API 8080 | RTX 4090；与 NInfer、vLLM 互斥 |
 | `4090-vLLM.cmd` | vLLM Qwen3.8-27B FP8 | WSL user transient systemd | API 8000 | RTX 4090；与使用 8189 的 H3 ComfyUI 仍存在 GPU 冲突，但不再共用端口 |
 | `3090-NInfer.cmd` | NInfer 3090 + NInfer UI | WSL Docker Compose + systemd | API 18030、UI 18031 | RTX 3090；只读复用 4090 NInfer 的 `/home/xu/ai_stud/ninfer4090/models/Qwen3.8-27B-Uncensored.ninfer`；与其他 3090 大模型服务互斥 |
@@ -924,6 +928,7 @@ Web UI / HTTP API
 - 管理器不得定时调用任何服务的 `status`，后台监控也不得启动 PowerShell、`wsl.exe`、Docker CLI 或其他子进程。`status` 仅用于用户点击单个服务的“深度检查”、未配置默认场景时的启动校准和生命周期动作失败后的状态校准，单次默认超时 3 秒。启动校准须逐个串行检查，第一轮返回 `unknown` 的服务在整轮结束后重试一次；最终结果更新实际观察状态。
 - 对配置了健康检查地址的服务，管理器在自身进程内每 5 秒发起 HTTP/HTTPS GET，单次超时 1 秒，最多同时检查 2 个服务，并禁止使用系统代理。HTTP 2xx 且响应包含可选匹配文本时为 `running`；接口可达但返回错误或身份不匹配时为 `unhealthy`；拒绝连接时为 `stopped`；超时等无法可靠判断的结果为 `unknown`。期望停止且端点不可达时保持 `stopped`，避免残留 Windows 端口转发产生超时误报；期望运行时同类超时转为 `unhealthy`；期望状态未知但最近一次明确观察为 `unhealthy` 时，因不可达或超时返回 `unknown` 的轻量探测不得把该结果降级。连续两次失败才改变稳定状态，首次成功立即恢复为 `running`。
 - 共用同一主机和端口的登记服务必须使用不同路径或响应匹配文本识别身份。若一个服务检查成功，另一服务在同一端口的检查可达但身份不匹配，则后者判定为 `stopped`，不得把占用端口的其他服务误报为本服务。共用关系必须同时比较用户登记的服务端口与健康检查地址，不能因为运行服务使用独立的 UI 健康检查端口而漏判。
+- NInfer 4090 分别登记为“4090 NInfer 48G 8并发”和“4090 NInfer 32G 4并发”。两个入口共用 API 8080、UI 8081 和同一个容器生命周期，但启动时必须分别通过 WebUI 应用 `48G8并发`、`32G4并发` 模板；脚本 `status` 必须同时核对运行时 KV capacity 与 slot 数，非本入口配置返回 `stopped`，`stop` 不得停止另一配置。后台健康检查使用 `/api/snapshot` 中的运行时 KV capacity 文本区分两个入口。
 - 每个服务分别保存 `desired_state` 和 `observed_state`。前者记录管理器最后要求的目标状态，后者记录健康检查、动作后验证或手动深度检查发现的实际状态；页面、总览和场景均以 `observed_state` 为准。期望运行但实际停止显示“意外停止”，期望停止但实际运行显示“外部启动”。新服务两种状态均为 `unknown`。
 - 健康监控只在状态或错误发生变化时写入 SQLite；连续成功检查只更新进程内检查时间，避免每 5 秒写盘。管理器重启先恢复最后观察状态；没有默认场景时完成启动校准，有默认场景时提交启动场景切换，随后开始后台轻量健康检查。
 - 同一时刻只执行一个服务动作或场景切换；同一数据库只允许一个管理器实例持有进程锁，第二实例必须明确启动失败。删除服务仅删除登记记录，并由数据库级联将其从全部场景移除，不删除脚本、项目、模型或服务本身。
