@@ -239,6 +239,7 @@ class HistoryStore:
                 "total_power_w": power.get("total_w"),
                 "measured_power_w": power.get("measured_w"),
                 "estimated_power_w": power.get("estimated_w"),
+                "cpu_power_w": power.get("cpu_package_w"),
                 "cpu_load_percent": cpu.get("load_percent"),
                 "cpu_temperature_c": cpu.get("temperature_c"),
                 "cpu_frequency_mhz": cpu.get("frequency_mhz"),

@@ -101,5 +101,25 @@
       .reduce((nearest, entry) => nearest === null || Math.abs(entry.timestamp - targetTimestamp) < Math.abs(nearest.timestamp - targetTimestamp) ? entry : nearest, null)?.sample || null;
   }
 
-  return { axisLabels, windowMilliseconds, beginPointerGesture, movePointerGesture, finishPointerGesture, buildChartModel, buildChartGeometry, nearestPoint, nearestSample };
+  function powerBreakdown(sample) {
+    const gpus = Array.isArray(sample?.gpus) ? sample.gpus : [];
+    const gpuPower = (model) => {
+      const gpu = gpus.find((item) => new RegExp(`(?:RTX\\s*)?${model}(?!\\d)`, 'i').test(String(item.name || '')));
+      return finite(gpu?.power_w) ? gpu.power_w : null;
+    };
+    const gpu3090 = gpuPower('3090');
+    const gpu4090 = gpuPower('4090');
+    const cpu = finite(sample?.cpu_power_w) ? sample.cpu_power_w : null;
+    const total = finite(sample?.total_power_w) ? sample.total_power_w : null;
+    const count = sample?.power_sample_count;
+    const completeBucket = !finite(count) || (sample.total_power_sample_count === count
+      && sample.cpu_power_sample_count === count
+      && gpus.find((item) => /3090(?!\d)/.test(String(item.name || '')))?.power_sample_count === count
+      && gpus.find((item) => /4090(?!\d)/.test(String(item.name || '')))?.power_sample_count === count);
+    const remainder = !completeBucket || total === null || gpu3090 === null || gpu4090 === null || cpu === null
+      ? null : total - gpu3090 - gpu4090 - cpu;
+    return { gpu3090, gpu4090, cpu, other: remainder !== null && remainder >= -0.05 ? Math.max(0, remainder) : null };
+  }
+
+  return { axisLabels, windowMilliseconds, beginPointerGesture, movePointerGesture, finishPointerGesture, buildChartModel, buildChartGeometry, nearestPoint, nearestSample, powerBreakdown };
 }));

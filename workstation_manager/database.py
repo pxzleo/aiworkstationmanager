@@ -13,7 +13,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 35
 
 
 class DatabaseError(RuntimeError):
@@ -131,6 +131,7 @@ class Database:
                         32: self._migrate_to_32,
                         33: self._migrate_to_33,
                         34: self._migrate_to_34,
+                        35: self._migrate_to_35,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -452,6 +453,10 @@ class Database:
                 updated_by TEXT
             )"""
         )
+
+    @classmethod
+    def _migrate_to_35(cls, connection: sqlite3.Connection) -> None:
+        cls._ensure_column(connection, "resource_samples", "cpu_power_w", "REAL")
 
     @classmethod
     def _migrate_to_18(cls, connection: sqlite3.Connection) -> None:
@@ -921,18 +926,19 @@ class Database:
                 with connection:
                     connection.execute(
                         """INSERT INTO resource_samples(
-                               sampled_at,total_power_w,measured_power_w,estimated_power_w,
+                               sampled_at,total_power_w,measured_power_w,estimated_power_w,cpu_power_w,
                                cpu_load_percent,cpu_temperature_c,memory_percent,
                                memory_used_bytes,memory_total_bytes,cpu_frequency_mhz,
                                memory_available_bytes,commit_used_bytes,commit_limit_bytes,
                                swap_used_bytes,swap_total_bytes,
                                network_received_bytes_per_second,network_sent_bytes_per_second,
                                wsl_memory_used_bytes,wsl_swap_used_bytes
-                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                            ON CONFLICT(sampled_at) DO UPDATE SET
                                total_power_w=excluded.total_power_w,
                                measured_power_w=excluded.measured_power_w,
                                estimated_power_w=excluded.estimated_power_w,
+                               cpu_power_w=excluded.cpu_power_w,
                                cpu_load_percent=excluded.cpu_load_percent,
                                cpu_temperature_c=excluded.cpu_temperature_c,
                                memory_percent=excluded.memory_percent,
@@ -951,6 +957,7 @@ class Database:
                         (sampled_at, sample.get("total_power_w"),
                          sample.get("measured_power_w"),
                          sample.get("estimated_power_w"),
+                         sample.get("cpu_power_w"),
                          sample.get("cpu_load_percent"),
                          sample.get("cpu_temperature_c"), sample.get("memory_percent"),
                          sample.get("memory_used_bytes"), sample.get("memory_total_bytes"),
@@ -1047,9 +1054,13 @@ class Database:
                     host_rows = connection.execute(
                         """SELECT CAST(strftime('%s',sampled_at) AS INTEGER)/? AS bucket,
                                   MAX(sampled_at) AS sampled_at,
+                                  COUNT(*) AS power_sample_count,
+                                  COUNT(total_power_w) AS total_power_sample_count,
+                                  COUNT(cpu_power_w) AS cpu_power_sample_count,
                                   AVG(total_power_w) AS total_power_w,
                                   AVG(measured_power_w) AS measured_power_w,
                                   AVG(estimated_power_w) AS estimated_power_w,
+                                  AVG(cpu_power_w) AS cpu_power_w,
                                   AVG(cpu_load_percent) AS cpu_load_percent,
                                   AVG(cpu_temperature_c) AS cpu_temperature_c,
                                   AVG(memory_percent) AS memory_percent,
@@ -1072,7 +1083,8 @@ class Database:
                     gpu_rows = connection.execute(
                         """SELECT CAST(strftime('%s',s.sampled_at) AS INTEGER)/? AS bucket,
                                   g.gpu_key,MAX(g.uuid) AS uuid,MAX(g.gpu_index) AS gpu_index,
-                                  MAX(g.name) AS name,AVG(g.load_percent) AS load_percent,
+                                  MAX(g.name) AS name,COUNT(g.power_w) AS power_sample_count,
+                                  AVG(g.load_percent) AS load_percent,
                                   AVG(g.memory_used_mib) AS memory_used_mib,
                                   AVG(g.memory_total_mib) AS memory_total_mib,
                                   AVG(g.memory_percent) AS memory_percent,
@@ -1106,7 +1118,7 @@ class Database:
                 else:
                     host_rows = connection.execute(
                         """SELECT id,sampled_at,cpu_load_percent,cpu_temperature_c,memory_percent,
-                                  total_power_w,measured_power_w,estimated_power_w,
+                                  total_power_w,measured_power_w,estimated_power_w,cpu_power_w,
                                   memory_used_bytes,memory_total_bytes
                                   ,cpu_frequency_mhz,memory_available_bytes,
                                   commit_used_bytes,commit_limit_bytes,swap_used_bytes,
@@ -1155,6 +1167,10 @@ class Database:
                 "total_power_w": row["total_power_w"],
                 "measured_power_w": row["measured_power_w"],
                 "estimated_power_w": row["estimated_power_w"],
+                "cpu_power_w": row["cpu_power_w"],
+                "power_sample_count": row["power_sample_count"] if "power_sample_count" in row.keys() else None,
+                "total_power_sample_count": row["total_power_sample_count"] if "total_power_sample_count" in row.keys() else None,
+                "cpu_power_sample_count": row["cpu_power_sample_count"] if "cpu_power_sample_count" in row.keys() else None,
                 "cpu_load_percent": row["cpu_load_percent"],
                 "cpu_temperature_c": row["cpu_temperature_c"],
                 "memory_percent": row["memory_percent"],
@@ -1189,6 +1205,7 @@ class Database:
                 "memory_percent": row["memory_percent"],
                 "temperature_c": row["temperature_c"],
                 "power_w": row["power_w"],
+                "power_sample_count": row["power_sample_count"] if "power_sample_count" in row.keys() else None,
                 "graphics_clock_mhz": row["graphics_clock_mhz"],
                 "memory_utilization_percent": row["memory_utilization_percent"],
                 "encoder_percent": row["encoder_percent"],

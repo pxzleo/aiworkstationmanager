@@ -501,6 +501,12 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .monitor-detail small { color: var(--muted); font-size: 8px; letter-spacing: .04em; }
 .monitor-detail strong { margin-top: 5px; color: var(--text); font-size: 11px; font-weight: 580; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .monitor-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.host-power-sync { grid-column: 1 / -1; min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 22px 8px 25px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; }
+.host-power-sync .correlation-time-value { font-size: 13px; }
+.monitor-host-group .power-chart-total { grid-column: 1 / -1; border-bottom: 1px solid var(--line); }
+.monitor-host-group .power-chart-detail { border-bottom: 1px solid var(--line); }
+.monitor-host-group .power-chart-detail:nth-of-type(even) { border-left: 0; }
+.monitor-host-group .power-chart-detail .chart-plot, .monitor-host-group .power-chart-total .chart-plot { touch-action: pan-y; user-select: none; }
 .monitor-gpu-layout { grid-template-columns: 1fr; }
 .gpu-correlation-stack, .gpu-context-column { min-width: 0; }
 .gpu-correlation-stack { background: linear-gradient(90deg, color-mix(in srgb, var(--monitor-color) 4%, transparent), transparent 28%); }

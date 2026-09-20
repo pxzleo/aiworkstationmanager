@@ -112,3 +112,31 @@ test('correlation selection keeps one sample timestamp when a metric is missing'
   assert.equal(selected.value, 80);
   assert.equal(selected.clock, null);
 });
+
+test('host power curves split the same sample into two GPUs, CPU and the remainder', () => {
+  const parts = monitorChart.powerBreakdown({
+    total_power_w: 610, cpu_power_w: 90,
+    gpus: [{ name: 'NVIDIA GeForce RTX 4090', power_w: 300 }, { name: 'NVIDIA GeForce RTX 3090', power_w: 170 }],
+  });
+  assert.deepEqual(parts, { gpu3090: 170, gpu4090: 300, cpu: 90, other: 50 });
+  assert.equal(Object.values(parts).reduce((sum, value) => sum + value, 0), 610);
+});
+
+test('host power remainder stays missing when a required reading is missing', () => {
+  const parts = monitorChart.powerBreakdown({
+    total_power_w: 610, cpu_power_w: null,
+    gpus: [{ name: 'RTX 3090', power_w: 170 }, { name: 'RTX 4090', power_w: 300 }],
+  });
+  assert.equal(parts.cpu, null);
+  assert.equal(parts.other, null);
+});
+
+test('bucketed other power stays missing when component averages use fewer samples', () => {
+  const parts = monitorChart.powerBreakdown({
+    total_power_w: 610, cpu_power_w: 90,
+    power_sample_count: 2, total_power_sample_count: 2, cpu_power_sample_count: 1,
+    gpus: [{ name: 'RTX 3090', power_w: 170, power_sample_count: 2 }, { name: 'RTX 4090', power_w: 300, power_sample_count: 2 }],
+  });
+  assert.equal(parts.cpu, 90);
+  assert.equal(parts.other, null);
+});
