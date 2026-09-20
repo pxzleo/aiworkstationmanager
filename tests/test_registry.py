@@ -227,8 +227,8 @@ class DatabaseRegistryTests(unittest.TestCase):
                        ORDER BY queue_position IS NULL,queue_position,created_at,id"""
                 ).fetchall()
 
-            self.assertEqual(SCHEMA_VERSION, 32)
-            self.assertEqual(version, 32)
+            self.assertEqual(SCHEMA_VERSION, 34)
+            self.assertEqual(version, 34)
             self.assertEqual(
                 [(row["id"], row["queue_position"]) for row in positions],
                 [
@@ -313,7 +313,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 version = connection.execute(
                     "SELECT version FROM schema_version"
                 ).fetchone()["version"]
-            self.assertEqual(version, 32)
+            self.assertEqual(version, 34)
             self.assertIsNone(migrated["total_steps"])
 
             database.update_operation("a" * 32, total_steps=3)
@@ -358,7 +358,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                        WHERE type='index' AND name='idx_scenes_single_default'"""
                 ).fetchone()
 
-            self.assertEqual(version, 32)
+            self.assertEqual(version, 34)
             self.assertEqual(scene["is_default"], 0)
             self.assertEqual(scene["detailed_description"], "")
             self.assertIsNotNone(index)
@@ -399,7 +399,7 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 32)
+            self.assertEqual(SCHEMA_VERSION, 34)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -502,7 +502,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-                self.assertEqual(version, 32)
+                self.assertEqual(version, 34)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -545,7 +545,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 32)
+            self.assertEqual(SCHEMA_VERSION, 34)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -566,6 +566,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             def history_sample(offset_seconds: int, cpu: float, gpu: float) -> dict[str, Any]:
                 return {
                     "sampled_at": (bucket_start + timedelta(seconds=offset_seconds)).isoformat(),
+                    "total_power_w": cpu + gpu,
                     "cpu_load_percent": cpu,
                     "cpu_temperature_c": 40 + cpu,
                     "memory_percent": 50 + cpu,
@@ -611,10 +612,11 @@ class DatabaseRegistryTests(unittest.TestCase):
                 60, bucket_seconds=15, now=now + timedelta(seconds=30)
             )
 
-            self.assertEqual(SCHEMA_VERSION, 32)
+            self.assertEqual(SCHEMA_VERSION, 34)
             self.assertEqual(result["stored_sample_count"], 3)
             self.assertEqual(len(result["samples"]), 2)
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
+            self.assertEqual(result["samples"][0]["total_power_w"], 65)
             self.assertEqual(result["samples"][0]["memory_used_bytes"], 9.5 * 1024 ** 3)
             self.assertEqual(result["samples"][0]["memory_total_bytes"], 64 * 1024 ** 3)
             self.assertEqual(result["samples"][0]["cpu_frequency_mhz"], 3015)
@@ -628,6 +630,41 @@ class DatabaseRegistryTests(unittest.TestCase):
             self.assertEqual(result["samples"][1]["cpu_load_percent"], 30)
             with reopened.connect() as connection:
                 self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    def test_schema_thirty_four_moves_old_total_power_into_the_measured_column(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "manager.db"
+            database = Database(path)
+            database.append_resource_sample({
+                "sampled_at": datetime.now(timezone.utc).isoformat(),
+                "total_power_w": 604.0, "measured_power_w": 604.0,
+                "estimated_power_w": None, "cpu_load_percent": 12.0,
+            })
+            with database.connect() as connection:
+                # 还原 schema 33 的状态：只有 total_power_w，没有拆分列。
+                connection.execute(
+                    "UPDATE resource_samples SET measured_power_w=NULL,estimated_power_w=NULL"
+                )
+                connection.execute("UPDATE schema_version SET version=33")
+                connection.commit()
+
+            reopened = Database(path)
+            with reopened.connect() as connection:
+                version = connection.execute(
+                    "SELECT version FROM schema_version"
+                ).fetchone()["version"]
+                row = connection.execute(
+                    """SELECT total_power_w,measured_power_w,estimated_power_w
+                       FROM resource_samples"""
+                ).fetchone()
+
+            self.assertEqual(version, 34)
+            # 旧的 total_power_w 本来就是纯实测值，回填到 measured 列。
+            self.assertEqual(row["measured_power_w"], 604.0)
+            self.assertEqual(row["total_power_w"], 604.0)
+            # 当时没有估算值，不能凭空补一个。
+            self.assertIsNone(row["estimated_power_w"])
+            self.assertIsNone(reopened.read_power_calibration())
 
     def test_schema_fourteen_history_rows_survive_current_upgrade(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -661,7 +698,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_gpu_samples WHERE sample_id=1"
                 ).fetchone()
 
-            self.assertEqual(version, 32)
+            self.assertEqual(version, 34)
             self.assertEqual(row["temperature_c"], 62)
             self.assertIsNone(row["power_w"])
             self.assertIsNone(row["graphics_clock_mhz"])
@@ -700,7 +737,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_samples"
                 ).fetchone()
 
-            self.assertEqual(version, 32)
+            self.assertEqual(version, 34)
             self.assertEqual(row["memory_percent"], 50)
             self.assertIsNone(row["memory_used_bytes"])
             self.assertIsNone(row["memory_total_bytes"])
@@ -1897,22 +1934,22 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         ninfer_url = "http://127.0.0.1:8081/api/snapshot"
-        q27_url = "http://127.0.0.1:8080/v1/models"
+        legacy_url = "http://127.0.0.1:8080/v1/models"
         ninfer = await self.add_service("4090 NInfer", health_url=ninfer_url, port=8080)
-        q27 = await self.add_service(
-            "4090 q27", health_url=q27_url,
-            health_expect="qwen38-27b-mtp-q6k", port=8080,
+        legacy = await self.add_service(
+            "旧推理服务", health_url=legacy_url,
+            health_expect="legacy-model", port=8080,
         )
         self.health_probe.results[ninfer_url] = HealthProbeResult("running", None, True)
-        self.health_probe.results[q27_url] = HealthProbeResult(
+        self.health_probe.results[legacy_url] = HealthProbeResult(
             "unhealthy", "健康接口响应与服务身份不匹配", True
         )
 
         await self.manager.refresh_service_health(ninfer, immediate=True)
-        await self.manager.refresh_service_health(q27, immediate=True)
+        await self.manager.refresh_service_health(legacy, immediate=True)
 
         states = {item["name"]: item["status"]["state"] for item in self.manager.list_services()}
-        self.assertEqual(states, {"4090 NInfer": "running", "4090 q27": "stopped"})
+        self.assertEqual(states, {"4090 NInfer": "running", "旧推理服务": "stopped"})
 
     async def test_status_error_is_redacted_before_storage_and_response(self) -> None:
         service = await self.add_service("脱敏检查")

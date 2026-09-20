@@ -365,8 +365,13 @@ await hooks.dispose?.()
                 node.get("class_type") == "MiniMaxH3ReferenceToVideo"
                 for node in graph.values()
             ), 1)
-            self.assertNotIn("152", graph)
-            self.assertEqual(graph["151"]["inputs"]["model"], ["145", 0])
+            self.assertEqual(graph["152"]["class_type"], "PathchSageAttentionKJ")
+            self.assertEqual(graph["152"]["inputs"], {
+                "model": ["145", 0],
+                "sage_attention": "auto",
+                "allow_compile": False,
+            })
+            self.assertEqual(graph["151"]["inputs"]["model"], ["152", 0])
 
     def test_builder_requires_a_current_isolated_detection_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -734,12 +739,11 @@ try {{
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("exactly one H3 generation branch", result.stderr)
 
-    def test_builder_rejects_sage_attention_or_disconnected_sigma_shift(self) -> None:
+    def test_builder_requires_sage_attention_before_sigma_shift(self) -> None:
         mutations = (
-            lambda graph: graph.update({"152": {
-                "class_type": "PathchSageAttentionKJ",
-                "inputs": {"model": ["145", 0], "sage_attention": "auto"},
-            }}),
+            lambda graph: graph.pop("152"),
+            lambda graph: graph["152"]["inputs"].update({"sage_attention": "disabled"}),
+            lambda graph: graph["152"]["inputs"].update({"allow_compile": True}),
             lambda graph: graph["151"]["inputs"].update({"model": ["127", 0]}),
             lambda graph: graph["124"]["inputs"].update({"model": ["145", 0]}),
             lambda graph: graph["126"]["inputs"].update({"model": ["145", 0]}),
@@ -753,7 +757,7 @@ try {{
                 baseline.write_text(json.dumps(graph), encoding="utf-8")
                 result = self.run_builder(root, baseline=baseline)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("without SageAttention", result.stderr)
+                self.assertIn("SageAttention auto", result.stderr)
 
     def test_builder_keeps_the_four_step_baseline_compatible(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

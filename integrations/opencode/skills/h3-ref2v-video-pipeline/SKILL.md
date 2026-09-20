@@ -39,7 +39,7 @@ description: Build and finish local MiniMax H3 reference-to-video workflows for 
 
 默认使用 8 步。用户明确要求快速时使用 4 步；只有用户明确要求比较时才分别制作对比预览，不要擅自生成两个正式版本。基线中的源片、提示词和输出前缀都是占位值，每次必须通过 `scripts/build_api.py` 覆盖。
 
-8 步基线必须从 LoRA 直接连接 Sigma Shift，不插入 `PathchSageAttentionKJ`。当前 SageAttention 与 AIMDO/DynamicVRAM 异步权重卸载存在崩溃风险；在兼容性得到单独验证前不得重新加入。移除 SageAttention 不得改变 8 步、分辨率、模型或 LoRA。
+8 步基线必须从 LoRA 连接 `PathchSageAttentionKJ`，使用 `sage_attention = auto` 且 `allow_compile = false`，再连接 Sigma Shift。该配置用于 SageAttention 冒烟验证；不得同时改变 8 步、分辨率、模型或 LoRA，以便出现异常时能够明确归因。
 
 ## 参数与分段
 

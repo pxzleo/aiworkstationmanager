@@ -19,7 +19,6 @@ $dependentServices = @(
     @{ Name = '3090 NInfer'; Script = Join-Path $serviceScriptRoot '3090-NInfer-服务管理.ps1' },
     @{ Name = 'SenseVoiceSmall'; Script = Join-Path $serviceScriptRoot '3090-SenseVoiceSmall-服务管理.ps1' },
     @{ Name = '4090 NInfer'; Script = Join-Path $serviceScriptRoot '4090-NInfer-服务管理.ps1' },
-    @{ Name = '4090 q27'; Script = Join-Path $serviceScriptRoot '4090-q27-服务管理.ps1' },
     @{ Name = '4090 vLLM'; Script = Join-Path $serviceScriptRoot '4090-vLLM-服务管理.ps1' },
     @{ Name = '小智管理后台'; Script = Join-Path $serviceScriptRoot '小智-管理后台-服务管理.ps1' },
     @{ Name = '小智核心服务'; Script = Join-Path $serviceScriptRoot '小智-核心服务-服务管理.ps1' },

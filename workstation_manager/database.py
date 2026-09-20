@@ -13,7 +13,7 @@ from typing import Any, Iterator
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 34
 
 
 class DatabaseError(RuntimeError):
@@ -129,6 +129,8 @@ class Database:
                         30: self._migrate_to_30,
                         31: self._migrate_to_31,
                         32: self._migrate_to_32,
+                        33: self._migrate_to_33,
+                        34: self._migrate_to_34,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -419,6 +421,36 @@ class Database:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_resource_disk_sample "
             "ON resource_disk_samples(sample_id)"
+        )
+
+    @classmethod
+    def _migrate_to_33(cls, connection: sqlite3.Connection) -> None:
+        # 旧版部分数据库缺少资源历史表；沿用原迁移创建表后再增加功耗列。
+        cls._migrate_to_16(connection)
+        cls._ensure_column(connection, "resource_samples", "total_power_w", "REAL")
+
+    @classmethod
+    def _migrate_to_34(cls, connection: sqlite3.Connection) -> None:
+        # total_power_w 从"仅实测"变成"实测 + 估算"，另外两列保留拆分口径，
+        # 让界面可以如实区分传感器读数和补齐的估算量。
+        cls._ensure_column(connection, "resource_samples", "measured_power_w", "REAL")
+        cls._ensure_column(connection, "resource_samples", "estimated_power_w", "REAL")
+        connection.execute(
+            "UPDATE resource_samples SET measured_power_w=total_power_w "
+            "WHERE measured_power_w IS NULL AND total_power_w IS NOT NULL"
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS power_calibration (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                baseline_w REAL NOT NULL,
+                psu_efficiency REAL NOT NULL,
+                idle_accounted_w REAL,
+                idle_wall_w REAL,
+                load_accounted_w REAL,
+                load_wall_w REAL,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT
+            )"""
         )
 
     @classmethod
@@ -813,6 +845,72 @@ class Database:
         if column not in columns:
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
+    def read_power_calibration(self) -> dict[str, Any] | None:
+        """读取整机功耗校准结果；从未校准过时返回 None。"""
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    """SELECT baseline_w,psu_efficiency,idle_accounted_w,idle_wall_w,
+                              load_accounted_w,load_wall_w,updated_at,updated_by
+                       FROM power_calibration WHERE id=1"""
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取功耗校准失败: {exc}") from exc
+        if row is None:
+            return None
+        return {
+            "baseline_w": row["baseline_w"],
+            "psu_efficiency": row["psu_efficiency"],
+            "idle_accounted_w": row["idle_accounted_w"],
+            "idle_wall_w": row["idle_wall_w"],
+            "load_accounted_w": row["load_accounted_w"],
+            "load_wall_w": row["load_wall_w"],
+            "updated_at": row["updated_at"],
+            "updated_by": row["updated_by"],
+        }
+
+    def write_power_calibration(
+        self, *, baseline_w: float, psu_efficiency: float,
+        idle_accounted_w: float | None = None, idle_wall_w: float | None = None,
+        load_accounted_w: float | None = None, load_wall_w: float | None = None,
+        updated_by: str | None = None, now: datetime | None = None,
+    ) -> dict[str, Any]:
+        updated_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute(
+                        """INSERT INTO power_calibration(
+                               id,baseline_w,psu_efficiency,idle_accounted_w,idle_wall_w,
+                               load_accounted_w,load_wall_w,updated_at,updated_by
+                           ) VALUES (1,?,?,?,?,?,?,?,?)
+                           ON CONFLICT(id) DO UPDATE SET
+                               baseline_w=excluded.baseline_w,
+                               psu_efficiency=excluded.psu_efficiency,
+                               idle_accounted_w=excluded.idle_accounted_w,
+                               idle_wall_w=excluded.idle_wall_w,
+                               load_accounted_w=excluded.load_accounted_w,
+                               load_wall_w=excluded.load_wall_w,
+                               updated_at=excluded.updated_at,
+                               updated_by=excluded.updated_by""",
+                        (baseline_w, psu_efficiency, idle_accounted_w, idle_wall_w,
+                         load_accounted_w, load_wall_w, updated_at, updated_by),
+                    )
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"写入功耗校准失败: {exc}") from exc
+        calibration = self.read_power_calibration()
+        if calibration is None:
+            raise DatabaseError("功耗校准写入后无法读取")
+        return calibration
+
+    def clear_power_calibration(self) -> None:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute("DELETE FROM power_calibration WHERE id=1")
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"清除功耗校准失败: {exc}") from exc
+
     def append_resource_sample(self, sample: dict[str, Any]) -> None:
         try:
             parsed_at = datetime.fromisoformat(str(sample["sampled_at"]))
@@ -823,14 +921,18 @@ class Database:
                 with connection:
                     connection.execute(
                         """INSERT INTO resource_samples(
-                               sampled_at,cpu_load_percent,cpu_temperature_c,memory_percent,
+                               sampled_at,total_power_w,measured_power_w,estimated_power_w,
+                               cpu_load_percent,cpu_temperature_c,memory_percent,
                                memory_used_bytes,memory_total_bytes,cpu_frequency_mhz,
                                memory_available_bytes,commit_used_bytes,commit_limit_bytes,
                                swap_used_bytes,swap_total_bytes,
                                network_received_bytes_per_second,network_sent_bytes_per_second,
                                wsl_memory_used_bytes,wsl_swap_used_bytes
-                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                            ON CONFLICT(sampled_at) DO UPDATE SET
+                               total_power_w=excluded.total_power_w,
+                               measured_power_w=excluded.measured_power_w,
+                               estimated_power_w=excluded.estimated_power_w,
                                cpu_load_percent=excluded.cpu_load_percent,
                                cpu_temperature_c=excluded.cpu_temperature_c,
                                memory_percent=excluded.memory_percent,
@@ -846,7 +948,10 @@ class Database:
                                network_sent_bytes_per_second=excluded.network_sent_bytes_per_second,
                                wsl_memory_used_bytes=excluded.wsl_memory_used_bytes,
                                wsl_swap_used_bytes=excluded.wsl_swap_used_bytes""",
-                        (sampled_at, sample.get("cpu_load_percent"),
+                        (sampled_at, sample.get("total_power_w"),
+                         sample.get("measured_power_w"),
+                         sample.get("estimated_power_w"),
+                         sample.get("cpu_load_percent"),
                          sample.get("cpu_temperature_c"), sample.get("memory_percent"),
                          sample.get("memory_used_bytes"), sample.get("memory_total_bytes"),
                          sample.get("cpu_frequency_mhz"), sample.get("memory_available_bytes"),
@@ -942,6 +1047,9 @@ class Database:
                     host_rows = connection.execute(
                         """SELECT CAST(strftime('%s',sampled_at) AS INTEGER)/? AS bucket,
                                   MAX(sampled_at) AS sampled_at,
+                                  AVG(total_power_w) AS total_power_w,
+                                  AVG(measured_power_w) AS measured_power_w,
+                                  AVG(estimated_power_w) AS estimated_power_w,
                                   AVG(cpu_load_percent) AS cpu_load_percent,
                                   AVG(cpu_temperature_c) AS cpu_temperature_c,
                                   AVG(memory_percent) AS memory_percent,
@@ -998,6 +1106,7 @@ class Database:
                 else:
                     host_rows = connection.execute(
                         """SELECT id,sampled_at,cpu_load_percent,cpu_temperature_c,memory_percent,
+                                  total_power_w,measured_power_w,estimated_power_w,
                                   memory_used_bytes,memory_total_bytes
                                   ,cpu_frequency_mhz,memory_available_bytes,
                                   commit_used_bytes,commit_limit_bytes,swap_used_bytes,
@@ -1043,6 +1152,9 @@ class Database:
             key = int(row[key_name] if key_name == "bucket" else row["id"])
             samples[key] = {
                 "sampled_at": row["sampled_at"],
+                "total_power_w": row["total_power_w"],
+                "measured_power_w": row["measured_power_w"],
+                "estimated_power_w": row["estimated_power_w"],
                 "cpu_load_percent": row["cpu_load_percent"],
                 "cpu_temperature_c": row["cpu_temperature_c"],
                 "memory_percent": row["memory_percent"],

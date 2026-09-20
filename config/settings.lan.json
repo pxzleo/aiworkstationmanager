@@ -10,5 +10,6 @@
   "cookie_secure": false,
   "setup_disabled": true,
   "allowed_public_origins": [],
-  "trusted_proxy_ips": []
+  "trusted_proxy_ips": [],
+  "ninfer_base_url": "http://127.0.0.2:8080"
 }

@@ -138,6 +138,7 @@ def load_graph(path: Path) -> dict[str, Any]:
         raise ValueError("baseline must contain exactly one H3 generation branch")
     if graph["124"]["inputs"].get("steps") == 8:
         sigma_shift = graph.get("151")
+        sage_attention = graph.get("152")
         if not isinstance(sigma_shift, dict) \
                 or sigma_shift.get("class_type") != "MiniMaxH3SigmaShift" \
                 or not isinstance(sigma_shift.get("inputs"), dict):
@@ -145,13 +146,18 @@ def load_graph(path: Path) -> dict[str, Any]:
                 "8-step baseline node 151 must be MiniMaxH3SigmaShift "
                 "with an inputs object",
             )
-        if "152" in graph \
-                or sigma_shift["inputs"].get("model") != ["145", 0] \
+        if not isinstance(sage_attention, dict) \
+                or sage_attention.get("class_type") != "PathchSageAttentionKJ" \
+                or not isinstance(sage_attention.get("inputs"), dict) \
+                or sage_attention["inputs"].get("model") != ["145", 0] \
+                or sage_attention["inputs"].get("sage_attention") != "auto" \
+                or sage_attention["inputs"].get("allow_compile") is not False \
+                or sigma_shift["inputs"].get("model") != ["152", 0] \
                 or graph["124"]["inputs"].get("model") != ["151", 0] \
                 or graph["126"]["inputs"].get("model") != ["151", 0]:
             raise ValueError(
-                "8-step baseline must connect LoRA directly to Sigma Shift, "
-                "then to scheduler and guider, without SageAttention",
+                "8-step baseline must connect LoRA through SageAttention auto "
+                "with compilation disabled, then to Sigma Shift, scheduler and guider",
             )
     return graph
 

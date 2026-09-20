@@ -24,9 +24,17 @@ from workstation_manager.app import create_app
 from workstation_manager.auth import REMEMBER_SESSION_TTL_SECONDS
 from workstation_manager.collectors import (
     _cached, _slow_cache, collect_docker, collect_docker_resources,
-    collect_gpu_processes, collect_gpus, collect_snapshot, collect_wsl_resources,
+    collect_gpu_processes, collect_gpus, collect_host_power_sensors, collect_snapshot,
+    summarize_power,
+    collect_wsl_resources,
 )
+from workstation_manager import collectors
 from workstation_manager.config import ConfigError, Settings, load_settings
+from workstation_manager.power_model import (
+    PowerModel,
+    PowerModelError,
+    solve_calibration,
+)
 from workstation_manager.database import Database, DatabaseError
 from workstation_manager.history import (
     CollectionTimeoutError,
@@ -217,6 +225,53 @@ class CollectorTests(unittest.TestCase):
         self.assertIsNone(gpu["power_w"])
         self.assertIsNone(gpu["graphics_clock_mhz"])
 
+    def test_host_power_sensors_parse_non_gpu_watts(self) -> None:
+        output = (
+            '[{"source":"root\\\\LibreHardwareMonitor","name":"CPU Package",'
+            '"hardware_name":"Ryzen","hardware_type":"Cpu","value_w":125.5},'
+            '{"source":"root\\\\LibreHardwareMonitor","name":"GPU Power",'
+            '"hardware_name":"NVIDIA RTX","hardware_type":"GpuNvidia","value_w":300}]'
+        )
+        with patch("workstation_manager.collectors.os.name", "nt"):
+            sensors = collect_host_power_sensors(
+                self.settings, runner=lambda command, timeout: output
+            )
+
+        self.assertEqual(len(sensors), 1)
+        self.assertEqual(sensors[0]["value_w"], 125.5)
+
+    def test_snapshot_total_power_sums_gpu_and_readable_sensors(self) -> None:
+        def runner(command: list[str], timeout: float) -> str:
+            if command[0] == "nvidia-smi" and "--query-gpu=" in command[1]:
+                return (
+                    "0, GPU-a, RTX 4090, 10, 100, 1000, 40, 430, 2000, 40, "
+                    "P0, 5, 0, 0, 4, 16, 0x0\n"
+                )
+            if command[0] == "nvidia-smi":
+                return ""
+            if command[0] == "docker":
+                return ""
+            if command[0] == "powershell.exe":
+                return '[{"name":"CPU Package","value_w":120}]'
+            raise AssertionError(command)
+
+        with patch("workstation_manager.collectors.os.name", "nt"), \
+                patch("workstation_manager.collectors.collect_host",
+                      return_value={"cpu": {}, "memory": {}, "disks": []}), \
+                patch("workstation_manager.collectors.collect_ports", return_value=[]):
+            snapshot = collect_snapshot(self.settings, runner=runner)
+
+        power = snapshot["host"]["power"]
+        # 采集进程只输出实测值，估算由主进程里的 Sampler 补上。
+        self.assertEqual(power["measured_w"], 550)
+        self.assertEqual(power["total_w"], 550)
+        self.assertIsNone(power["estimated_w"])
+        self.assertEqual(power["gpu_w"], 430)
+        self.assertEqual(power["cpu_package_w"], 120)
+        self.assertIsNone(power["sensor_w"])
+        self.assertEqual(power["sensors"][0]["role"], "cpu_package")
+        self.assertEqual(power["sensors"][0]["method"], "instant")
+
     def test_gpu_processes_preserve_wddm_unavailable_memory(self) -> None:
         output = "GPU-a, 1234, C:\\AI\\server.exe, N/A\n"
         processes = collect_gpu_processes(
@@ -293,7 +348,10 @@ class CollectorTests(unittest.TestCase):
         snapshot = collect_snapshot(self.settings, runner=missing)
         self.assertEqual(snapshot["gpus"], [])
         self.assertEqual(snapshot["docker"]["containers"], [])
-        self.assertEqual({error["collector"] for error in snapshot["collector_errors"]}, {"nvidia", "docker"})
+        expected = {"nvidia", "docker"}
+        if os.name == "nt":
+            expected.add("host_power")
+        self.assertEqual({error["collector"] for error in snapshot["collector_errors"]}, expected)
         self.assertTrue(all(error["cause"] for error in snapshot["collector_errors"]))
 
     @patch("workstation_manager.collectors.collect_ports", return_value=[{"port": 8080, "listening": True}])
@@ -316,6 +374,184 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(snapshot["collector_errors"][0]["collector"], "nvidia")
         self.assertEqual(snapshot["collector_errors"][0]["error_type"], "RuntimeError")
         self.assertEqual(snapshot["collector_errors"][0]["cause"], "driver query failed")
+
+
+class PowerModelTests(unittest.TestCase):
+    def _sensor(self, name: str, value_w: float, role: str = "cpu_package") -> dict:
+        return {"name": name, "value_w": value_w, "role": role}
+
+    def test_disabled_model_reports_measured_only(self) -> None:
+        summary = summarize_power(
+            [{"power_w": 430.0}], [self._sensor("RAPL_Package0_PKG", 120.0)],
+            PowerModel(enabled=False),
+        )
+        self.assertEqual(summary["measured_w"], 550)
+        self.assertEqual(summary["total_w"], 550)
+        self.assertIsNone(summary["estimated_w"])
+        self.assertIsNone(summary["estimate_breakdown"])
+
+    def test_estimate_adds_vrm_baseline_and_psu_loss(self) -> None:
+        model = PowerModel(
+            enabled=True, cpu_vrm_efficiency=0.89, baseline_w=75.0, psu_efficiency=0.90
+        )
+        summary = summarize_power(
+            [{"power_w": 400.0}, {"power_w": 330.0}],
+            [self._sensor("RAPL_Package0_PKG", 200.0)], model,
+        )
+        self.assertEqual(summary["measured_w"], 930)
+        breakdown = summary["estimate_breakdown"]
+        # 200 W 封装功耗在 89% 的 VRM 效率下要额外消耗约 24.7 W。
+        self.assertAlmostEqual(breakdown["cpu_vrm_loss_w"], 24.72, places=1)
+        self.assertEqual(breakdown["baseline_w"], 75)
+        expected_total = (930 + breakdown["cpu_vrm_loss_w"] + 75) / 0.90
+        self.assertAlmostEqual(summary["total_w"], round(expected_total, 2), places=1)
+        self.assertAlmostEqual(
+            summary["measured_w"] + summary["estimated_w"], summary["total_w"], places=1
+        )
+
+    def test_estimate_never_invents_a_reading_without_sensors(self) -> None:
+        summary = summarize_power([], [], PowerModel(enabled=True))
+        self.assertIsNone(summary["measured_w"])
+        self.assertIsNone(summary["total_w"])
+        self.assertIsNone(summary["estimated_w"])
+
+    def test_other_sensors_skip_the_vrm_correction(self) -> None:
+        model = PowerModel(
+            enabled=True, cpu_vrm_efficiency=0.89, baseline_w=0.0, psu_efficiency=1.0
+        )
+        summary = summarize_power(
+            [], [self._sensor("Mainboard", 100.0, role="other")], model
+        )
+        self.assertEqual(summary["sensor_w"], 100)
+        self.assertIsNone(summary["cpu_package_w"])
+        self.assertEqual(summary["estimate_breakdown"]["cpu_vrm_loss_w"], 0)
+        self.assertEqual(summary["total_w"], 100)
+
+    def test_two_point_calibration_solves_baseline_and_efficiency(self) -> None:
+        # 构造一组自洽的数据：底噪 80 W，电源效率 0.88。
+        baseline, efficiency = 80.0, 0.88
+        idle_accounted, load_accounted = 220.0, 1100.0
+        baseline_w, psu_efficiency = solve_calibration(
+            idle_accounted_w=idle_accounted,
+            idle_wall_w=(idle_accounted + baseline) / efficiency,
+            load_accounted_w=load_accounted,
+            load_wall_w=(load_accounted + baseline) / efficiency,
+            default_psu_efficiency=0.90,
+        )
+        self.assertAlmostEqual(psu_efficiency, efficiency, places=3)
+        self.assertAlmostEqual(baseline_w, baseline, places=1)
+
+    def test_single_point_calibration_keeps_default_efficiency(self) -> None:
+        baseline_w, psu_efficiency = solve_calibration(
+            idle_accounted_w=220.0, idle_wall_w=340.0,
+            load_accounted_w=None, load_wall_w=None,
+            default_psu_efficiency=0.90,
+        )
+        self.assertEqual(psu_efficiency, 0.90)
+        self.assertAlmostEqual(baseline_w, 340.0 * 0.90 - 220.0, places=2)
+
+    def test_calibration_rejects_implausible_readings(self) -> None:
+        with self.assertRaises(PowerModelError):
+            solve_calibration(
+                idle_accounted_w=220.0, idle_wall_w=200.0,
+                load_accounted_w=None, load_wall_w=None,
+                default_psu_efficiency=0.90,
+            )
+        with self.assertRaises(PowerModelError):
+            # 满载墙插功率反而更低，无法解出有意义的效率。
+            solve_calibration(
+                idle_accounted_w=220.0, idle_wall_w=340.0,
+                load_accounted_w=1100.0, load_wall_w=330.0,
+                default_psu_efficiency=0.90,
+            )
+
+    def test_energy_counter_delta_replaces_instant_reading(self) -> None:
+        collectors._energy_state.clear()
+        collectors._energy_scale.clear()
+        # 每瓦对应 2e8 个原始计数，计时器频率 1e7。
+        scale, frequency = 2e8, 1e7
+        energy, timestamp = 0.0, 0.0
+        watts_over_time = [100.0, 100.0, 100.0, 100.0]
+        methods: list[str] = []
+        for watts in watts_over_time:
+            energy += watts * scale * 3.0
+            timestamp += 3.0 * frequency
+            item = {
+                "energy_raw": energy, "energy_timestamp": timestamp,
+                "energy_frequency": frequency,
+            }
+            value, method = collectors._energy_derived_watts("RAPL_Package0_PKG", item, watts)
+            methods.append(method)
+        self.assertEqual(methods[0], "instant")
+        self.assertEqual(methods[-1], "energy_delta")
+        self.assertAlmostEqual(value, 100.0, places=1)
+
+    def test_energy_counter_uses_sys100ns_timestamps(self) -> None:
+        # 实测机器（Z690 / 13700K）只填 Timestamp_Sys100NS，PerfTime 恒为 0。
+        collectors._energy_state.clear()
+        collectors._energy_scale.clear()
+        scale, frequency = 2.85e8, 1e7
+        energy, timestamp = 393087662185833.0, 134342857924850295.0
+        watts, method = 0.0, "instant"
+        for _ in range(4):
+            energy += 90.0 * scale * 5.0
+            timestamp += 5.0 * frequency
+            watts, method = collectors._energy_derived_watts(
+                "RAPL_Package0_PKG",
+                {
+                    "energy_raw": energy, "energy_timestamp": timestamp,
+                    "energy_frequency": frequency,
+                },
+                90.0,
+            )
+        self.assertEqual(method, "energy_delta")
+        self.assertAlmostEqual(watts, 90.0, places=1)
+
+    def test_energy_counter_falls_back_to_the_monotonic_clock(self) -> None:
+        # 时间戳字段全为 0 时仍要能差分，只是改用本地单调时钟计时。
+        collectors._energy_state.clear()
+        collectors._energy_scale.clear()
+        scale = 2.85e8
+        clock = [1000.0]
+        energy = [0.0]
+
+        def sample() -> tuple[float, str]:
+            clock[0] += 5.0
+            energy[0] += 90.0 * scale * 5.0
+            return collectors._energy_derived_watts(
+                "RAPL_Package0_PKG",
+                {"energy_raw": energy[0], "energy_timestamp": 0, "energy_frequency": 0},
+                90.0,
+            )
+
+        with patch("workstation_manager.collectors.time.monotonic", side_effect=lambda: clock[0]):
+            for _ in range(4):
+                watts, method = sample()
+        self.assertEqual(method, "energy_delta")
+        self.assertAlmostEqual(watts, 90.0, places=1)
+
+    def test_energy_clock_change_discards_the_previous_sample(self) -> None:
+        collectors._energy_state.clear()
+        collectors._energy_scale.clear()
+        counter = {"energy_raw": 1e12, "energy_timestamp": 1e7, "energy_frequency": 1e7}
+        collectors._energy_derived_watts("PKG", counter, 90.0)
+        # 计数器时间戳突然消失，两次读数来自不同的时钟，不能相减。
+        watts, method = collectors._energy_derived_watts(
+            "PKG", {"energy_raw": 2e12, "energy_timestamp": 0, "energy_frequency": 0}, 90.0
+        )
+        self.assertEqual(method, "instant")
+        self.assertEqual(watts, 90.0)
+
+    def test_energy_counter_reset_falls_back_to_instant(self) -> None:
+        collectors._energy_state.clear()
+        collectors._energy_scale.clear()
+        base = {"energy_timestamp": 1e7, "energy_frequency": 1e7}
+        collectors._energy_derived_watts("PKG", {"energy_raw": 1e12, **base}, 90.0)
+        value, method = collectors._energy_derived_watts(
+            "PKG", {"energy_raw": 0.0, "energy_timestamp": 2e7, "energy_frequency": 1e7}, 90.0
+        )
+        self.assertEqual(method, "instant")
+        self.assertEqual(value, 90.0)
 
 
 class HistoryTests(unittest.TestCase):
@@ -574,7 +810,8 @@ class SamplerTests(unittest.IsolatedAsyncioTestCase):
         settings = Settings(sample_interval_seconds=5)
         snapshot = {
             "sampled_at": datetime.now(timezone.utc).isoformat(),
-            "host": {"cpu": {"load_percent": 12}, "memory": {"percent": 34}, "disks": [1]},
+            "host": {"cpu": {"load_percent": 12}, "memory": {"percent": 34}, "disks": [1],
+                     "power": {"total_w": 550}},
             "gpus": [{"uuid": "GPU-a", "index": 0, "name": "RTX", "load_percent": 56,
                       "graphics_clock_mhz": 2715, "power_w": 430, "temperature_c": 70}],
             "docker": {"containers": [1]},
@@ -584,6 +821,7 @@ class SamplerTests(unittest.IsolatedAsyncioTestCase):
         await sampler.sample_once()
 
         self.assertEqual(records[0]["cpu_load_percent"], 12)
+        self.assertEqual(records[0]["total_power_w"], 550)
         self.assertEqual(records[0]["gpus"][0]["uuid"], "GPU-a")
         self.assertEqual(records[0]["gpus"][0]["graphics_clock_mhz"], 2715)
         self.assertEqual(records[0]["gpus"][0]["power_w"], 430)
@@ -738,6 +976,128 @@ class SamplerTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(calls, 2)
         self.assertEqual(maximum_active, 1)
         await sampler.stop()
+
+
+class PowerModelApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        temporary_root = Path(self.temp.name)
+        self.settings = Settings(
+            sample_interval_seconds=60,
+            database_path=temporary_root / "manager.db",
+            manager_log_path=temporary_root / "manager.log",
+            file_service_root=temporary_root / "共享",
+            power_baseline_w=75.0,
+            power_psu_efficiency=0.90,
+            power_cpu_vrm_efficiency=0.89,
+        )
+        self.settings.file_service_root.mkdir()
+        self.gpu_power = 400.0
+        self.cpu_power = 100.0
+
+        def fake_collector(_: Settings) -> dict:
+            sensors = [{
+                "name": "RAPL_Package0_PKG", "hardware_type": "CpuPackage",
+                "role": "cpu_package", "value_w": self.cpu_power, "method": "energy_delta",
+            }]
+            gpus = [{"uuid": "GPU-a", "index": 0, "name": "RTX", "power_w": self.gpu_power}]
+            return {
+                "sampled_at": "2099-01-01T00:00:00+00:00",
+                "host": {
+                    "cpu": {"load_percent": 12.5},
+                    "memory": {"percent": 50.0},
+                    "power": summarize_power(gpus, sensors, PowerModel(enabled=False)),
+                },
+                "gpus": gpus,
+                "docker": {"containers": []},
+                "ports": [],
+                "collector_errors": [],
+            }
+
+        sampler = Sampler(self.settings, collector=fake_collector)
+        self.client_context = TestClient(
+            create_app(self.settings, sampler), client=("127.0.0.1", 50000)
+        )
+        self.client = self.client_context.__enter__()
+
+    def tearDown(self) -> None:
+        self.client_context.__exit__(None, None, None)
+        self.temp.cleanup()
+
+    def _login(self) -> dict[str, str]:
+        setup = self.client.post(
+            "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+        )
+        return {"X-CSRF-Token": setup.json()["csrf_token"]}
+
+    def test_snapshot_reports_measured_and_estimated_power(self) -> None:
+        self._login()
+        power = self.client.get("/api/v1/snapshot").json()["host"]["power"]
+        self.assertEqual(power["measured_w"], 500)
+        self.assertEqual(power["gpu_w"], 400)
+        self.assertEqual(power["cpu_package_w"], 100)
+        # 估算必须把合计推高，并且和实测值分开列出。
+        self.assertGreater(power["total_w"], power["measured_w"])
+        self.assertAlmostEqual(
+            power["measured_w"] + power["estimated_w"], power["total_w"], places=1
+        )
+        self.assertEqual(power["model"]["source"], "default")
+        self.assertGreater(power["estimate_breakdown"]["psu_loss_w"], 0)
+
+    def test_history_stores_measured_and_estimated_columns(self) -> None:
+        self._login()
+        history = self.client.get("/api/v1/history?window=15m").json()
+        sample = history["samples"][0]
+        self.assertEqual(sample["measured_power_w"], 500)
+        self.assertIsNotNone(sample["estimated_power_w"])
+        self.assertAlmostEqual(
+            sample["measured_power_w"] + sample["estimated_power_w"],
+            sample["total_power_w"], places=1,
+        )
+
+    def test_calibration_round_trip_changes_the_model(self) -> None:
+        headers = self._login()
+        before = self.client.get("/api/v1/power-model").json()
+        self.assertFalse(before["model"]["calibrated"])
+        accounted = before["current"]["accounted_dc_w"]
+        self.assertIsNotNone(accounted)
+
+        idle = self.client.post(
+            "/api/v1/power-model/calibration",
+            json={"point": "idle", "wall_w": 700.0}, headers=headers,
+        )
+        self.assertEqual(idle.status_code, 200)
+        calibrated = idle.json()
+        self.assertTrue(calibrated["model"]["calibrated"])
+        self.assertEqual(calibrated["model"]["source"], "calibrated")
+        # 单点校准保留默认电源效率，只把底噪解出来。
+        self.assertEqual(calibrated["model"]["psu_efficiency"], 0.90)
+        self.assertAlmostEqual(
+            calibrated["model"]["baseline_w"], 700.0 * 0.90 - accounted, places=1
+        )
+        self.assertEqual(calibrated["calibration"]["updated_by"], "admin")
+
+        cleared = self.client.delete(
+            "/api/v1/power-model/calibration", headers=headers
+        )
+        self.assertEqual(cleared.status_code, 200)
+        self.assertFalse(cleared.json()["model"]["calibrated"])
+        self.assertIsNone(cleared.json()["calibration"])
+
+    def test_calibration_rejects_a_wall_reading_below_measured_power(self) -> None:
+        headers = self._login()
+        response = self.client.post(
+            "/api/v1/power-model/calibration",
+            json={"point": "idle", "wall_w": 100.0}, headers=headers,
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_calibration_requires_csrf(self) -> None:
+        self._login()
+        response = self.client.post(
+            "/api/v1/power-model/calibration", json={"point": "idle", "wall_w": 700.0}
+        )
+        self.assertEqual(response.status_code, 403)
 
 
 class ApiTests(unittest.TestCase):

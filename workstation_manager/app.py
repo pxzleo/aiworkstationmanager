@@ -28,6 +28,13 @@ from .config import ConfigError, Settings, load_settings
 from .database import SCHEMA_VERSION as DATABASE_SCHEMA_VERSION, Database, DatabaseError
 from .file_service import FileCatalog, FileServiceError
 from .history import Sampler, parse_window
+from .power_model import (
+    MAX_PLAUSIBLE_WALL_W,
+    PowerModel,
+    PowerModelError,
+    accounted_dc_w,
+    solve_calibration,
+)
 from .i18n import localize_error, localize_http_error
 from .manager_logging import configure_manager_logging
 from .registry import RegisteredServiceManager, RegistryError, ScriptRunner
@@ -177,6 +184,12 @@ class AutomaticTaskLeasePayload(AutomaticTaskClaimPayload):
     execution_token: str = Field(min_length=1, max_length=200)
 
 
+class PowerCalibrationPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    point: str = Field(pattern=r"^(idle|load)$")
+    wall_w: float = Field(gt=0, le=MAX_PLAUSIBLE_WALL_W)
+
+
 class FileRenamePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     path: str = Field(min_length=1, max_length=4096)
@@ -296,6 +309,41 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     )
     resolved_sampler = sampler or Sampler(resolved_settings, isolated_collection=True)
     resolved_sampler.set_sample_sink(resolved_database.append_resource_sample)
+
+    power_calibration_cache: dict[str, Any] = {"value": None, "loaded": False}
+
+    def read_power_calibration() -> dict[str, Any] | None:
+        if not power_calibration_cache["loaded"]:
+            try:
+                power_calibration_cache["value"] = resolved_database.read_power_calibration()
+            except DatabaseError:
+                power_calibration_cache["value"] = None
+            power_calibration_cache["loaded"] = True
+        return power_calibration_cache["value"]
+
+    def current_power_model() -> PowerModel:
+        calibration = read_power_calibration()
+        if calibration is None:
+            return PowerModel(
+                enabled=resolved_settings.power_estimate_enabled,
+                cpu_vrm_efficiency=resolved_settings.power_cpu_vrm_efficiency,
+                baseline_w=resolved_settings.power_baseline_w,
+                psu_efficiency=resolved_settings.power_psu_efficiency,
+                psu_rated_w=resolved_settings.power_psu_rated_w,
+                calibrated=False,
+            )
+        # 校准解出的是一个固定的电源效率，不再叠加按额定功率推算的负载曲线，
+        # 否则会在实测数据之上再套一层猜测。
+        return PowerModel(
+            enabled=resolved_settings.power_estimate_enabled,
+            cpu_vrm_efficiency=resolved_settings.power_cpu_vrm_efficiency,
+            baseline_w=float(calibration["baseline_w"]),
+            psu_efficiency=float(calibration["psu_efficiency"]),
+            psu_rated_w=0.0,
+            calibrated=True,
+        )
+
+    resolved_sampler.set_power_model_provider(current_power_model)
     resolved_auth = AuthService(resolved_database, resolved_settings.session_ttl_seconds,
                                 resolved_settings.session_max_active)
     resolved_registry = registry_manager or RegisteredServiceManager(
@@ -623,6 +671,81 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             resolved_database.query_resource_history, minutes, bucket_seconds
         )
         return {"window": f"{minutes}m", **result}
+
+    def _power_state() -> dict[str, Any]:
+        model = current_power_model()
+        snapshot = resolved_sampler.current or {}
+        power = (snapshot.get("host") or {}).get("power") or {}
+        accounted = accounted_dc_w(
+            model, power.get("gpu_w"), power.get("cpu_package_w"), power.get("sensor_w")
+        )
+        return {
+            "model": model.as_dict(),
+            "calibration": read_power_calibration(),
+            "current": {
+                "sampled_at": snapshot.get("sampled_at"),
+                "measured_w": power.get("measured_w"),
+                "estimated_w": power.get("estimated_w"),
+                "total_w": power.get("total_w"),
+                "accounted_dc_w": None if accounted is None else round(accounted, 2),
+            },
+        }
+
+    @app.get("/api/v1/power-model", dependencies=[Depends(protected_access)])
+    async def power_model_state() -> dict[str, Any]:
+        return _power_state()
+
+    @app.post("/api/v1/power-model/calibration")
+    async def calibrate_power_model(
+        payload: PowerCalibrationPayload,
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        snapshot = resolved_sampler.current or await resolved_sampler.sample_once()
+        power = (snapshot.get("host") or {}).get("power") or {}
+        model = current_power_model()
+        accounted = accounted_dc_w(
+            model, power.get("gpu_w"), power.get("cpu_package_w"), power.get("sensor_w")
+        )
+        if accounted is None:
+            raise HTTPException(409, {
+                "error_type": "PowerModelError",
+                "message": "当前没有任何实测功耗读数，无法校准",
+                "cause": "GPU 与 CPU 功耗传感器都不可用",
+            })
+        existing = read_power_calibration() or {}
+        points = {
+            "idle_accounted_w": existing.get("idle_accounted_w"),
+            "idle_wall_w": existing.get("idle_wall_w"),
+            "load_accounted_w": existing.get("load_accounted_w"),
+            "load_wall_w": existing.get("load_wall_w"),
+        }
+        points[f"{payload.point}_accounted_w"] = round(accounted, 2)
+        points[f"{payload.point}_wall_w"] = float(payload.wall_w)
+        try:
+            baseline_w, psu_efficiency = solve_calibration(
+                default_psu_efficiency=resolved_settings.power_psu_efficiency, **points
+            )
+        except PowerModelError as exc:
+            raise HTTPException(422, {
+                "error_type": "PowerModelError",
+                "message": "功耗校准数据不合理", "cause": str(exc),
+            }) from exc
+        calibration = await asyncio.to_thread(
+            lambda: resolved_database.write_power_calibration(
+                baseline_w=baseline_w, psu_efficiency=psu_efficiency,
+                updated_by=session.username, **points,
+            )
+        )
+        power_calibration_cache.update({"value": calibration, "loaded": True})
+        return _power_state()
+
+    @app.delete("/api/v1/power-model/calibration")
+    async def clear_power_calibration(
+        _: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        await asyncio.to_thread(resolved_database.clear_power_calibration)
+        power_calibration_cache.update({"value": None, "loaded": True})
+        return _power_state()
 
     @app.get("/api/v1/host-services", dependencies=[Depends(protected_access)])
     async def host_services() -> dict[str, Any]:

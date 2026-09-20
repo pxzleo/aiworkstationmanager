@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import ctypes
 import csv
@@ -16,6 +17,7 @@ from typing import Any, Callable
 import psutil
 
 from .config import Settings
+from .power_model import PowerModel, estimate as estimate_power
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,24 @@ _rate_lock = threading.Lock()
 _rate_state: dict[str, tuple[float, dict[str, float]]] = {}
 _slow_cache_lock = threading.Lock()
 _slow_cache: dict[str, tuple[float, bool, Any]] = {}
+
+# RAPL 能量累积计数器的差分状态。瞬时功率读数只覆盖采样瞬间，
+# 3 秒一次的采样会漏掉中间的功耗尖峰；能量差分给出的是整个采样区间的真实平均值。
+_energy_lock = threading.Lock()
+_energy_state: dict[str, tuple[str, float, float]] = {}
+_energy_scale: dict[str, float] = {}
+
+# 原始能量计数器的单位由 Windows 决定且未公开，因此用同一份数据的瞬时功率读数
+# 在运行时标定"每焦耳多少个原始计数"，不硬编码任何平台相关的常数。
+_ENERGY_SCALE_MIN = 1e2
+_ENERGY_SCALE_MAX = 1e15
+_ENERGY_SCALE_SMOOTHING = 0.25
+_ENERGY_MIN_ELAPSED_SECONDS = 0.5
+_ENERGY_MAX_ELAPSED_SECONDS = 120.0
+_MAX_PLAUSIBLE_SENSOR_W = 2000.0
+
+_CPU_PACKAGE_HARDWARE_TYPES = {"cpupackage", "cpu"}
+_CPU_PACKAGE_MARKERS = ("rapl", "package", "processor", "cpu")
 
 
 def run_readonly_command(command: list[str], timeout: float) -> str:
@@ -221,6 +241,179 @@ def collect_gpu_processes(
             "memory_used_mib": _number(columns[3], int),
         })
     return processes
+
+
+def collect_host_power_sensors(
+    settings: Settings, runner: CommandRunner = run_readonly_command
+) -> list[dict[str, Any]]:
+    if os.name != "nt":
+        return []
+    script = r"""
+$items = @()
+$rawByName = @{}
+Get-CimInstance -ClassName Win32_PerfRawData_PowerMeterCounter_EnergyMeter -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -match '^RAPL_Package\d+_PKG$' } |
+  ForEach-Object {
+    $rawByName[[string]$_.Name] = [pscustomobject]@{
+      energy_raw = [double]$_.Energy
+      energy_timestamp = [double]$_.Timestamp_PerfTime
+      energy_frequency = [double]$_.Frequency_PerfTime
+    }
+  }
+Get-CimInstance -ClassName Win32_PerfFormattedData_PowerMeterCounter_EnergyMeter -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -match '^RAPL_Package\d+_PKG$' -and $null -ne $_.Power } |
+  ForEach-Object {
+    $name = [string]$_.Name
+    $raw = $rawByName[$name]
+    $items += [pscustomobject]@{
+      source = 'root\CIMV2:Win32_PerfFormattedData_PowerMeterCounter_EnergyMeter'
+      name = $name
+      hardware_name = $name
+      hardware_type = 'CpuPackage'
+      value_w = [double]$_.Power / 1000.0
+      energy_raw = $(if ($raw) { $raw.energy_raw } else { $null })
+      energy_timestamp = $(if ($raw) { $raw.energy_timestamp } else { $null })
+      energy_frequency = $(if ($raw) { $raw.energy_frequency } else { $null })
+    }
+  }
+$hasCpuPackagePower = @($items | Where-Object { $_.hardware_type -eq 'CpuPackage' }).Count -gt 0
+foreach ($namespace in @('root\LibreHardwareMonitor', 'root\OpenHardwareMonitor')) {
+  if (-not (Get-CimClass -Namespace $namespace -ClassName Sensor -ErrorAction SilentlyContinue)) {
+    continue
+  }
+  Get-CimInstance -Namespace $namespace -ClassName Sensor -ErrorAction SilentlyContinue |
+    Where-Object { $_.SensorType -eq 'Power' -and $null -ne $_.Value } |
+    ForEach-Object {
+      $hardwareName = [string]($_.HardwareName)
+      $hardwareType = [string]($_.HardwareType)
+      $sensorName = [string]($_.Name)
+      $identity = $hardwareName + ' ' + $hardwareType + ' ' + $sensorName
+      if ($identity -notmatch '(?i)nvidia|geforce|rtx|gpu' -and -not ($hasCpuPackagePower -and $identity -match '(?i)cpu|processor|package|core|rapl')) {
+        $items += [pscustomobject]@{
+          source = $namespace
+          name = $sensorName
+          hardware_name = $hardwareName
+          hardware_type = $hardwareType
+          value_w = [double]$_.Value
+        }
+      }
+    }
+}
+$items | ConvertTo-Json -Compress
+"""
+    output = runner(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+        settings.command_timeout_seconds,
+    ).strip()
+    if not output:
+        return []
+    try:
+        parsed = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"功耗传感器输出不是有效 JSON: {exc}") from exc
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list):
+        raise ValueError("功耗传感器输出必须是数组")
+    sensors: list[dict[str, Any]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        identity = " ".join(
+            str(item.get(field) or "")
+            for field in ("name", "hardware_name", "hardware_type")
+        ).lower()
+        if any(marker in identity for marker in ("nvidia", "geforce", "rtx", "gpu")):
+            continue
+        value = item.get("value_w")
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+            continue
+        instant_w = float(value)
+        name = str(item.get("name") or "")
+        watts, method = _energy_derived_watts(name, item, instant_w)
+        if watts <= 0:
+            continue
+        sensors.append({
+            "source": item.get("source"),
+            "name": item.get("name"),
+            "hardware_name": item.get("hardware_name"),
+            "hardware_type": item.get("hardware_type"),
+            "role": _sensor_role(identity, item.get("hardware_type")),
+            "value_w": round(watts, 2),
+            "instant_w": round(instant_w, 2),
+            "method": method,
+        })
+    return sensors
+
+
+def _sensor_role(identity: str, hardware_type: Any) -> str:
+    """区分 CPU 封装功耗和其他功耗传感器。
+
+    CPU 封装读数要额外补一层供电 VRM 的转换损耗，其他传感器（主板、电源等）
+    读到的已经是转换之后的功率，不能重复补偿。
+    """
+    normalized = str(hardware_type or "").strip().lower()
+    if normalized in _CPU_PACKAGE_HARDWARE_TYPES:
+        return "cpu_package"
+    if any(marker in identity for marker in _CPU_PACKAGE_MARKERS):
+        return "cpu_package"
+    return "other"
+
+
+def _energy_derived_watts(
+    name: str, item: dict[str, Any], instant_w: float
+) -> tuple[float, str]:
+    """用能量累积计数器的差分求采样区间的平均功率，拿不到就回退到瞬时读数。
+
+    返回 (功率, 方法)，方法为 "energy_delta" 或 "instant"。
+    """
+    energy = _optional_float(item.get("energy_raw"))
+    timestamp = _optional_float(item.get("energy_timestamp"))
+    frequency = _optional_float(item.get("energy_frequency"))
+    if not name or energy is None:
+        return instant_w, "instant"
+    if timestamp is not None and frequency is not None and frequency > 0 and timestamp > 0:
+        clock, moment = "counter", timestamp / frequency
+    else:
+        clock, moment = "monotonic", time.monotonic()
+
+    with _energy_lock:
+        previous = _energy_state.get(name)
+        _energy_state[name] = (clock, moment, energy)
+        if previous is None or previous[0] != clock:
+            return instant_w, "instant"
+        elapsed = moment - previous[1]
+        delta = energy - previous[2]
+        if delta < 0 or not (
+            _ENERGY_MIN_ELAPSED_SECONDS <= elapsed <= _ENERGY_MAX_ELAPSED_SECONDS
+        ):
+            # 计数器回绕、服务重启或采样间隔异常，之前标定的比例不再可信。
+            _energy_scale.pop(name, None)
+            return instant_w, "instant"
+        rate = delta / elapsed
+        scale = _energy_scale.get(name)
+        if instant_w > 0 and rate > 0:
+            candidate = rate / instant_w
+            if _ENERGY_SCALE_MIN <= candidate <= _ENERGY_SCALE_MAX:
+                scale = candidate if scale is None else (
+                    scale * (1 - _ENERGY_SCALE_SMOOTHING)
+                    + candidate * _ENERGY_SCALE_SMOOTHING
+                )
+                _energy_scale[name] = scale
+        if scale is None or scale <= 0:
+            return instant_w, "instant"
+        watts = rate / scale
+
+    if not math.isfinite(watts) or watts < 0 or watts > _MAX_PLAUSIBLE_SENSOR_W:
+        return instant_w, "instant"
+    return watts, "energy_delta"
+
+
+def _optional_float(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
 
 
 def collect_docker(settings: Settings, runner: CommandRunner = run_readonly_command) -> list[dict[str, Any]]:
@@ -479,6 +672,37 @@ def collect_ports(settings: Settings) -> list[dict[str, Any]]:
     ]
 
 
+def summarize_power(
+    gpus: list[dict[str, Any]], sensors: list[dict[str, Any]], model: PowerModel
+) -> dict[str, Any]:
+    """把 GPU 板卡功耗和主机功耗传感器汇总成实测/估算/合计三个口径。
+
+    采样进程里用 enabled=False 的模型，只输出实测值；估算由持有配置和校准数据的
+    Sampler 在主进程里补上，这样采样子进程不需要访问数据库。
+    """
+    gpu_values = [
+        float(gpu["power_w"]) for gpu in gpus
+        if isinstance(gpu.get("power_w"), (int, float))
+        and not isinstance(gpu.get("power_w"), bool)
+    ]
+    cpu_values = [
+        float(sensor["value_w"]) for sensor in sensors
+        if sensor.get("role") == "cpu_package"
+    ]
+    other_values = [
+        float(sensor["value_w"]) for sensor in sensors
+        if sensor.get("role") != "cpu_package"
+    ]
+    summary = estimate_power(
+        model,
+        gpu_w=sum(gpu_values) if gpu_values else None,
+        cpu_package_w=sum(cpu_values) if cpu_values else None,
+        other_sensor_w=sum(other_values) if other_values else None,
+    )
+    summary["sensors"] = sensors
+    return summary
+
+
 def _safe_collect(
     collector: str, function: Callable[[], Any], errors: list[dict[str, str]], fallback: Any
 ) -> Any:
@@ -500,6 +724,14 @@ def collect_snapshot(settings: Settings, runner: CommandRunner = run_readonly_co
     errors: list[dict[str, str]] = []
     host = _safe_collect("host", collect_host, errors, {})
     gpus = _safe_collect("nvidia", lambda: collect_gpus(settings, runner), errors, [])
+    host_power_sensors = _safe_collect(
+        "host_power",
+        lambda: collect_host_power_sensors(settings, runner),
+        errors,
+        [],
+    )
+    if host:
+        host["power"] = summarize_power(gpus, host_power_sensors, PowerModel(enabled=False))
     if runner is run_readonly_command:
         docker = _safe_collect(
             "docker",

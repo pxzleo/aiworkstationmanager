@@ -8,6 +8,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .power_model import (
+    MAX_BASELINE_W,
+    MAX_CPU_VRM_EFFICIENCY,
+    MAX_PSU_EFFICIENCY,
+    MAX_PSU_RATED_W,
+    MIN_BASELINE_W,
+    MIN_CPU_VRM_EFFICIENCY,
+    MIN_PSU_EFFICIENCY,
+    MIN_PSU_RATED_W,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -64,6 +75,11 @@ class Settings:
     video_job_idle_timeout_seconds: float = 3600.0
     video_job_scene_timeout_seconds: float = 1200.0
     video_job_generation_timeout_seconds: float = 7200.0
+    power_estimate_enabled: bool = True
+    power_cpu_vrm_efficiency: float = 0.89
+    power_baseline_w: float = 75.0
+    power_psu_efficiency: float = 0.90
+    power_psu_rated_w: float = 0.0
 
     @property
     def history_capacity(self) -> int:
@@ -113,6 +129,19 @@ def _bounded_number(value: Any, name: str, minimum: float, maximum: float) -> fl
     number = _positive_number(value, name)
     if not minimum <= number <= maximum:
         raise ConfigError(f"{name} 必须在 {minimum:g}..{maximum:g}，实际值为 {number:g}")
+    return number
+
+
+def _optional_watts(value: Any, name: str, maximum: float) -> float:
+    """允许用 0 表示"未知"的瓦数配置，例如电源额定功率。"""
+    if isinstance(value, bool):
+        raise ConfigError(f"{name} 必须是有限数字，实际值为 {value!r}")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ConfigError(f"{name} 必须是数字，实际值为 {value!r}") from exc
+    if not math.isfinite(number) or number < 0 or number > maximum:
+        raise ConfigError(f"{name} 必须在 0..{maximum:g}，实际值为 {value!r}")
     return number
 
 
@@ -334,6 +363,11 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         "WM_VIDEO_JOB_IDLE_TIMEOUT_SECONDS": "video_job_idle_timeout_seconds",
         "WM_VIDEO_JOB_SCENE_TIMEOUT_SECONDS": "video_job_scene_timeout_seconds",
         "WM_VIDEO_JOB_GENERATION_TIMEOUT_SECONDS": "video_job_generation_timeout_seconds",
+        "WM_POWER_ESTIMATE_ENABLED": "power_estimate_enabled",
+        "WM_POWER_CPU_VRM_EFFICIENCY": "power_cpu_vrm_efficiency",
+        "WM_POWER_BASELINE_W": "power_baseline_w",
+        "WM_POWER_PSU_EFFICIENCY": "power_psu_efficiency",
+        "WM_POWER_PSU_RATED_W": "power_psu_rated_w",
     }
     for env_name, key in env_mapping.items():
         if env_name in env:
@@ -454,5 +488,26 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         video_job_generation_timeout_seconds=_bounded_number(
             data.get("video_job_generation_timeout_seconds", 7200),
             "video_job_generation_timeout_seconds", 1, 7 * 24 * 60 * 60,
+        ),
+        power_estimate_enabled=_boolean(
+            data.get("power_estimate_enabled", True), "power_estimate_enabled"
+        ),
+        power_cpu_vrm_efficiency=_bounded_number(
+            data.get("power_cpu_vrm_efficiency", 0.89),
+            "power_cpu_vrm_efficiency",
+            MIN_CPU_VRM_EFFICIENCY,
+            MAX_CPU_VRM_EFFICIENCY,
+        ),
+        power_baseline_w=_bounded_number(
+            data.get("power_baseline_w", 75),
+            "power_baseline_w", MIN_BASELINE_W, MAX_BASELINE_W,
+        ),
+        power_psu_efficiency=_bounded_number(
+            data.get("power_psu_efficiency", 0.90),
+            "power_psu_efficiency", MIN_PSU_EFFICIENCY, MAX_PSU_EFFICIENCY,
+        ),
+        power_psu_rated_w=_optional_watts(
+            data.get("power_psu_rated_w", MIN_PSU_RATED_W),
+            "power_psu_rated_w", MAX_PSU_RATED_W,
         ),
     )

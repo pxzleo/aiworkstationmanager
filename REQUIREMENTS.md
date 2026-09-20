@@ -15,7 +15,7 @@
 
 本项目需要提供一个可通过局域网浏览器访问的统一管理系统，用来管理工作场景、工作环境和模型实例，监控整机与推理服务状态，并集中记录运行日志和操作记录。
 
-本系统是“控制面”，不是新的推理引擎。它必须优先复用和管理已有的 NInfer、q27、vLLM、llama.cpp、ComfyUI 等服务，而不是强迫现有服务迁移到单一推理框架。
+本系统是“控制面”，不是新的推理引擎。它必须优先复用和管理已有的 NInfer、vLLM、llama.cpp、ComfyUI 等服务，而不是强迫现有服务迁移到单一推理框架。
 
 ## 2. 建设目标
 
@@ -82,7 +82,6 @@
 | `ninfer-3090` | Docker Compose | 已停止 | 后端计划端口 `18030` | 容器 restart policy 为 `unless-stopped` |
 | `ninfer3090-ui.service` | WSL systemd | 已停止 | `127.0.0.1:18031` | unit 保持可手动启动但不绑定 systemd 启动目标，由 AXIS 已登记服务统一管理 |
 | `qwen38-27b-rtx3090-single-1` | Docker Compose | 已停止 | 未监听 | restart policy 为 `no` |
-| q27 | WSL 原生构建/服务 | 当前未发现监听 | 历史上可作为独立推理后端 | 项目位于 `/home/xu/ai_stud/q27` |
 | FastGPT 相关容器组 | Docker Compose | 已停止 | 未监听 | 包含应用、数据库、Redis、MinIO 等依赖 |
 | Open WebUI / Qdrant | Docker | 已停止 | 未监听 | 属于历史 AI/RAG 环境 |
 | ComfyUI 开发图像/视频服务 | Windows 原生 ComfyUI 固定 Python 入口 | 已配置，按需启动 | `0.0.0.0:8189` | 开发/agent场景固定 RTX 3090；Krea2 生图、MiniMax H3 生视频；与视频辅助 8001 使用独立用户目录和数据库；仅通过 Windows 专用网络防火墙规则向局域网开放 |
@@ -124,7 +123,7 @@
 - `0.0.0.0:8189` → RTX 4090 → 视频场景 ComfyUI MiniMax H3 视频生成；与同端口的 RTX 3090 开发/agent ComfyUI 通过场景和端口预检保持互斥。
 - `0.0.0.0:8001` → RTX 3090 → ComfyUI Qwen TTS、ACE-Step 1.5 音乐生成，并为后续 ASR/其他视频辅助模型预留。
 - H3 当前标准参数为 8 步采样，使用 `minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors`，`shift_video = 12`、`shift_audio = 3`；不得在场景模板中回退到 4 步工作流或搭配 4-step LoRA。
-- H3 8 步工作流从 LoRA 直接连接 Sigma Shift，不启用 `PathchSageAttentionKJ`；当前 SageAttention 与 AIMDO/DynamicVRAM 异步权重卸载存在崩溃风险，在兼容性单独验证通过前不得重新加入。移除 SageAttention 不得改变 8 步、分辨率、模型或 LoRA。
+- H3 8 步工作流从 LoRA 连接 `PathchSageAttentionKJ`，使用 `sage_attention = auto` 且 `allow_compile = false`，再连接 Sigma Shift；当前配置用于 SageAttention 冒烟验证，不得同时改变 8 步、分辨率、模型或 LoRA，以便出现异常时能够明确归因。
 
 本轮端口变更时 8189 和 8001 均未监听，因此上述内容属于“已配置、曾验证的目标环境”，不能在 UI 中显示为当前运行中。管理系统必须通过 ComfyUI `/system_stats`、队列状态和 GPU 实际占用确认真实状态。
 
@@ -155,9 +154,8 @@ ASR 与 TTS 使用独立的 user systemd unit `sensevoice-asr-api.service`、`in
 
 | 入口 | 框架/用途 | 底层管理方式 | 主要端口 | GPU/冲突关系 |
 |---|---|---|---|---|
-| `4090-NInfer-服务管理.ps1` | NInfer + Qwen3.8-27B + NInfer UI，`48G8并发` 模板 | WebUI 模板启动 + WSL Docker Compose + user systemd | API 8080、UI 8081 | RTX 4090；与 vLLM 及 32G4并发入口互斥 |
-| `4090-NInfer-32G4并发-服务管理.ps1` | NInfer + Qwen3.8-27B + NInfer UI，`32G4并发` 模板 | 复用 48G8并发入口的安全启停逻辑 | API 8080、UI 8081 | RTX 4090；与 vLLM 及 48G8并发入口互斥 |
-| `4090-q27.cmd` | q27 Qwen3.8-27B Q6_K | WSL systemd | API 8080 | RTX 4090；与 NInfer、vLLM 互斥 |
+| `4090-NInfer-服务管理.ps1` | NInfer + Qwen3.8-27B Uncensored + NInfer UI，`48G8并发` 模板 | WebUI 模板启动 + WSL Docker Compose + user systemd | API 8080、UI 8081 | RTX 4090；与 vLLM 及 32G4并发入口互斥 |
+| `4090-NInfer-32G4并发-服务管理.ps1` | NInfer + Qwen3.8-27B Uncensored + NInfer UI，`32G4并发` 模板 | 复用 48G8并发入口的安全启停逻辑 | API 8080、UI 8081 | RTX 4090；与 vLLM 及 48G8并发入口互斥 |
 | `4090-vLLM.cmd` | vLLM Qwen3.8-27B FP8 | WSL user transient systemd | API 8000 | RTX 4090；与使用 8189 的 H3 ComfyUI 仍存在 GPU 冲突，但不再共用端口 |
 | `3090-NInfer.cmd` | NInfer 3090 + NInfer UI | WSL Docker Compose + systemd | API 18030、UI 18031 | RTX 3090；只读复用 4090 NInfer 的 `/home/xu/ai_stud/ninfer4090/models/Qwen3.8-27B-Uncensored.ninfer`；与其他 3090 大模型服务互斥 |
 | `3090-Qwen3090-Control.cmd` | Qwen3.8-27B 3090 服务 | Windows Docker Compose | API 18020 | RTX 3090；与 NInfer 3090 互斥 |
@@ -227,7 +225,7 @@ NInfer 4090 UI 曾把 LAN API 地址写死为历史地址 `192.168.100.152`。20
 - NInfer、ComfyUI 通用指标及 OpenAI 兼容接口健康检查。
 - 实时日志、历史日志和操作审计。
 - 中文 Web 管理界面和局域网登录认证。
-- 导入当前 NInfer 4090、NInfer 3090、q27、ComfyUI 8189/8001、OpenMontage 及主要 Docker Compose 项目；8189 上的 RTX 3090 开发服务与 RTX 4090 视频服务必须按身份互斥。
+- 导入当前 NInfer 4090、NInfer 3090、ComfyUI 8189/8001、OpenMontage 及主要 Docker Compose 项目；8189 上的 RTX 3090 开发服务与 RTX 4090 视频服务必须按身份互斥。
 - 受控执行现有 ComfyUI PowerShell 启动/停止脚本；不提供任意命令执行能力。
 - 只读扫描并人工确认导入 `C:\Users\xu\Desktop\本地模型启动` 中的 `.cmd`、`.bat`、`.ps1` 和 `.lnk`。
 - 启动并打开 NInfer 4090/3090 现有监控 UI，以及 LM Studio Web Monitor。
@@ -248,7 +246,7 @@ NInfer 4090 UI 曾把 LAN API 地址写死为历史地址 `192.168.100.152`。20
 ### 6.3 MVP 明确不做
 
 - 不开发新的推理引擎。
-- 不自动修改 NInfer、q27、vLLM 等项目源码。
+- 不自动修改 NInfer、vLLM 等项目源码。
 - 不自动删除模型、容器、镜像、卷或历史日志。
 - 不默认接管未知进程、未知容器或未知端口。
 - 不在未确认的情况下切换当前运行模型或释放 GPU。
@@ -762,7 +760,6 @@ Web UI / HTTP API
 
 ### AC-15 脚本冲突识别
 
-- 导入后识别 NInfer 4090 与 q27 共用 8080。
 - 识别 vLLM 8000 与 H3 ComfyUI 8189 虽不再共用端口但仍竞争 RTX 4090，并识别 4090 H3 与 3090 开发 ComfyUI 互斥共用 8189。
 - 识别 BF16 llama.cpp 与 LM Studio 默认 API 共用 1234，且 BF16 服务同时占用 4090/3090。
 - 在存在冲突的服务运行时，启动预检默认阻止目标操作并列出具体端口、GPU 和占用服务。
@@ -792,7 +789,7 @@ Web UI / HTTP API
 ### M2：模型与参数管理
 
 - 模型清单、环境模板和参数预设版本。
-- 当前 NInfer 4090/3090、q27、ComfyUI 8189/8001 和 OpenMontage 配置导入。
+- 当前 NInfer 4090/3090、ComfyUI 8189/8001 和 OpenMontage 配置导入。
 - 配置差异预览和应用流程。
 
 ### M3：监控与运维完善
@@ -813,7 +810,7 @@ Web UI / HTTP API
 6. 指标和日志期望保留多久，以及可接受的最大磁盘占用是多少？
 7. 除用户主动点击场景切换外，是否需要自动调度，例如按任务类型自动进入视频场景？本文暂不启用自动切换。
 8. 开发/agent场景中 ASR/TTS 与 ComfyUI Krea2/H3 服务的入口、端口、模型文件及 GPU 绑定已固化；ComfyUI、ASR、TTS 同时加载模型时的峰值显存上限仍需按实际工作流验收。
-9. q27、vLLM、3090 NInfer、3090 Qwen 和双卡 BF16 llama.cpp 是作为“其他手动环境”提供，还是需要成为开发/agent场景的可选子预设？
+9. vLLM、3090 NInfer、3090 Qwen 和双卡 BF16 llama.cpp 是作为“其他手动环境”提供，还是需要成为开发/agent场景的可选子预设？
 10. LM Studio Web Monitor 是保留独立 8765 监听并加固，还是仅允许通过管理系统同源代理访问？MVP 推荐后者。
 
 ## 15. 需求变更规则
@@ -928,19 +925,19 @@ Web UI / HTTP API
 - 管理器不得定时调用任何服务的 `status`，后台监控也不得启动 PowerShell、`wsl.exe`、Docker CLI 或其他子进程。`status` 仅用于用户点击单个服务的“深度检查”、未配置默认场景时的启动校准和生命周期动作失败后的状态校准，单次默认超时 3 秒。启动校准须逐个串行检查，第一轮返回 `unknown` 的服务在整轮结束后重试一次；最终结果更新实际观察状态。
 - 对配置了健康检查地址的服务，管理器在自身进程内每 5 秒发起 HTTP/HTTPS GET，单次超时 1 秒，最多同时检查 2 个服务，并禁止使用系统代理。HTTP 2xx 且响应包含可选匹配文本时为 `running`；接口可达但返回错误或身份不匹配时为 `unhealthy`；拒绝连接时为 `stopped`；超时等无法可靠判断的结果为 `unknown`。期望停止且端点不可达时保持 `stopped`，避免残留 Windows 端口转发产生超时误报；期望运行时同类超时转为 `unhealthy`；期望状态未知但最近一次明确观察为 `unhealthy` 时，因不可达或超时返回 `unknown` 的轻量探测不得把该结果降级。连续两次失败才改变稳定状态，首次成功立即恢复为 `running`。
 - 共用同一主机和端口的登记服务必须使用不同路径或响应匹配文本识别身份。若一个服务检查成功，另一服务在同一端口的检查可达但身份不匹配，则后者判定为 `stopped`，不得把占用端口的其他服务误报为本服务。共用关系必须同时比较用户登记的服务端口与健康检查地址，不能因为运行服务使用独立的 UI 健康检查端口而漏判。
-- NInfer 4090 分别登记为“4090 NInfer 48G 8并发”和“4090 NInfer 32G 4并发”。两个入口共用 API 8080、UI 8081 和同一个容器生命周期，但启动时必须分别通过 WebUI 应用 `48G8并发`、`32G4并发` 模板；Windows PowerShell 5.1 调用模板启动 API 时必须将 JSON 请求正文显式编码为 UTF-8 字节，确保中文模板名不被替换为问号。脚本 `status` 必须同时核对运行时 KV capacity 与 slot 数，非本入口配置返回 `stopped`，`stop` 不得停止另一配置。后台健康检查使用 `/api/snapshot` 中的运行时 KV capacity 文本区分两个入口。
+- NInfer 4090 分别登记为“4090 NInfer 48G 8并发”和“4090 NInfer 32G 4并发”。两个入口共用 API 8080、UI 8081、同一个容器生命周期和无限制模型文件 `/home/xu/ai_stud/ninfer4090/models/Qwen3.8-27B-Uncensored.ninfer`，但启动时必须分别通过 WebUI 应用 `48G8并发`、`32G4并发` 模板；Windows PowerShell 5.1 调用模板启动 API 时必须将 JSON 请求正文显式编码为 UTF-8 字节，确保中文模板名不被替换为问号。脚本 `status` 必须同时核对运行时 KV capacity 与 slot 数，非本入口配置返回 `stopped`，`stop` 不得停止另一配置。后台健康检查使用 `/api/snapshot` 中的运行时 KV capacity 文本区分两个入口。
 - 每个服务分别保存 `desired_state` 和 `observed_state`。前者记录管理器最后要求的目标状态，后者记录健康检查、动作后验证或手动深度检查发现的实际状态；页面、总览和场景均以 `observed_state` 为准。期望运行但实际停止显示“意外停止”，期望停止但实际运行显示“外部启动”。新服务两种状态均为 `unknown`。
 - 健康监控只在状态或错误发生变化时写入 SQLite；连续成功检查只更新进程内检查时间，避免每 5 秒写盘。管理器重启先恢复最后观察状态；没有默认场景时完成启动校准，有默认场景时提交启动场景切换，随后开始后台轻量健康检查。
 - 同一时刻只执行一个服务动作或场景切换；同一数据库只允许一个管理器实例持有进程锁，第二实例必须明确启动失败。删除服务仅删除登记记录，并由数据库级联将其从全部场景移除，不删除脚本、项目、模型或服务本身。
 - 已登记服务支持启动、停止、重启、深度检查和打开 UI。管理器不再提供任何运行适配器、环境配置文件或脚本内容扫描能力；通用 URL 与响应文本检查不属于服务适配器。
-- X-MinimaxH3 按模型族登记为 `X-MinimaxH3 INT8 FL2VA` 与 `X-MinimaxH3 INT8 Ref2VA` 两个互斥服务，分别使用专用脚本 `D:\AI_work\h3speed\Manage-H3Serve-INT8-FL2VA.ps1` 和 `D:\AI_work\h3speed\Manage-H3Serve-INT8-Ref2VA.ps1`。两个脚本共用 `Ubuntu-22.04` 中固定的 transient unit `x-minimaxh3-root.service`、RTX 4090 与端口 8090，启动时必须以 `host_memory_limit_gib=24` 自动载入各自固定的 `fl2va_int8_24gb` 或 `ref2va_int8_24gb` 并等到模型 ready；状态检查必须按 `active_launcher` 区分服务身份。为避免重复拥有同一 Windows 映射，仅 FL2VA 登记持有 `0.0.0.0:8090` 到 WSL 当前 IPv4 `8090` 的受控转发，Ref2VA 复用同一底层服务与监听；UI 地址均为 `http://192.168.100.190:8090/`，健康检查均使用 `http://127.0.0.1:8090/healthz` 并匹配各自的 `active_launcher`；默认不加入任何场景，避免改变现有场景切换行为。
+- X-MinimaxH3 按模型族登记为 `X-MinimaxH3 INT8 FL2VA` 与 `X-MinimaxH3 INT8 Ref2VA` 两个互斥服务，分别使用专用脚本 `D:\AI_work\h3speed\Manage-H3Serve-INT8-FL2VA.ps1` 和 `D:\AI_work\h3speed\Manage-H3Serve-INT8-Ref2VA.ps1`。两个脚本共用 `Ubuntu-22.04` 中固定的 transient unit `x-minimaxh3-root.service`、RTX 4090 与端口 8090，启动时必须以 `host_memory_limit_gib=41` 自动载入各自固定的 `fl2va_int8_24gb` 或 `ref2va_int8_24gb` 并等到模型 ready；状态检查必须按 `active_launcher` 区分服务身份。为避免重复拥有同一 Windows 映射，仅 FL2VA 登记持有 `0.0.0.0:8090` 到 WSL 当前 IPv4 `8090` 的受控转发，Ref2VA 复用同一底层服务与监听；UI 地址均为 `http://192.168.100.190:8090/`，健康检查均使用 `http://127.0.0.1:8090/healthz` 并匹配各自的 `active_launcher`；默认不加入任何场景，避免改变现有场景切换行为。
 - 已登记服务页面提供“一键停止全部服务”。执行前先完成一次轻量健康确认，随后按服务列表顺序对状态不是 `stopped` 的服务调用 `stop`；每个实际执行的步骤写入同一条批量操作记录。提交成功后必须复用场景切换进度窗口，实时展示总进度、当前停止项、逐服务结果和失败摘要；总步骤数必须来自本次轻量健康确认后的后端实际目标，不得使用前端旧状态估算。终态后提供“返回服务列表”，不展示仅场景操作支持的终止按钮。
 
 ### 20.2 场景编辑器与切换
 
 - 场景支持添加、编辑、删除，保存名称、说明以及有序的已登记服务 ID 列表；列表顺序即目标服务启动顺序。
 - 项目可选择至多一个默认场景。默认场景卡片必须使用贯穿卡片顶部的金色“默认启动场景”状态带，并明确说明“AXIS 启动时自动切换”；已激活场景必须使用主题强调色的“当前已激活场景”状态带、更强的强调边框、背景和侧边状态条。状态带直接替换普通卡片顶部的编号/状态提示行，不与其叠加，也不得增加特殊状态卡片高度，原拖动入口移入状态带保留。默认与已激活是两个独立状态；同一卡片同时具备两种状态时，顶部只显示一条金色状态带，使用“默认场景 · 已激活”同时标明两种状态，并继续保留已激活卡片的侧边状态条，不得叠成两行状态带。卡片提供“设为默认”和“取消默认”；设为默认只保存设置，不立即切换，取消默认也不停止当前服务。管理器启动完成后如存在默认场景，必须以 `system/startup` 身份提交一次普通场景切换操作，复用相同的健康确认、停止、启动、互斥、步骤记录和最终结果规则；未设置默认场景时不得自动启停服务。删除默认场景后默认设置随之清除。
-- 新建场景默认追加到场景列表末尾。工作场景中的每个场景使用边界和层次清晰的独立卡片展示，顶部场景编号与状态应醒目；已激活卡片使用统一强调色明确区分，普通卡片提供克制的悬停抬升反馈。桌面宽度下一行显示两张卡片时，同一行卡片的底部操作按钮必须水平对齐，不得因说明文字或服务数量不同而错位。页面支持拖动场景卡片调整显示顺序，并提供上移、下移按钮作为触屏和键盘操作方式；排序结果必须持久化，刷新页面或重启管理器后保持不变。
+- 新建场景默认追加到场景列表末尾。工作场景中的每个场景使用边界和层次清晰的独立卡片展示，顶部场景编号与状态应醒目；已激活卡片使用统一强调色明确区分，并始终显示在场景列表和场景切换下拉框的第一个位置，其余场景保持原有相对顺序；普通卡片提供克制的悬停抬升反馈。桌面宽度下一行显示两张卡片时，同一行卡片的底部操作按钮必须水平对齐，不得因说明文字或服务数量不同而错位。页面支持拖动场景卡片调整显示顺序，并提供上移、下移按钮作为触屏和键盘操作方式；已激活场景固定置顶，不参与手动排序，其他场景的排序结果必须持久化，刷新页面或重启管理器后保持不变。
 - 切换场景前先执行一次轻量健康检查，不调用任何 `status` 脚本。场景管理范围是至少加入一个场景的服务；未加入任何场景的登记服务继续接受健康监控和手动启停，但不参与场景状态计算或场景切换。对场景管理范围内所有 `observed_state` 不是 `stopped` 且未包含在目标场景中的服务依次调用幂等 `stop`；这包括健康接口超时但进程仍可能存活的 `unhealthy` 或 `unknown` 服务。任一必要停止失败时禁止进入启动阶段。
 - 停止阶段全部成功后，按场景顺序只对实际尚未运行的目标服务调用 `start`，已确认运行的目标服务不得重复启动。某个目标服务启动失败不阻止其余目标服务继续启动。
 - 每个动作结束后立即使用该动作的新期望状态验证配置的健康接口并更新 `observed_state`，不得因动作前缓存的期望状态误判停止失败并阻断启动阶段。目标服务实际状态全部为 `running`，且场景管理范围内没有任何非目标服务实际为 `running` 时，场景为 `active`；没有任何目标服务实际运行时为 `inactive`；其他情况为 `partial`。空场景仅在场景管理范围内没有任何服务实际运行时为 `active`；未加入场景的服务不影响这些状态。切换操作只有最终状态为 `active` 才算成功。

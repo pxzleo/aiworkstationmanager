@@ -90,7 +90,7 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(js.includes('function createMonitorChart'));
   assert.ok(js.includes('function createMonitorGroup'));
   assert.ok(js.includes('function renderMonitorDetails'));
-  for (const label of ['处理器负载', '系统内存', '提交内存', '页面文件', '核心负载', '核心频率', '功率', '温度', '显存占用', '存储容量', '磁盘读取', '网络下载', 'WSL 内存', 'Docker 容器', '平均', '峰值', '最低']) assert.ok(js.includes(label), `missing monitor label ${label}`);
+  for (const label of ['整机功耗', '处理器负载', '系统内存', '提交内存', '页面文件', '核心负载', '核心频率', '功率', '温度', '显存占用', '存储容量', '磁盘读取', '网络下载', 'WSL 内存', 'Docker 容器', '平均', '峰值', '最低']) assert.ok(js.includes(label), `missing monitor label ${label}`);
   for (const selector of ['.monitor-group', '.monitor-chart-grid', '.chart-y-axis', '.chart-x-axis', '.chart-statistics']) assert.ok(css.includes(selector), `missing ${selector}`);
   assert.ok(js.includes('function chartAxisValues'));
   assert.ok(html.includes('id="historyRangeSelect"'));
@@ -100,6 +100,7 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(js.includes('monitorChart.axisLabels(state.historyWindowMinutes)'));
   assert.ok(js.includes('monitorChart.windowMilliseconds(state.historyWindowMinutes)'));
   assert.ok(js.includes("`/history?window=${state.historyWindowMinutes}m`"));
+  assert.ok(js.indexOf("title: '整机功耗'") < js.indexOf("title: '处理器负载'"));
   assert.ok(js.includes("geometry.isolatedPoints.map((point) => svgElement('circle'"));
   assert.ok(css.includes('.chart-isolated-point'));
   assert.ok(css.includes('.gpu-correlation-stack'));
@@ -143,6 +144,7 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(!js.includes("getter: (sample) => sample.memory_percent }"));
   assert.ok(!js.includes("getter: metric('memory_percent'), unit: '%', maximum: 100"));
   assert.ok(i18n.includes("'处理器负载': 'Processor load'"));
+  assert.ok(i18n.includes("'整机功耗': 'Total system power'"));
   assert.ok(js.includes("'未检测到 NVIDIA GPU。'"));
   assert.ok(!js.includes('bindGpuSlots'));
   assert.ok(!js.includes('slots: [null, null]'));
@@ -189,6 +191,9 @@ test('scene editor and management log remain wired', () => {
   assert.ok(js.includes('/operations?limit=50'));
   assert.ok(js.includes('/scenes/reorder'));
   assert.ok(js.includes("panel.draggable"));
+  assert.ok(js.includes("function scenesForDisplay()"));
+  assert.ok(js.includes("scene.state !== 'active' && !scene.busy"));
+  assert.ok(js.includes("displayedScenes[index - 1]?.state === 'active'"));
   assert.ok(js.includes("dragstart"));
   assert.ok(js.includes("scene.is_default ? '取消默认场景' : '设为默认场景'"));
   assert.ok(js.includes("`/scenes/${scene.id}/default`"));
@@ -289,6 +294,18 @@ test('scene editor and management log remain wired', () => {
   assert.ok(css.includes('overflow-wrap: anywhere'));
 });
 
+test('active scene is displayed first without changing the relative order of other scenes', () => {
+  const source = js.match(/function scenesForDisplay\(\) \{[^\n]+\}/)?.[0];
+  assert.ok(source);
+  const sandbox = { state: { scenes: [
+    { id: 'first', state: 'inactive' },
+    { id: 'active', state: 'active' },
+    { id: 'last', state: 'partial' },
+  ] } };
+  vm.runInNewContext(source, sandbox);
+  assert.deepEqual(Array.from(sandbox.scenesForDisplay(), (scene) => scene.id), ['active', 'first', 'last']);
+});
+
 test('authenticated refresh keeps the login panel hidden while the session is checked', () => {
   assert.ok(html.includes('<body class="auth-pending app-initializing">'));
   assert.ok(html.includes('id="startupScreen"'));
@@ -300,9 +317,9 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260913-15'));
-  assert.ok(html.includes('i18n.js?v=20260914-13'));
-  assert.ok(html.includes('app.js?v=20260914-20'));
+  assert.ok(html.includes('styles.css?v=20260919-1'));
+  assert.ok(html.includes('i18n.js?v=20260919-1'));
+  assert.ok(html.includes('app.js?v=20260919-1'));
 });
 
 test('read polling tolerates transient network failures without retrying writes', () => {
@@ -580,9 +597,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260913-15'));
-  assert.ok(html.includes('i18n.js?v=20260914-13'));
-  assert.ok(html.includes('app.js?v=20260914-20'));
+  assert.ok(html.includes('styles.css?v=20260919-1'));
+  assert.ok(html.includes('i18n.js?v=20260919-1'));
+  assert.ok(html.includes('app.js?v=20260919-1'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
@@ -624,6 +641,36 @@ test('system settings provides three persistent display styles', () => {
     assert.ok(!css.includes(staleColor), `fixed Matrix Green surface remains: ${staleColor}`);
   }
   for (const label of ['矩阵绿', '极光蓝', '曜石金']) assert.ok(i18n.includes(`'${label}':`));
+});
+
+test('total system power separates measured sensors from the estimate', () => {
+  // 曲线画的是合计值，但界面必须同时说明其中多少是实测、多少是估算，
+  // 不能把估算伪装成传感器读数。
+  assert.ok(js.includes("monitorDetail('实测 / 估算')"));
+  assert.ok(js.includes('function powerBreakdownText(power)'));
+  assert.ok(js.includes('powerBreakdownText(host.power)'));
+  assert.ok(js.includes("description: '实测传感器加上主板、内存、供电与电源损耗的估算'"));
+  assert.ok(!js.includes("description: 'GPU 与系统已暴露功耗传感器总和'"));
+  assert.ok(js.includes('measured_power_w: staleSnapshot ? null : host?.power?.measured_w'));
+  assert.ok(js.includes('estimated_power_w: staleSnapshot ? null : host?.power?.estimated_w'));
+  assert.ok(i18n.includes("'实测 / 估算': 'Measured / estimated'"));
+});
+
+test('system settings offers a wall-meter calibration for total system power', () => {
+  assert.ok(html.includes('id="powerCalibrationForm"'));
+  assert.ok(html.includes('id="powerCalibrationPoint"'));
+  assert.ok(html.includes('id="powerCalibrationWall"'));
+  assert.ok(html.includes('id="clearPowerCalibrationButton"'));
+  for (const id of ['powerModelSource', 'powerModelSplit', 'powerModelBaseline', 'powerModelEfficiency']) {
+    assert.ok(html.includes(`id="${id}"`), `settings page is missing ${id}`);
+  }
+  assert.match(html, /id="powerCalibrationWall"[^>]*max="5000"/);
+  assert.ok(js.includes("api('/power-model'"));
+  assert.ok(js.includes("api('/power-model/calibration', { method: 'POST'"));
+  assert.ok(js.includes("api('/power-model/calibration', { method: 'DELETE' })"));
+  assert.ok(js.includes('refreshPowerModel()'));
+  assert.ok(css.includes('.power-calibration-form'));
+  assert.ok(i18n.includes("'整机功耗校准': 'Total system power calibration'"));
 });
 
 test('system settings shows the runtime version and GitHub project link', () => {

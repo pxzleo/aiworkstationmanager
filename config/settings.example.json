@@ -33,5 +33,10 @@
   "video_job_poll_interval_seconds": 2,
   "video_job_idle_timeout_seconds": 3600,
   "video_job_scene_timeout_seconds": 1200,
-  "video_job_generation_timeout_seconds": 7200
+  "video_job_generation_timeout_seconds": 7200,
+  "power_estimate_enabled": true,
+  "power_cpu_vrm_efficiency": 0.89,
+  "power_baseline_w": 75,
+  "power_psu_efficiency": 0.9,
+  "power_psu_rated_w": 0
 }

@@ -219,11 +219,22 @@
     "class_type": "MiniMaxH3SigmaShift",
     "inputs": {
       "model": [
-        "145",
+        "152",
         0
       ],
       "shift_video": 12.0,
       "shift_audio": 3.0
+    }
+  },
+  "152": {
+    "class_type": "PathchSageAttentionKJ",
+    "inputs": {
+      "model": [
+        "145",
+        0
+      ],
+      "sage_attention": "auto",
+      "allow_compile": false
     }
   }
 }

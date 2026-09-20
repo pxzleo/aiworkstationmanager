@@ -12,7 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from .config import Settings
-from .collectors import collect_snapshot
+from .collectors import collect_snapshot, summarize_power
+from .power_model import PowerModel
 
 
 MAX_HISTORY_WINDOW_MINUTES = 24 * 60
@@ -230,10 +231,14 @@ class HistoryStore:
         memory = host.get("memory", {})
         primary_network = host.get("primary_network") or {}
         wsl = host.get("wsl") or {}
+        power = host.get("power") or {}
         stale_collectors = snapshot.get("stale_collectors") or {}
         history_gpus = [] if "nvidia" in stale_collectors else snapshot.get("gpus", [])
         record = {
                 "sampled_at": snapshot["sampled_at"],
+                "total_power_w": power.get("total_w"),
+                "measured_power_w": power.get("measured_w"),
+                "estimated_power_w": power.get("estimated_w"),
                 "cpu_load_percent": cpu.get("load_percent"),
                 "cpu_temperature_c": cpu.get("temperature_c"),
                 "cpu_frequency_mhz": cpu.get("frequency_mhz"),
@@ -300,8 +305,10 @@ class Sampler:
         collector: Callable[[Settings], dict[str, Any]] = collect_snapshot,
         sample_sink: Callable[[dict[str, Any]], None] | None = None,
         isolated_collection: bool = False,
+        power_model_provider: Callable[[], PowerModel] | None = None,
     ) -> None:
         self.settings = settings
+        self._power_model_provider = power_model_provider
         self.history = HistoryStore(settings.realtime_history_capacity)
         self.current: dict[str, Any] | None = None
         self._collector = collector
@@ -319,6 +326,33 @@ class Sampler:
 
     def set_sample_sink(self, sample_sink: Callable[[dict[str, Any]], None]) -> None:
         self._sample_sink = sample_sink
+
+    def set_power_model_provider(
+        self, power_model_provider: Callable[[], PowerModel] | None
+    ) -> None:
+        self._power_model_provider = power_model_provider
+
+    def _apply_power_model(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        """在主进程里补上估算功耗。
+
+        采集子进程只输出实测值，配置和校准数据都在主进程，因此估算放在这里做。
+        这里重新汇总 GPU 功耗，是为了让 nvidia 采集短暂失败、界面回退到上一批
+        GPU 数据时，功耗曲线和界面显示的是同一批数据，而不是只剩 CPU 的那一半。
+        """
+        if self._power_model_provider is None:
+            return snapshot
+        host = snapshot.get("host")
+        if not isinstance(host, dict):
+            return snapshot
+        power = host.get("power")
+        sensors = power.get("sensors", []) if isinstance(power, dict) else []
+        try:
+            model = self._power_model_provider()
+        except Exception:
+            # 估算参数取不到时保留实测值，不能因为估算失败而丢掉整条曲线。
+            return snapshot
+        host["power"] = summarize_power(snapshot.get("gpus", []), sensors, model)
+        return snapshot
 
     def record_error(self, exc: Exception, message: str) -> None:
         self.last_error = {
@@ -365,6 +399,7 @@ class Sampler:
                 if collection_task.done():
                     self._collection_task = None
             snapshot = self._preserve_last_successful_gpus(snapshot)
+            snapshot = self._apply_power_model(snapshot)
             self.current = snapshot
             history_record = self.history.append(snapshot)
             if self._sample_sink is not None:
