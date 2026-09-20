@@ -76,13 +76,22 @@ export const AxisAutomaticTasksPlugin: Plugin = async (_input, options) => {
 
   return {
     tool: {
-    axis_automatic_task_claim: tool({
-      description: "从 AXIS 自动任务队列领取当前最早的未执行任务；同一时间只允许一个 OpenCode 会话串行执行。",
+    axis_automatic_task_start: tool({
+      description: "请 AXIS 按队列顺序启动自动任务；每条任务各使用新的 OpenCode 会话和独立子目录。",
       args: {},
-      async execute(_args, context) {
+      async execute() {
+        return JSON.stringify(await requestAxis("/api/v1/automatic-tasks/execution/start-local", {}))
+      },
+    }),
+    axis_automatic_task_claim: tool({
+      description: "领取当前最早的未执行任务；AXIS 启动的单项会话必须传入指定任务 ID。",
+      args: {
+        expected_task_id: tool.schema.string().optional().describe("AXIS 指定给当前独立工作目录的任务 ID"),
+      },
+      async execute(args, context) {
         const result = await requestAxis(
           "/api/v1/automatic-tasks/claim",
-          { session_id: context.sessionID },
+          { session_id: context.sessionID, expected_task_id: args.expected_task_id },
         ) as { task?: { id?: string, execution_token?: string } | null }
         if (result.task?.id && result.task.execution_token) {
           startLease(context.sessionID, result.task.id, result.task.execution_token)
@@ -93,7 +102,7 @@ export const AxisAutomaticTasksPlugin: Plugin = async (_input, options) => {
       },
     }),
     axis_automatic_task_finish: tool({
-      description: "把当前 OpenCode 会话领取的自动任务标记为成功或失败；完成后应继续领取下一项。",
+      description: "把当前 OpenCode 会话领取的自动任务标记为成功或失败；单项会话完成后立即结束。",
       args: {
         task_id: tool.schema.string().describe("axis_automatic_task_claim 返回的任务 ID"),
         execution_token: tool.schema.string().describe("axis_automatic_task_claim 返回的领取令牌"),

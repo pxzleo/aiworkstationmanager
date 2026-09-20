@@ -166,9 +166,9 @@
           <div class="automatic-task-tabs" role="tablist" aria-label="自动任务页面"><button class="button secondary active" id="automaticTaskListTab" type="button" role="tab" aria-selected="true" aria-controls="automaticTaskListPanel">任务列表</button><button class="button secondary" id="automaticTaskExecutionTab" type="button" role="tab" aria-selected="false" aria-controls="automaticTaskExecutionPanel">执行</button></div>
           <div id="automaticTaskListPanel" role="tabpanel" aria-labelledby="automaticTaskListTab"><div class="status-banner">任务标题会根据内容自动生成。执行中的任务不能编辑或删除；单项失败会记录原因并继续下一项。</div><section class="operation-list automatic-task-list" id="automaticTaskList" aria-live="polite"><p class="empty-state">尚无自动任务。</p></section></div>
           <section id="automaticTaskExecutionPanel" class="automatic-task-execution" role="tabpanel" aria-labelledby="automaticTaskExecutionTab" hidden>
-            <p>使用下面的工作目录启动 OpenCode，并按队列顺序执行全部未执行任务。</p>
+            <p>这里填写统一的父目录。每条任务会在其中创建独立子目录，并启动新的 OpenCode 会话按顺序执行。</p>
             <form id="automaticTaskExecutionForm" class="automatic-task-execution-form">
-              <label for="automaticTaskWorkingDirectory">工作目录</label><input id="automaticTaskWorkingDirectory" type="text" required maxlength="2048" placeholder="D:\AIWork" autocomplete="off">
+              <label for="automaticTaskWorkingDirectory">工作目录（父目录）</label><input id="automaticTaskWorkingDirectory" type="text" required maxlength="2048" placeholder="D:\AIWork" autocomplete="off">
               <label for="automaticTaskDailyTime">每天执行时间（本机时间）</label><input id="automaticTaskDailyTime" type="time" required value="09:00">
               <label class="automatic-task-switch" for="automaticTaskDailyEnabled"><input id="automaticTaskDailyEnabled" type="checkbox"><span>启用每天定时执行</span></label>
               <div class="automatic-task-execution-actions"><button class="button secondary" id="saveAutomaticTaskExecutionButton" type="submit">保存设置</button><button class="button primary" id="startAutomaticTaskExecutionButton" type="button" disabled>立即执行未执行队列</button></div>
@@ -403,10 +403,10 @@
       <div class="dialog-actions"><button class="button secondary" id="cancelSceneSwitchButton" type="button">终止切换并返回</button><button class="button primary" id="closeSceneProgressButton" type="button" hidden>返回工作场景</button></div>
     </section>
   </dialog>
-  <script src="i18n.js?v=20260920-6"></script>
+  <script src="i18n.js?v=20260920-7"></script>
   <script src="request-guard.js?v=20260827-5"></script>
   <script src="gpu-layout.js?v=20260828-1"></script>
   <script src="monitor-chart.js?v=20260920-4"></script>
-  <script src="app.js?v=20260920-9"></script>
+  <script src="app.js?v=20260920-10"></script>
 </body>
 </html>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -73,6 +74,49 @@ def _hang_with_child_process(settings: Settings) -> dict:
 
 
 class AutomaticTaskExecutorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_each_task_gets_a_new_session_and_child_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "tasks.db")
+            task_ids = ["a" * 32, "b" * 32]
+            for task_id in task_ids:
+                database.create_automatic_task(task_id, f"执行 {task_id[0]}", "admin", "127.0.0.1")
+            database.update_automatic_task_execution_settings(
+                False, "09:00", directory, "admin", "127.0.0.1", None,
+            )
+            launches = []
+
+            async def launch(*args, **kwargs):
+                match = re.search(r"expected_task_id=([0-9a-f]{32})", args[-1])
+                self.assertIsNotNone(match)
+                task_id = match.group(1)
+                launches.append((task_id, Path(args[args.index("--dir") + 1])))
+
+                class FakeProcess:
+                    async def wait(self) -> int:
+                        result, task = database.claim_automatic_task(f"session-{task_id}", task_id)
+                        self_outer.assertEqual(result, "claimed")
+                        database.finish_automatic_task(
+                            task_id, f"session-{task_id}", task["execution_token"],
+                            "failed" if task_id == task_ids[0] else "succeeded",
+                            "首项失败，已记录原因" if task_id == task_ids[0] else "完成",
+                        )
+                        return 0
+
+                self_outer = self
+                return FakeProcess()
+
+            executor = AutomaticTaskExecutor(database)
+            with patch.object(AutomaticTaskExecutor, "_opencode_path", return_value="opencode"), \
+                    patch("asyncio.create_subprocess_exec", side_effect=launch):
+                await executor.start("manual")
+                await executor._worker
+            self.assertEqual(executor.status, "succeeded")
+            self.assertEqual([item[0] for item in launches], task_ids)
+            self.assertEqual(database.automatic_task_status(task_ids[0]), "failed")
+            self.assertEqual(database.automatic_task_status(task_ids[1]), "succeeded")
+            self.assertEqual(len({item[1] for item in launches}), 2)
+            self.assertTrue(all(path.parent == Path(directory) and path.is_dir() for _, path in launches))
+
     async def test_expired_lease_can_be_relaunched(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory) / "tasks.db")
@@ -120,7 +164,7 @@ class AutomaticTaskExecutorTests(unittest.IsolatedAsyncioTestCase):
                 waiting.set()
                 await executor._worker
                 self.assertEqual(executor.status, "failed")
-                self.assertIn("仍有 1 项未完成", executor.last_error)
+                self.assertIn("任务仍为 pending", executor.last_error)
 
 
 class ConfigTests(unittest.TestCase):
@@ -1500,6 +1544,7 @@ class ApiTests(unittest.TestCase):
         empty = self.client.post(endpoint + "/start", headers=headers)
         self.assertEqual(empty.status_code, 409, empty.text)
         self.assertIn("没有未执行", empty.text)
+        self.assertEqual(self.client.post(endpoint + "/start-local").status_code, 409)
         self.assertTrue(any(
             event["event"] == "management.automatic_task.execution_settings"
             for event in self.client.get("/api/v1/audit?limit=10").json()["events"]
@@ -1532,6 +1577,14 @@ class ApiTests(unittest.TestCase):
         listing = self.client.get("/api/v1/automatic-tasks").json()
         self.assertEqual(listing["summary"], {"pending": 2, "running": 0, "total": 2})
         self.assertNotIn("execution_session_id", listing["tasks"][0])
+
+        wrong_directory = self.client.post(
+            "/api/v1/automatic-tasks/claim",
+            json={"session_id": "single-task-session", "expected_task_id": second_id},
+        )
+        self.assertEqual(wrong_directory.status_code, 409)
+        self.assertEqual(wrong_directory.json()["error"]["code"], "automatic_task_order_changed")
+        self.assertEqual(self.client.get("/api/v1/automatic-tasks").json()["summary"]["running"], 0)
 
         claimed = self.client.post(
             "/api/v1/automatic-tasks/claim", json={"session_id": "session-a"}

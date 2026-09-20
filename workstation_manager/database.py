@@ -2059,6 +2059,31 @@ class Database:
         except sqlite3.Error as exc:
             raise DatabaseError(f"读取自动任务执行状态失败: {exc}") from exc
 
+    def next_automatic_task_for_execution(self) -> dict[str, Any] | None:
+        now = utc_now()
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    """SELECT id,status FROM automatic_tasks
+                       WHERE status='pending' OR
+                             (status='running' AND (lease_expires_at IS NULL OR lease_expires_at<=?))
+                       ORDER BY queue_position IS NULL,queue_position,created_at,id LIMIT 1""",
+                    (now,),
+                ).fetchone()
+            return None if row is None else dict(row)
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取下一条自动任务失败: {exc}") from exc
+
+    def automatic_task_status(self, task_id: str) -> str | None:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    "SELECT status FROM automatic_tasks WHERE id=?", (task_id,)
+                ).fetchone()
+            return None if row is None else str(row["status"])
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取自动任务状态失败: {exc}") from exc
+
     def automatic_task_execution_settings(self) -> dict[str, Any]:
         try:
             with self.connect() as connection:
@@ -2206,7 +2231,9 @@ class Database:
         except sqlite3.Error as exc:
             raise DatabaseError(f"保存自动任务顺序失败: {exc}") from exc
 
-    def claim_automatic_task(self, session_id: str) -> tuple[str, dict[str, Any] | None]:
+    def claim_automatic_task(
+        self, session_id: str, expected_task_id: str | None = None,
+    ) -> tuple[str, dict[str, Any] | None]:
         now_value = datetime.now(timezone.utc)
         now = now_value.isoformat()
         lease_expires_at = (
@@ -2237,6 +2264,8 @@ class Database:
                     ).fetchone()
                     if row is None:
                         return "empty", None
+                    if expected_task_id is not None and row["id"] != expected_task_id:
+                        return "changed", None
                     execution_token = secrets.token_urlsafe(32)
                     connection.execute(
                         """UPDATE automatic_tasks SET status='running',execution_session_id=?,execution_token=?,

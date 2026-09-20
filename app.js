@@ -305,6 +305,7 @@ async function refreshAutomaticTaskExecution() {
   const trigger = result.last_trigger === 'schedule' ? ui('定时启动') : ui('手动启动');
   const parts = [result.queue.busy && result.status !== 'running' ? ui('已有 OpenCode 会话正在执行') : ui(statuses[result.status] || '状态未知')];
   if (result.last_started_at) parts.push(`${trigger}：${formatDate(result.last_started_at, true)}`);
+  if (result.current_working_directory) parts.push(`${ui('当前任务目录')}：${result.current_working_directory}`);
   if (result.last_error) parts.push(result.last_error);
   text('automaticTaskExecutionStatus', parts.join(' · '));
   byId('startAutomaticTaskExecutionButton').disabled = result.status === 'running' || !result.queue.runnable || result.queue.busy;

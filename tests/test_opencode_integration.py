@@ -30,19 +30,22 @@ AUTOMATIC_TASK_INSTALLER = ROOT / "integrations" / "opencode" / "Install-AxisAut
 
 
 class H3WorkflowBuilderTests(unittest.TestCase):
-    def test_automatic_task_skill_claims_finishes_and_repeats_serially(self) -> None:
+    def test_automatic_task_skill_launches_separate_single_task_sessions(self) -> None:
         plugin = AUTOMATIC_TASK_PLUGIN.read_text(encoding="utf-8")
         skill = AUTOMATIC_TASK_SKILL.read_text(encoding="utf-8")
         installer = AUTOMATIC_TASK_INSTALLER.read_text(encoding="utf-8")
         self.assertIn("axis_automatic_task_claim", plugin)
+        self.assertIn("axis_automatic_task_start", plugin)
+        self.assertIn("/api/v1/automatic-tasks/execution/start-local", plugin)
+        self.assertIn("expected_task_id", plugin)
         self.assertIn("axis_automatic_task_finish", plugin)
         self.assertIn("axis_automatic_task_heartbeat", plugin)
         self.assertIn("execution_token", plugin)
         self.assertIn("context.sessionID", plugin)
         self.assertIn("/api/v1/automatic-tasks/claim", plugin)
-        self.assertIn("直到队列为空", skill)
-        self.assertIn("不得并行领取或执行下一项", skill)
-        self.assertIn("回写完成状态后再调用", skill)
+        self.assertIn("独立子目录", skill)
+        self.assertIn("新会话", skill)
+        self.assertIn("回写后结束当前会话", skill)
         self.assertIn("每分钟在后台自动续期", skill)
         self.assertIn("failed", skill)
         self.assertIn("领取任务后不得停下来询问用户", skill)
@@ -57,7 +60,7 @@ class H3WorkflowBuilderTests(unittest.TestCase):
         self.assertIn("客观验收标准", skill)
         self.assertIn("需要新的高影响操作授权时", skill)
         self.assertIn("“无人介入”不代表可以绕过这些边界", skill)
-        self.assertIn("然后继续领取下一项", skill)
+        self.assertIn("AXIS 会在此会话退出后启动下一条任务", skill)
         self.assertIn("axis-automatic-tasks.ts", installer)
         self.assertIn("skills\\axis-automatic-tasks", installer)
 

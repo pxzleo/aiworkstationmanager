@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .database import Database, DatabaseError
 
@@ -16,7 +18,7 @@ class AutomaticTaskExecutionError(RuntimeError):
 
 
 class AutomaticTaskExecutor:
-    """Launch one OpenCode session for the saved automatic-task queue."""
+    """Run the queue serially, with one OpenCode session and directory per task."""
 
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -29,6 +31,8 @@ class AutomaticTaskExecutor:
         self.last_started_at: str | None = None
         self.last_finished_at: str | None = None
         self.last_error: str | None = None
+        self.current_task_id: str | None = None
+        self.current_working_directory: str | None = None
 
     def snapshot(self) -> dict[str, Any]:
         queue = self.database.automatic_task_execution_queue_state()
@@ -40,6 +44,8 @@ class AutomaticTaskExecutor:
             "last_started_at": self.last_started_at,
             "last_finished_at": self.last_finished_at,
             "last_error": self.last_error,
+            "current_task_id": self.current_task_id,
+            "current_working_directory": self.current_working_directory,
         }
 
     @staticmethod
@@ -70,45 +76,74 @@ class AutomaticTaskExecutor:
             if not queue["runnable"]:
                 raise AutomaticTaskExecutionError("没有未执行的自动任务")
             settings = self.database.automatic_task_execution_settings()
-            directory = self.validate_directory(settings["working_directory"])
+            parent_directory = self.validate_directory(settings["working_directory"])
             executable = self._opencode_path()
             self.database.append_audit(
                 source_ip, "management.automatic_task.execution_start", "requested",
-                {"trigger": trigger, "requested_by": requested_by, "working_directory": directory},
+                {"trigger": trigger, "requested_by": requested_by, "working_directory": parent_directory},
             )
-            try:
-                self._process = await asyncio.create_subprocess_exec(
-                    executable, "run", "--dir", directory, "--title", "AXIS 自动任务",
-                    "使用 axis-automatic-tasks Skill，从 AXIS 领取并依次完整执行当前所有未执行任务，逐项回写结果，直到队列为空。",
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-            except OSError as exc:
-                raise AutomaticTaskExecutionError(f"启动 OpenCode 失败: {exc}") from exc
+            task = self.database.next_automatic_task_for_execution()
+            if task is None:
+                raise AutomaticTaskExecutionError("没有未执行的自动任务")
+            process = await self._launch_task(executable, Path(parent_directory), task["id"])
             self.status = "running"
             self.last_trigger = trigger
             self.last_started_at = datetime.now().astimezone().isoformat()
             self.last_finished_at = None
             self.last_error = None
-            self._worker = asyncio.create_task(self._monitor(self._process))
+            self._worker = asyncio.create_task(
+                self._run_queue(executable, Path(parent_directory), task["id"], process)
+            )
             return self.snapshot()
 
-    async def _monitor(self, process: asyncio.subprocess.Process) -> None:
-        code = await process.wait()
-        self.last_finished_at = datetime.now().astimezone().isoformat()
+    async def _launch_task(
+        self, executable: str, parent_directory: Path, task_id: str,
+    ) -> asyncio.subprocess.Process:
+        if re.fullmatch(r"[0-9a-f]{32}", task_id) is None:
+            raise AutomaticTaskExecutionError("自动任务 ID 无效，不能创建执行目录")
+        directory = parent_directory / f"task-{task_id[:12]}-{uuid4().hex[:8]}"
         try:
-            summary = self.database.automatic_task_summary()
-        except DatabaseError as exc:
+            directory.mkdir()
+            process = await asyncio.create_subprocess_exec(
+                executable, "run", "--dir", str(directory), "--title", f"AXIS 自动任务 {task_id[:8]}",
+                f"使用 axis-automatic-tasks Skill 的单项执行模式。调用 axis_automatic_task_claim，"
+                f"传入 expected_task_id={task_id}，只执行并回写这一条任务，然后结束当前会话；不要领取下一条。",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, ValueError) as exc:
+            raise AutomaticTaskExecutionError(f"任务 {task_id[:8]} 启动失败: {exc}") from exc
+        self._process = process
+        self.current_task_id = task_id
+        self.current_working_directory = str(directory)
+        return process
+
+    async def _run_queue(
+        self, executable: str, parent_directory: Path, task_id: str,
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        try:
+            while True:
+                code = await process.wait()
+                status = self.database.automatic_task_status(task_id)
+                if status not in {"succeeded", "failed"}:
+                    raise AutomaticTaskExecutionError(
+                        f"任务 {task_id[:8]} 的 OpenCode 会话已退出（代码 {code}），任务仍为 {status or '不存在'}"
+                    )
+                task = self.database.next_automatic_task_for_execution()
+                if task is None:
+                    self.status = "succeeded"
+                    break
+                task_id = task["id"]
+                process = await self._launch_task(executable, parent_directory, task_id)
+        except (AutomaticTaskExecutionError, DatabaseError, OSError) as exc:
             self.status = "failed"
-            self.last_error = f"OpenCode 已退出，但无法读取剩余任务: {exc}"
-            return
-        remaining = summary["pending"] + summary["running"]
-        if code or remaining:
-            self.status = "failed"
-            self.last_error = f"OpenCode 已退出（代码 {code}），仍有 {remaining} 项未完成任务" if remaining else f"OpenCode 已退出（代码 {code}）"
-        else:
-            self.status = "succeeded"
+            self.last_error = str(exc)
+        finally:
+            self.last_finished_at = datetime.now().astimezone().isoformat()
+            self.current_task_id = None
+            self.current_working_directory = None
 
     async def tick(self, now: datetime | None = None) -> None:
         current = now or datetime.now().astimezone()

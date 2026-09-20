@@ -175,6 +175,7 @@ class AutomaticTaskOrderPayload(BaseModel):
 class AutomaticTaskClaimPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     session_id: str = Field(min_length=1, max_length=200)
+    expected_task_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
 
 
 class AutomaticTaskFinishPayload(AutomaticTaskClaimPayload):
@@ -953,6 +954,15 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         except AutomaticTaskExecutionError as exc:
             raise HTTPException(409, {"error_type": "automatic_task_execution_unavailable", "message": str(exc)}) from exc
 
+    @app.post("/api/v1/automatic-tasks/execution/start-local", status_code=202)
+    async def start_automatic_task_execution_local(request: Request) -> dict[str, Any]:
+        if not is_loopback(_client_ip(request)):
+            raise HTTPException(403, {"error_type": "loopback_required", "message": "自动任务只允许本机 OpenCode 启动"})
+        try:
+            return await automatic_task_executor.start("opencode")
+        except AutomaticTaskExecutionError as exc:
+            raise HTTPException(409, {"error_type": "automatic_task_execution_unavailable", "message": str(exc)}) from exc
+
     @app.post("/api/v1/automatic-tasks", status_code=201)
     async def create_automatic_task(
         payload: AutomaticTaskPayload, request: Request,
@@ -1050,9 +1060,13 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     ) -> dict[str, Any]:
         if not is_loopback(_client_ip(request)):
             raise HTTPException(403, {"error_type": "loopback_required", "message": "自动任务只允许本机 OpenCode 执行"})
-        result, task = resolved_database.claim_automatic_task(payload.session_id)
+        result, task = resolved_database.claim_automatic_task(
+            payload.session_id, payload.expected_task_id,
+        )
         if result == "busy":
             raise HTTPException(409, {"error_type": "automatic_tasks_busy", "message": "另一 OpenCode 会话正在执行自动任务"})
+        if result == "changed":
+            raise HTTPException(409, {"error_type": "automatic_task_order_changed", "message": "自动任务顺序已变化，不能在当前目录执行其他任务"})
         return {"task": None if task is None else _executor_automatic_task(task)}
 
     @app.post("/api/v1/automatic-tasks/{task_id}/heartbeat")
