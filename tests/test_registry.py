@@ -135,6 +135,14 @@ class FakePortProxySynchronizer:
 
 
 class DatabaseRegistryTests(unittest.TestCase):
+    def test_electricity_rate_survives_database_reopen(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "manager.db"
+            database = Database(path)
+            self.assertEqual(database.read_electricity_rate(), 0.5)
+            self.assertEqual(database.write_electricity_rate(0.67, "admin"), 0.67)
+            self.assertEqual(Database(path).read_electricity_rate(), 0.67)
+
     def test_legacy_null_queue_position_is_claimed_after_positioned_pending_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
@@ -227,8 +235,8 @@ class DatabaseRegistryTests(unittest.TestCase):
                        ORDER BY queue_position IS NULL,queue_position,created_at,id"""
                 ).fetchall()
 
-            self.assertEqual(SCHEMA_VERSION, 35)
-            self.assertEqual(version, 35)
+            self.assertEqual(SCHEMA_VERSION, 36)
+            self.assertEqual(version, 36)
             self.assertEqual(
                 [(row["id"], row["queue_position"]) for row in positions],
                 [
@@ -313,7 +321,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 version = connection.execute(
                     "SELECT version FROM schema_version"
                 ).fetchone()["version"]
-            self.assertEqual(version, 35)
+            self.assertEqual(version, 36)
             self.assertIsNone(migrated["total_steps"])
 
             database.update_operation("a" * 32, total_steps=3)
@@ -358,7 +366,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                        WHERE type='index' AND name='idx_scenes_single_default'"""
                 ).fetchone()
 
-            self.assertEqual(version, 35)
+            self.assertEqual(version, 36)
             self.assertEqual(scene["is_default"], 0)
             self.assertEqual(scene["detailed_description"], "")
             self.assertIsNotNone(index)
@@ -399,7 +407,7 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 35)
+            self.assertEqual(SCHEMA_VERSION, 36)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -502,7 +510,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-                self.assertEqual(version, 35)
+                self.assertEqual(version, 36)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -545,7 +553,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 35)
+            self.assertEqual(SCHEMA_VERSION, 36)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -613,7 +621,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 60, bucket_seconds=15, now=now + timedelta(seconds=30)
             )
 
-            self.assertEqual(SCHEMA_VERSION, 35)
+            self.assertEqual(SCHEMA_VERSION, 36)
             self.assertEqual(result["stored_sample_count"], 3)
             self.assertEqual(len(result["samples"]), 2)
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
@@ -674,7 +682,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                        FROM resource_samples"""
                 ).fetchone()
 
-            self.assertEqual(version, 35)
+            self.assertEqual(version, 36)
             # 旧的 total_power_w 本来就是纯实测值，回填到 measured 列。
             self.assertEqual(row["measured_power_w"], 604.0)
             self.assertEqual(row["total_power_w"], 604.0)
@@ -714,7 +722,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_gpu_samples WHERE sample_id=1"
                 ).fetchone()
 
-            self.assertEqual(version, 35)
+            self.assertEqual(version, 36)
             self.assertEqual(row["temperature_c"], 62)
             self.assertIsNone(row["power_w"])
             self.assertIsNone(row["graphics_clock_mhz"])
@@ -753,7 +761,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_samples"
                 ).fetchone()
 
-            self.assertEqual(version, 35)
+            self.assertEqual(version, 36)
             self.assertEqual(row["memory_percent"], 50)
             self.assertIsNone(row["memory_used_bytes"])
             self.assertIsNone(row["memory_total_bytes"])

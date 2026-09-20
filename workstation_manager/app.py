@@ -190,6 +190,11 @@ class PowerCalibrationPayload(BaseModel):
     wall_w: float = Field(gt=0, le=MAX_PLAUSIBLE_WALL_W)
 
 
+class ElectricityRatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    yuan_per_kwh: float = Field(ge=0, allow_inf_nan=False)
+
+
 class FileRenamePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     path: str = Field(min_length=1, max_length=4096)
@@ -684,6 +689,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         return {
             "model": model.as_dict(),
             "calibration": read_power_calibration(),
+            "electricity_rate_yuan_per_kwh": resolved_database.read_electricity_rate(),
             "current": {
                 "sampled_at": snapshot.get("sampled_at"),
                 "measured_w": power.get("measured_w"),
@@ -695,6 +701,14 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
 
     @app.get("/api/v1/power-model", dependencies=[Depends(protected_access)])
     async def power_model_state() -> dict[str, Any]:
+        return _power_state()
+
+    @app.put("/api/v1/power-model/electricity-rate")
+    async def update_electricity_rate(
+        payload: ElectricityRatePayload,
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        await asyncio.to_thread(resolved_database.write_electricity_rate, payload.yuan_per_kwh, session.username)
         return _power_state()
 
     @app.post("/api/v1/power-model/calibration")

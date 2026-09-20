@@ -112,6 +112,7 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 | GET | `/api/v1/history` | 资源历史，使用 `window` 与可选的带时区 ISO 8601 `end` 查询参数 |
 | GET | `/api/v1/host-services` | 主机服务摘要 |
 | GET | `/api/v1/power-model` | 整机功耗估算参数、校准记录和当前实测/估算拆分 |
+| PUT | `/api/v1/power-model/electricity-rate` | 保存每度电价格，需要 CSRF |
 | POST | `/api/v1/power-model/calibration` | 用功率计读数校准整机功耗，需要 CSRF |
 | DELETE | `/api/v1/power-model/calibration` | 清除校准并回到默认估算参数，需要 CSRF |
 
@@ -233,7 +234,7 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 - 资源历史的主机字段包含 CPU 负载/频率/温度、物理/提交/页面文件内存、主物理网卡收发、WSL 内存与 Swap；`gpus` 额外包含显存控制器及编码/解码负载，`disks` 按物理磁盘保存读写吞吐和平均延迟。GPU P-State、风扇、PCIe、时钟限制、进程归属和 Docker 容器资源仅属于实时快照，不写入历史。
 - `/api/v1/health` 在资源历史写入失败时返回 `status: "degraded"`、`readiness.resource_history: "degraded"` 和不含底层 cause 的 `history_persistence_error`；健康监控循环异常时返回 `service_health_monitor_error` 并把 `readiness.registered_services` 标为 `degraded`。实时快照仍可用，后台任务会继续重试。
 - `/api/v1/power-model/calibration` 的请求体为 `{"point":"idle","wall_w":340}`。`point` 只允许 `idle` 或 `load`，`wall_w` 是功率计读到的墙插功率，范围为 `0..5000`（不含 0）。服务端记录提交这一刻的实测功率作为对应校准点，两个点齐全时同时解出固定底噪和电源效率，只有一个点时电源效率沿用配置默认值。解出的参数超出合理范围会返回 422。
-- `/api/v1/power-model` 返回 `model`（当前估算参数与 `source`）、`calibration`（校准原始数据，未校准时为 `null`）和 `current`（当前 `measured_w`、`estimated_w`、`total_w` 和 `accounted_dc_w`）。
+- `/api/v1/power-model` 返回 `model`（当前估算参数与 `source`）、`calibration`（校准原始数据，未校准时为 `null`）、`electricity_rate_yuan_per_kwh`（每度电价格，默认 0.5 元）和 `current`（当前 `measured_w`、`estimated_w`、`total_w` 和 `accounted_dc_w`）。`PUT /api/v1/power-model/electricity-rate` 的请求体字段为 `yuan_per_kwh`，例如 `{"yuan_per_kwh":0.5}`；价格必须是非负有限数，保存在数据库中。
 - 快照的 `host.power` 把功耗拆成三个口径：`measured_w` 只包含真实传感器读数（GPU 板卡功耗与 CPU 封装功耗），`estimated_w` 是主板、内存、硬盘、风扇、CPU 供电损耗和电源转换损耗的估算，`total_w` 是两者之和。`estimate_breakdown` 给出估算项明细，`sensors` 中每个传感器带 `role` 和 `method`（`energy_delta` 表示由能量累积计数器差分得到的区间平均值，`instant` 表示瞬时读数）。任何传感器都读不到时三个字段都为 `null`，不会伪造成 0。
 - 资源历史保存 `cpu_power_w`（CPU 封装实测功率）及各 GPU 的 `power_w`；分桶响应额外提供功耗采样数量，前端仅在整机、CPU、3090、4090 的读数覆盖桶内全部采样时计算“其他功率”。
 - `/api/v1/operations`、`/api/v1/audit` 和 `/api/v1/video-jobs` 的 `limit` 默认为 100，范围为 `1..500`，分别返回 `operations`、`events` 或 `jobs` 数组。
@@ -297,6 +298,6 @@ WM_POWER_PSU_RATED_W
 
 ## 数据与并发
 
-默认数据库是 `data/workstation-manager.db`，当前 schema 为 35，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置；schema 23 增加旧版场景用途、持久化 `video_jobs` 状态机和 RTX 4090 `resource_leases`；schema 24 删除视频任务的回调认证字段；schema 25 将旧版 `video_gen` 用途迁移为唯一的 `is_default_generation` 勾选项，并为视频任务保存生成场景及原场景；schema 26 增加显式视频批次 ID、段序号和总段数；schema 27 为每段任务持久化从工作流提取的视频规格，避免任务列表重复解析完整工作流；schema 28 在该规格中补充原视频标题或提示词内容说明并回填已有任务；schema 29 持久化已经成功发布到共享文件服务的相对输出路径；schema 30 增加自动任务队列、执行会话所有权和结果状态；schema 31 增加可持久化的未执行任务顺序；schema 32 修复旧进程在 schema 31 迁移后继续写入的空任务顺序，按创建顺序追加到已有队列末尾；schema 33 为资源采样增加整机功耗列；schema 34 把整机功耗拆成实测和估算两列，并增加保存墙插功率校准结果的 `power_calibration` 表；schema 35 为资源历史增加 CPU 封装功耗列，供整机功耗拆分曲线使用。旧客户端更新场景时若未提交详细说明或默认生成场景字段，已有值会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
+默认数据库是 `data/workstation-manager.db`，当前 schema 为 36，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置；schema 23 增加旧版场景用途、持久化 `video_jobs` 状态机和 RTX 4090 `resource_leases`；schema 24 删除视频任务的回调认证字段；schema 25 将旧版 `video_gen` 用途迁移为唯一的 `is_default_generation` 勾选项，并为视频任务保存生成场景及原场景；schema 26 增加显式视频批次 ID、段序号和总段数；schema 27 为每段任务持久化从工作流提取的视频规格，避免任务列表重复解析完整工作流；schema 28 在该规格中补充原视频标题或提示词内容说明并回填已有任务；schema 29 持久化已经成功发布到共享文件服务的相对输出路径；schema 30 增加自动任务队列、执行会话所有权和结果状态；schema 31 增加可持久化的未执行任务顺序；schema 32 修复旧进程在 schema 31 迁移后继续写入的空任务顺序，按创建顺序追加到已有队列末尾；schema 33 为资源采样增加整机功耗列；schema 34 把整机功耗拆成实测和估算两列，并增加保存墙插功率校准结果的 `power_calibration` 表；schema 35 为资源历史增加 CPU 封装功耗列，供整机功耗拆分曲线使用；schema 36 增加持久化电价表，默认 0.5 元/度。旧客户端更新场景时若未提交详细说明或默认生成场景字段，已有值会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
 
 服务控制面分别保存期望状态和实际观察状态。场景、总览及 GPU 服务摘要只使用实际观察状态；状态或错误变化时才写入 SQLite，连续成功检查不会每 5 秒写盘。资源监控定时采样和健康监控都不会调用服务脚本；显式深度检查、无默认场景的启动校准及失败动作校准才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留最近 90 天；内存队列固定只保留最近 15 分钟。

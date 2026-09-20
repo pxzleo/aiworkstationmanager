@@ -184,6 +184,8 @@ async function refreshSystemInfo() {
 function powerWatts(value) { return finite(value) ? `${Math.round(value)} W` : '--'; }
 function renderPowerModel() {
   const payload = state.powerModel; const model = payload?.model;
+  const rateInput = byId('electricityRate');
+  if (rateInput && document.activeElement !== rateInput && finite(payload?.electricity_rate_yuan_per_kwh)) rateInput.value = String(payload.electricity_rate_yuan_per_kwh);
   // 优先用最新快照，这样设置页的拆分数值跟着 3 秒一次的采样走，而不是停在打开页面那一刻。
   const current = state.snapshot?.host?.power || payload?.current;
   if (!model) { dataText('powerModelSource', '', '读取失败'); return; }
@@ -200,8 +202,18 @@ function renderPowerModel() {
   const clearButton = byId('clearPowerCalibrationButton'); if (clearButton) clearButton.disabled = !calibrated;
 }
 async function refreshPowerModel() {
-  try { state.powerModel = await api('/power-model', { resource: 'power-model' }); renderPowerModel(); }
+  try { state.powerModel = await api('/power-model', { resource: 'power-model' }); renderPowerModel(); if (state.chartSpecs.length) renderCharts(); }
   catch (error) { if (!(error instanceof StaleRequestError)) { state.powerModel = null; renderPowerModel(); } throw error; }
+}
+async function submitElectricityRate(event) {
+  event.preventDefault(); text('electricityRateError', '');
+  const input = byId('electricityRate'); const rate = Number(input.value);
+  if (!input.value.trim() || !finite(rate) || rate < 0) return text('electricityRateError', ui('请输入有效的每度电价格。'));
+  try {
+    requestGuard.begin('power-model');
+    state.powerModel = await api('/power-model/electricity-rate', { method: 'PUT', body: { yuan_per_kwh: rate } });
+    renderPowerModel(); renderCharts(); showToast(ui('电价已保存'));
+  } catch (error) { text('electricityRateError', error.message); }
 }
 async function submitPowerCalibration(event) {
   event.preventDefault(); text('powerCalibrationError', '');
@@ -464,9 +476,11 @@ function createMonitorChart(spec, chartIndex) {
   const section = element('section', `chart-section${spec.compact ? ' chart-compact' : ''}${spec.showXAxis === false ? ' chart-no-x-axis' : ''}${spec.powerTotal ? ' power-chart-total' : ''}`); section.style.setProperty('--chart-color', spec.color);
   const heading = element('div', 'chart-title'); const copy = element('div'); copy.append(element('span', 'chart-kicker', spec.kicker), element('h3', '', spec.title), element('p', '', spec.description));
   const current = element('strong', 'chart-current', '--'); const currentLabel = element('small', '', `${spec.unit || '%'} 当前`); current.append(currentLabel);
+  const cost = spec.powerTotal ? element('span', 'chart-energy') : null; const costValue = cost ? element('strong', '', '--') : null;
+  if (cost) cost.append(element('small', '', '窗口电费'), costValue);
   const energy = spec.powerTotal ? element('span', 'chart-energy') : null; const energyValue = energy ? element('strong', '', '--') : null;
   if (energy) energy.append(element('small', '', '窗口耗电量'), energyValue);
-  const headingValues = element('div', 'chart-heading-values'); if (energy) headingValues.append(energy); headingValues.append(current); heading.append(copy, headingValues);
+  const headingValues = element('div', 'chart-heading-values'); if (cost) headingValues.append(cost); if (energy) headingValues.append(energy); headingValues.append(current); heading.append(copy, headingValues);
   const statistics = element('div', 'chart-statistics'); const statisticRefs = {};
   [['average', '平均'], ['peak', '峰值'], ['minimum', '最低']].forEach(([key, label]) => { const item = element('span'); const value = userElement('b', '', '--'); item.append(element('small', '', label), value); statistics.append(item); statisticRefs[key] = value; });
   const frame = element('div', 'chart-frame'); const yAxis = element('span', 'chart-y-axis'); chartAxisValues({ minimum: spec.minimum ?? 0, maximum: typeof spec.maximum === 'number' ? spec.maximum : spec.initialMaximum ?? 100 }, spec).forEach((label) => yAxis.append(element('i', '', label)));
@@ -475,7 +489,7 @@ function createMonitorChart(spec, chartIndex) {
   const grid = svgElement('path', { class: 'chart-grid-lines', d: 'M0 1H900M0 50H900M0 100H900M0 150H900M0 199H900M1 0V200M300 0V200M600 0V200M899 0V200' }); const areaLayer = svgElement('g', { class: 'chart-areas' }); const lineLayer = svgElement('g', { class: 'chart-lines' }); const isolatedLayer = svgElement('g', { class: 'chart-isolated-points' }); const cursor = svgElement('line', { class: 'chart-cursor', x1: '0', x2: '0', y1: '0', y2: '200', hidden: '' }); const marker = svgElement('circle', { class: 'chart-marker', cx: '0', cy: '0', r: '4', hidden: '' }); svg.append(defs, grid, areaLayer, lineLayer, isolatedLayer, cursor, marker);
   const noData = element('span', 'chart-no-data', '暂无采样数据'); plot.append(svg, noData); const xAxis = element('div', 'chart-x-axis'); historyAxisLabels().forEach((label) => xAxis.append(element('span', '', label))); xAxis.hidden = spec.showXAxis === false; frame.append(yAxis, plot, xAxis);
   const powerLegend = spec.powerSeries?.map((series) => { const item = element('span', 'power-legend-item'); item.style.setProperty('--series-color', series.color); const value = element('b', '', '--'); if (!series.valueOnly) item.append(element('i')); item.append(element('span', '', series.label), value); return { series, item, value }; });
-  section.append(heading, statistics); if (powerLegend) section.append(element('div', 'power-series-legend')); if (powerLegend) section.querySelector('.power-series-legend').append(...powerLegend.map(({ item }) => item)); section.append(frame); return { ...spec, section, current, currentLabel, energyValue, statisticRefs, powerLegend, yAxis, svg, gradientId, areaLayer, lineLayer, isolatedLayer, cursor, marker, noData, lastModel: null };
+  section.append(heading, statistics); if (powerLegend) section.append(element('div', 'power-series-legend')); if (powerLegend) section.querySelector('.power-series-legend').append(...powerLegend.map(({ item }) => item)); section.append(frame); return { ...spec, section, current, currentLabel, costValue, energyValue, statisticRefs, powerLegend, yAxis, svg, gradientId, areaLayer, lineLayer, isolatedLayer, cursor, marker, noData, lastModel: null };
 }
 function bindCorrelationCursor(charts, announcement) {
   let selectedTimestamp = null;
@@ -607,7 +621,7 @@ function renderMonitorDetails(samples) {
 function renderCharts() {
   const samples = currentSeries(); const period = activeHistoryPeriod(); const endTimeMs = period.endMs; const windowMs = period.endMs - period.startMs; renderMonitorDetails(samples); state.chartSpecs.forEach((spec) => {
     const scale = chartScale(spec, samples); const powerGapMs = Math.max(30_000, state.historyBucketSeconds * 1_500); const model = monitorChart.buildChartModel(samples, spec.getter, endTimeMs, windowMs, { ...scale, precision: spec.decimals ?? 0, ...(spec.powerTotal ? { maxSegmentGapMs: powerGapMs } : {}) }); const geometry = monitorChart.buildChartGeometry(model); spec.lastModel = model; updateChartCurrent(spec, model.current); Object.entries(spec.statisticRefs).forEach(([key, node]) => { node.textContent = chartValue(model[key], spec, spec.statisticsIncludeUnit === true); }); const axisValues = chartAxisValues(scale, spec); [...spec.yAxis.children].forEach((node, index) => { node.textContent = axisValues[index]; }); spec.svg.setAttribute('aria-label', model.pointCount ? `${ui(spec.title)}: ${ui('当前')} ${chartCurrentValue(model.current, spec, true)}, ${ui('峰值')} ${chartValue(model.peak, spec)}, ${ui('平均')} ${chartValue(model.average, spec)}` : `${ui(spec.title)}: ${ui('暂无采样数据')}`);
-    if (spec.energyValue) { const kWh = monitorChart.energyKWh(samples, (sample) => sample?.total_power_w, period.startMs, period.endMs, Math.max(60_000, state.historyBucketSeconds * 1_500)); spec.energyValue.textContent = kWh === null ? '--' : `${kWh.toFixed(3)} ${ui('度')}`; }
+    if (spec.energyValue) { const kWh = monitorChart.energyKWh(samples, (sample) => sample?.total_power_w, period.startMs, period.endMs, Math.max(60_000, state.historyBucketSeconds * 1_500)); spec.energyValue.textContent = kWh === null ? '--' : `${kWh.toFixed(3)} ${ui('度')}`; const rate = state.powerModel?.electricity_rate_yuan_per_kwh; spec.costValue.textContent = kWh === null || !finite(rate) ? '--' : `¥${(kWh * rate).toFixed(3)}`; }
     const lines = []; const isolatedPoints = [];
     spec.powerSeries?.filter((series) => series.plotGetter).forEach((series) => {
       const seriesModel = monitorChart.buildChartModel(samples, series.plotGetter, endTimeMs, windowMs, { ...scale, precision: spec.decimals ?? 0, maxSegmentGapMs: powerGapMs }); const seriesGeometry = monitorChart.buildChartGeometry(seriesModel);
@@ -881,6 +895,7 @@ byId('historyNextButton').addEventListener('click', () => shiftHistoryPeriod(1))
 byId('monitorTabbar').addEventListener('click', (event) => { const button = event.target.closest('[data-monitor-view]'); if (button) selectMonitorView(button.dataset.monitorView); });
 document.addEventListener('languagechange', () => { updateHistoryPeriodNavigation(); buildMonitorCharts(); if (state.snapshot) renderSnapshot(); renderServices(); renderScenes(); renderUsers(); renderOperations(); renderOperationTimeline(); renderVideoJobs(); renderAutomaticTasks(); renderPowerModel(); renderFiles(); text('pageTitle', byId(`page-${state.activePage}`)?.dataset.title || ''); });
 byId('powerCalibrationForm').addEventListener('submit', submitPowerCalibration);
+byId('electricityRateForm').addEventListener('submit', submitElectricityRate);
 byId('clearPowerCalibrationButton').addEventListener('click', clearPowerCalibration);
 byId('refreshVideoJobsButton').addEventListener('click', refreshVideoJobs);
 byId('refreshAutomaticTasksButton').addEventListener('click', refreshAutomaticTasks);

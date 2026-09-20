@@ -14,7 +14,7 @@ from .config import MAX_HISTORY_MINUTES
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 35
+SCHEMA_VERSION = 36
 
 
 class DatabaseError(RuntimeError):
@@ -133,6 +133,7 @@ class Database:
                         33: self._migrate_to_33,
                         34: self._migrate_to_34,
                         35: self._migrate_to_35,
+                        36: self._migrate_to_36,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -458,6 +459,21 @@ class Database:
     @classmethod
     def _migrate_to_35(cls, connection: sqlite3.Connection) -> None:
         cls._ensure_column(connection, "resource_samples", "cpu_power_w", "REAL")
+
+    @staticmethod
+    def _migrate_to_36(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS electricity_rate (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                yuan_per_kwh REAL NOT NULL CHECK (yuan_per_kwh >= 0),
+                updated_at TEXT NOT NULL,
+                updated_by TEXT
+            )"""
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO electricity_rate(id,yuan_per_kwh,updated_at) VALUES (1,0.5,?)",
+            (utc_now(),),
+        )
 
     @classmethod
     def _migrate_to_18(cls, connection: sqlite3.Connection) -> None:
@@ -916,6 +932,33 @@ class Database:
                     connection.execute("DELETE FROM power_calibration WHERE id=1")
         except sqlite3.Error as exc:
             raise DatabaseError(f"清除功耗校准失败: {exc}") from exc
+
+    def read_electricity_rate(self) -> float:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    "SELECT yuan_per_kwh FROM electricity_rate WHERE id=1"
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取电价失败: {exc}") from exc
+        if row is None:
+            raise DatabaseError("未找到电价设置")
+        return float(row["yuan_per_kwh"])
+
+    def write_electricity_rate(self, yuan_per_kwh: float, updated_by: str) -> float:
+        if not math.isfinite(yuan_per_kwh) or yuan_per_kwh < 0:
+            raise ValueError("每度电价格必须是非负有限数字")
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute(
+                        """UPDATE electricity_rate
+                           SET yuan_per_kwh=?,updated_at=?,updated_by=? WHERE id=1""",
+                        (yuan_per_kwh, utc_now(), updated_by),
+                    )
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"保存电价失败: {exc}") from exc
+        return self.read_electricity_rate()
 
     def append_resource_sample(self, sample: dict[str, Any]) -> None:
         try:

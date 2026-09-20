@@ -1099,6 +1099,25 @@ class PowerModelApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    def test_electricity_rate_defaults_and_persists(self) -> None:
+        headers = self._login()
+        self.assertEqual(self.client.get("/api/v1/power-model").json()["electricity_rate_yuan_per_kwh"], 0.5)
+        response = self.client.put(
+            "/api/v1/power-model/electricity-rate",
+            json={"yuan_per_kwh": 0.68}, headers=headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["electricity_rate_yuan_per_kwh"], 0.68)
+        self.assertEqual(self.client.get("/api/v1/power-model").json()["electricity_rate_yuan_per_kwh"], 0.68)
+
+    def test_electricity_rate_rejects_invalid_values_and_requires_csrf(self) -> None:
+        headers = self._login()
+        path = "/api/v1/power-model/electricity-rate"
+        self.assertEqual(self.client.put(path, json={"yuan_per_kwh": 1}).status_code, 403)
+        for value in (-0.01, "Infinity"):
+            self.assertEqual(self.client.put(path, json={"yuan_per_kwh": value}, headers=headers).status_code, 422)
+        self.assertEqual(self.client.put(path, json={"yuan_per_kwh": 0}, headers=headers).status_code, 200)
+
 
 class ApiTests(unittest.TestCase):
     def setUp(self) -> None:

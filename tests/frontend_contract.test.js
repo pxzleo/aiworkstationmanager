@@ -319,9 +319,9 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260920-5'));
-  assert.ok(html.includes('i18n.js?v=20260920-3'));
-  assert.ok(html.includes('app.js?v=20260920-6'));
+  assert.ok(html.includes('styles.css?v=20260920-6'));
+  assert.ok(html.includes('i18n.js?v=20260920-4'));
+  assert.ok(html.includes('app.js?v=20260920-7'));
 });
 
 test('read polling tolerates transient network failures without retrying writes', () => {
@@ -599,9 +599,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260920-5'));
-  assert.ok(html.includes('i18n.js?v=20260920-3'));
-  assert.ok(html.includes('app.js?v=20260920-6'));
+  assert.ok(html.includes('styles.css?v=20260920-6'));
+  assert.ok(html.includes('i18n.js?v=20260920-4'));
+  assert.ok(html.includes('app.js?v=20260920-7'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
@@ -675,8 +675,17 @@ test('host power stacks 3090, 4090 and CPU below total, with other as a value on
   assert.ok(js.includes('maximum: powerMaximum'));
   assert.ok(js.includes('cpu_power_w: staleSnapshot ? null : host?.power?.cpu_package_w'));
   assert.ok(js.includes("element('small', '', '窗口耗电量')"));
+  assert.ok(js.includes("element('small', '', '窗口电费')"));
   assert.ok(js.includes('monitorChart.energyKWh(samples, (sample) => sample?.total_power_w'));
+  assert.ok(js.includes('(kWh * rate).toFixed(3)'));
   assert.ok(css.includes('.monitor-host-group .power-chart-total { grid-column: 1 / -1;'));
+});
+
+test('electricity rate settings use the persisted power model', () => {
+  assert.ok(html.includes('id="electricityRateForm"'));
+  assert.ok(html.includes('id="electricityRate"'));
+  assert.ok(js.includes("api('/power-model/electricity-rate', { method: 'PUT'"));
+  assert.ok(js.includes('electricity_rate_yuan_per_kwh'));
 });
 
 test('system settings offers a wall-meter calibration for total system power', () => {
