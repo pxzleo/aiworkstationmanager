@@ -44,6 +44,7 @@
     '已有 OpenCode 会话正在执行': 'Another OpenCode session is running',
     '执行设置已保存': 'Execution settings saved', '已启动 OpenCode 执行队列': 'OpenCode queue started',
     '编辑任务': 'Edit Task', '任务内容': 'Task instructions',
+    '执行模型': 'Execution model', '跟随 OpenCode 默认模型': 'Use OpenCode default model',
     '输入希望 OpenCode 完成的完整任务内容': 'Enter the complete task you want OpenCode to perform',
     '保存后自动生成摘要标题；编辑已完成或失败的任务会将其重新设为未执行。': 'A summary title is generated after saving. Editing a completed or failed task resets it to pending.',
     '保存任务': 'Save Task', '未执行': 'Pending', '执行次数': 'Attempts',

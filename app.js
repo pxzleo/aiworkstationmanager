@@ -913,7 +913,7 @@ function renderAutomaticTasks() {
   state.automaticTasks.forEach((task) => {
     const runningTask = task.status === 'running'; const failed = task.status === 'failed';
     const row = element('article', `operation-row automatic-task-row${runningTask ? ' automatic-task-running' : ''}${failed ? ' operation-failed' : ''}`);
-    const copy = element('div', 'automatic-task-copy'); copy.append(userElement('strong', '', task.title), userElement('p', 'automatic-task-content', task.content));
+    const copy = element('div', 'automatic-task-copy'); copy.append(userElement('strong', '', task.title), userElement('p', 'automatic-task-content', task.content), element('small', '', `${ui('执行模型')}：${task.model || ui('跟随 OpenCode 默认模型')}`));
     const detail = task.error_summary || task.result_summary;
     if (detail) copy.append(userElement('small', failed ? 'automatic-task-error' : 'automatic-task-result', detail));
     const badge = element('span', `status-label ${automaticTaskStatusClass(task.status)}`, automaticTaskStatusLabel(task.status));
@@ -938,10 +938,22 @@ async function moveAutomaticTask(taskId, offset) {
   finally { automaticTaskOrderSaving = false; renderAutomaticTasks(); }
   if (failed) await refreshAutomaticTasks();
 }
-function openAutomaticTaskDialog(task = null) { byId('automaticTaskForm').reset(); text('automaticTaskFormError', ''); text('automaticTaskDialogTitle', ui(task ? '编辑任务' : '新增任务')); byId('automaticTaskId').value = task?.id || ''; byId('automaticTaskContent').value = task?.content || ''; byId('automaticTaskDialog').showModal(); byId('automaticTaskContent').focus(); }
+async function openAutomaticTaskDialog(task = null) {
+  byId('automaticTaskForm').reset(); text('automaticTaskFormError', ''); text('automaticTaskDialogTitle', ui(task ? '编辑任务' : '新增任务'));
+  byId('automaticTaskId').value = task?.id || ''; byId('automaticTaskContent').value = task?.content || '';
+  const select = byId('automaticTaskModel'); select.replaceChildren(new Option(ui('跟随 OpenCode 默认模型'), ''));
+  if (task?.model) select.add(new Option(task.model, task.model));
+  select.value = task?.model || ''; byId('automaticTaskDialog').showModal(); byId('automaticTaskContent').focus();
+  try {
+    const result = await api('/automatic-tasks/models');
+    if (!byId('automaticTaskDialog').open) return;
+    for (const model of result.models || []) if (![...select.options].some((option) => option.value === model)) select.add(new Option(model, model));
+  } catch (error) { if (byId('automaticTaskDialog').open) text('automaticTaskFormError', error.message); }
+}
 async function saveAutomaticTask(event) {
   event.preventDefault(); const id = byId('automaticTaskId').value; const content = byId('automaticTaskContent').value.trim(); if (!content) return text('automaticTaskFormError', ui('请输入任务内容。'));
-  try { await api(id ? `/automatic-tasks/${id}` : '/automatic-tasks', { method: id ? 'PUT' : 'POST', body: { content } }); byId('automaticTaskDialog').close(); showToast(ui(id ? '自动任务已更新并设为未执行' : '自动任务已添加')); await refreshAutomaticTasks(); }
+  const model = byId('automaticTaskModel').value || null;
+  try { await api(id ? `/automatic-tasks/${id}` : '/automatic-tasks', { method: id ? 'PUT' : 'POST', body: { content, model } }); byId('automaticTaskDialog').close(); showToast(ui(id ? '自动任务已更新并设为未执行' : '自动任务已添加')); await refreshAutomaticTasks(); }
   catch (error) { text('automaticTaskFormError', error.message); }
 }
 async function deleteAutomaticTask(task) { const message = window.axisI18n.language === 'zh' ? `删除自动任务“${task.title}”？` : `Delete automatic task “${task.title}”?`; if (!confirm(message)) return; try { await api(`/automatic-tasks/${task.id}`, { method: 'DELETE' }); showToast(ui('自动任务已删除')); await refreshAutomaticTasks(); } catch (error) { showToast(error.message); } }

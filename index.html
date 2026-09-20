@@ -327,6 +327,7 @@
       <input type="hidden" id="automaticTaskId">
       <div><p class="eyebrow">OpenCode 自动任务</p><h2 id="automaticTaskDialogTitle">新增任务</h2></div>
       <label>任务内容<textarea id="automaticTaskContent" maxlength="20000" required placeholder="输入希望 OpenCode 完成的完整任务内容"></textarea></label>
+      <label>执行模型<select id="automaticTaskModel"><option value="">跟随 OpenCode 默认模型</option></select></label>
       <p class="dialog-note">保存后自动生成摘要标题；编辑已完成或失败的任务会将其重新设为未执行。</p>
       <p class="auth-error" id="automaticTaskFormError" role="alert"></p>
       <div class="dialog-actions"><button class="button secondary" type="button" data-close="automaticTaskDialog">取消</button><button class="button primary" type="submit">保存任务</button></div>

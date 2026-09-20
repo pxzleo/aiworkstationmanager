@@ -14,7 +14,7 @@ from .config import MAX_HISTORY_MINUTES
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 37
+SCHEMA_VERSION = 38
 
 
 class DatabaseError(RuntimeError):
@@ -135,6 +135,7 @@ class Database:
                         35: self._migrate_to_35,
                         36: self._migrate_to_36,
                         37: self._migrate_to_37,
+                        38: self._migrate_to_38,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -492,6 +493,10 @@ class Database:
             "INSERT OR IGNORE INTO automatic_task_execution(id,updated_at) VALUES (1,?)",
             (utc_now(),),
         )
+
+    @classmethod
+    def _migrate_to_38(cls, connection: sqlite3.Connection) -> None:
+        cls._ensure_column(connection, "automatic_tasks", "model", "TEXT")
 
     @classmethod
     def _migrate_to_18(cls, connection: sqlite3.Connection) -> None:
@@ -1983,6 +1988,7 @@ class Database:
 
     def create_automatic_task(
         self, task_id: str, content: str, username: str, source_ip: str,
+        model: str | None = None,
     ) -> dict[str, Any]:
         now = utc_now()
         title = self.automatic_task_title(content)
@@ -1993,14 +1999,14 @@ class Database:
                     self._repair_automatic_task_queue_positions(connection)
                     connection.execute(
                         """INSERT INTO automatic_tasks(
-                               id,title,content,status,queue_position,created_at,updated_at
-                           ) VALUES (?,?,?,'pending',
+                               id,title,content,model,status,queue_position,created_at,updated_at
+                           ) VALUES (?,?,?,?,'pending',
                                (SELECT COALESCE(MAX(queue_position),-1)+1 FROM automatic_tasks),?,?)""",
-                        (task_id, title, content, now, now),
+                        (task_id, title, content, model, now, now),
                     )
                     self.insert_audit(
                         connection, source_ip, "management.automatic_task.create", "success",
-                        {"task_id": task_id, "title": title, "requested_by": username},
+                        {"task_id": task_id, "title": title, "model": model, "requested_by": username},
                     )
                     row = connection.execute(
                         "SELECT * FROM automatic_tasks WHERE id=?", (task_id,),
@@ -2064,7 +2070,7 @@ class Database:
         try:
             with self.connect() as connection:
                 row = connection.execute(
-                    """SELECT id,status FROM automatic_tasks
+                    """SELECT id,status,model FROM automatic_tasks
                        WHERE status='pending' OR
                              (status='running' AND (lease_expires_at IS NULL OR lease_expires_at<=?))
                        ORDER BY queue_position IS NULL,queue_position,created_at,id LIMIT 1""",
@@ -2138,6 +2144,7 @@ class Database:
 
     def update_automatic_task(
         self, task_id: str, content: str, username: str, source_ip: str,
+        model: str | None = None,
     ) -> tuple[str, dict[str, Any] | None]:
         now = utc_now()
         title = self.automatic_task_title(content)
@@ -2154,17 +2161,17 @@ class Database:
                         return "running", None
                     self._repair_automatic_task_queue_positions(connection)
                     connection.execute(
-                        """UPDATE automatic_tasks SET title=?,content=?,status='pending',
+                        """UPDATE automatic_tasks SET title=?,content=?,model=?,status='pending',
                                execution_session_id=NULL,execution_token=NULL,lease_expires_at=NULL,
                                result_summary=NULL,error_summary=NULL,
                                queue_position=CASE WHEN status='pending' THEN queue_position ELSE
                                    (SELECT COALESCE(MAX(queue_position),-1)+1 FROM automatic_tasks) END,
                                updated_at=?,started_at=NULL,finished_at=NULL WHERE id=?""",
-                        (title, content, now, task_id),
+                        (title, content, model, now, task_id),
                     )
                     self.insert_audit(
                         connection, source_ip, "management.automatic_task.update", "success",
-                        {"task_id": task_id, "title": title, "requested_by": username},
+                        {"task_id": task_id, "title": title, "model": model, "requested_by": username},
                     )
                     row = connection.execute(
                         "SELECT * FROM automatic_tasks WHERE id=?", (task_id,),

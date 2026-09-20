@@ -66,6 +66,27 @@ class AutomaticTaskExecutor:
             return str(candidate)
         raise AutomaticTaskExecutionError("找不到 OpenCode 命令行程序，请安装 OpenCode 或将其加入 PATH")
 
+    @classmethod
+    async def list_models(cls) -> list[str]:
+        executable = cls._opencode_path()
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run, [executable, "models"], capture_output=True,
+                text=True, timeout=15, check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise AutomaticTaskExecutionError(f"读取 OpenCode 模型列表失败: {exc}") from exc
+        if result.returncode != 0:
+            raise AutomaticTaskExecutionError(
+                f"读取 OpenCode 模型列表失败（退出代码 {result.returncode}）: {result.stderr.strip()[:300]}"
+            )
+        models = [model for line in result.stdout.splitlines()
+                  if (model := line.strip()) and re.fullmatch(r"[^\s/]+/[^\s]+", model)]
+        if not models:
+            raise AutomaticTaskExecutionError("OpenCode 没有返回可选模型")
+        return models
+
     async def start(self, trigger: str, requested_by: str = "AXIS", source_ip: str = "127.0.0.1") -> dict[str, Any]:
         async with self._lock:
             if self._worker is not None and not self._worker.done():
@@ -85,7 +106,7 @@ class AutomaticTaskExecutor:
             task = self.database.next_automatic_task_for_execution()
             if task is None:
                 raise AutomaticTaskExecutionError("没有未执行的自动任务")
-            process = await self._launch_task(executable, Path(parent_directory), task["id"])
+            process = await self._launch_task(executable, Path(parent_directory), task["id"], task["model"])
             self.status = "running"
             self.last_trigger = trigger
             self.last_started_at = datetime.now().astimezone().isoformat()
@@ -97,15 +118,17 @@ class AutomaticTaskExecutor:
             return self.snapshot()
 
     async def _launch_task(
-        self, executable: str, parent_directory: Path, task_id: str,
+        self, executable: str, parent_directory: Path, task_id: str, model: str | None,
     ) -> asyncio.subprocess.Process:
         if re.fullmatch(r"[0-9a-f]{32}", task_id) is None:
             raise AutomaticTaskExecutionError("自动任务 ID 无效，不能创建执行目录")
         directory = parent_directory / f"task-{task_id[:12]}-{uuid4().hex[:8]}"
         try:
             directory.mkdir()
+            model_args = ["--model", model] if model else []
             process = await asyncio.create_subprocess_exec(
-                executable, "run", "--dir", str(directory), "--title", f"AXIS 自动任务 {task_id[:8]}",
+                executable, "run", "--dir", str(directory), *model_args,
+                "--title", f"AXIS 自动任务 {task_id[:8]}",
                 f"使用 axis-automatic-tasks Skill 的单项执行模式。调用 axis_automatic_task_claim，"
                 f"传入 expected_task_id={task_id}，只执行并回写这一条任务，然后结束当前会话；不要领取下一条。",
                 stdout=asyncio.subprocess.DEVNULL,
@@ -136,7 +159,7 @@ class AutomaticTaskExecutor:
                     self.status = "succeeded"
                     break
                 task_id = task["id"]
-                process = await self._launch_task(executable, parent_directory, task_id)
+                process = await self._launch_task(executable, parent_directory, task_id, task["model"])
         except (AutomaticTaskExecutionError, DatabaseError, OSError) as exc:
             self.status = "failed"
             self.last_error = str(exc)

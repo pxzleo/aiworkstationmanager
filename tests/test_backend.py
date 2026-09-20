@@ -79,7 +79,10 @@ class AutomaticTaskExecutorTests(unittest.IsolatedAsyncioTestCase):
             database = Database(Path(directory) / "tasks.db")
             task_ids = ["a" * 32, "b" * 32]
             for task_id in task_ids:
-                database.create_automatic_task(task_id, f"执行 {task_id[0]}", "admin", "127.0.0.1")
+                database.create_automatic_task(
+                    task_id, f"执行 {task_id[0]}", "admin", "127.0.0.1",
+                    "inifer4090/qwen3.8-27b" if task_id == task_ids[0] else None,
+                )
             database.update_automatic_task_execution_settings(
                 False, "09:00", directory, "admin", "127.0.0.1", None,
             )
@@ -89,6 +92,10 @@ class AutomaticTaskExecutorTests(unittest.IsolatedAsyncioTestCase):
                 match = re.search(r"expected_task_id=([0-9a-f]{32})", args[-1])
                 self.assertIsNotNone(match)
                 task_id = match.group(1)
+                if task_id == task_ids[0]:
+                    self.assertEqual(args[args.index("--model") + 1], "inifer4090/qwen3.8-27b")
+                else:
+                    self.assertNotIn("--model", args)
                 launches.append((task_id, Path(args[args.index("--dir") + 1])))
 
                 class FakeProcess:
@@ -1552,15 +1559,19 @@ class ApiTests(unittest.TestCase):
 
     def test_automatic_tasks_crud_and_opencode_serial_execution(self) -> None:
         self.assertEqual(self.client.get("/api/v1/automatic-tasks").status_code, 401)
+        self.assertEqual(self.client.get("/api/v1/automatic-tasks/models").status_code, 401)
         setup = self.client.post(
             "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
         )
         csrf = setup.json()["csrf_token"]
         headers = {"X-CSRF-Token": csrf}
+        with patch.object(AutomaticTaskExecutor, "list_models", return_value=["inifer4090/qwen3.8-27b"]):
+            models = self.client.get("/api/v1/automatic-tasks/models")
+        self.assertEqual(models.json(), {"models": ["inifer4090/qwen3.8-27b"]})
 
         first = self.client.post(
             "/api/v1/automatic-tasks",
-            json={"content": "# 检查工作站健康状态。\n输出异常服务。"},
+            json={"content": "# 检查工作站健康状态。\n输出异常服务。", "model": "inifer4090/qwen3.8-27b"},
             headers=headers,
         )
         second = self.client.post(
@@ -1570,6 +1581,7 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(first.status_code, 201, first.text)
         self.assertEqual(first.json()["task"]["title"], "检查工作站健康状态。")
+        self.assertEqual(first.json()["task"]["model"], "inifer4090/qwen3.8-27b")
         self.assertEqual(second.status_code, 201, second.text)
         first_id = first.json()["task"]["id"]
         second_id = second.json()["task"]["id"]

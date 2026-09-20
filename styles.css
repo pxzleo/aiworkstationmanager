@@ -920,6 +920,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .service-portproxy-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; }
 .service-portproxy-fields[hidden] { display: none; }
 .control-dialog input, .control-dialog textarea { width: 100%; border: 1px solid var(--line, #d9dde5); border-radius: 10px; padding: 11px 12px; background: transparent; color: inherit; }
+.control-dialog select { width: 100%; border: 1px solid var(--line, #d9dde5); border-radius: 10px; padding: 11px 12px; background: var(--surface); color: inherit; }
 .control-dialog textarea { min-height: 82px; resize: vertical; font: inherit; }
 .control-dialog .scene-detailed-description { min-height: 150px; }
 .control-dialog .scene-default-generation { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 10px; }

@@ -157,6 +157,7 @@ class VideoJobBatchPayload(BaseModel):
 class AutomaticTaskPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     content: str = Field(min_length=1, max_length=20_000)
+    model: str | None = Field(default=None, max_length=200, pattern=r"^[^\s/]+/[^\s]+$")
 
 
 class AutomaticTaskExecutionPayload(BaseModel):
@@ -963,6 +964,15 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         except AutomaticTaskExecutionError as exc:
             raise HTTPException(409, {"error_type": "automatic_task_execution_unavailable", "message": str(exc)}) from exc
 
+    @app.get("/api/v1/automatic-tasks/models")
+    async def automatic_task_models(
+        _: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, Any]:
+        try:
+            return {"models": await automatic_task_executor.list_models()}
+        except AutomaticTaskExecutionError as exc:
+            raise HTTPException(503, {"error_type": "automatic_task_models_unavailable", "message": str(exc)}) from exc
+
     @app.post("/api/v1/automatic-tasks", status_code=201)
     async def create_automatic_task(
         payload: AutomaticTaskPayload, request: Request,
@@ -970,6 +980,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     ) -> dict[str, Any]:
         task = resolved_database.create_automatic_task(
             uuid4().hex, payload.content, session.username, _client_ip(request),
+            payload.model,
         )
         return {"task": _public_automatic_task(task)}
 
@@ -1013,6 +1024,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
         result, task = resolved_database.update_automatic_task(
             task_id, payload.content, session.username, _client_ip(request),
+            payload.model,
         )
         if result == "missing":
             raise HTTPException(404, {"error_type": "automatic_task_not_found", "message": "自动任务不存在"})
