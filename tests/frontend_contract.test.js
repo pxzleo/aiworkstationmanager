@@ -321,7 +321,7 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 test('scene generation controls use the current frontend asset cache key', () => {
   assert.ok(html.includes('styles.css?v=20260920-5'));
   assert.ok(html.includes('i18n.js?v=20260920-3'));
-  assert.ok(html.includes('app.js?v=20260920-5'));
+  assert.ok(html.includes('app.js?v=20260920-6'));
 });
 
 test('read polling tolerates transient network failures without retrying writes', () => {
@@ -601,7 +601,7 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
   assert.ok(html.includes('styles.css?v=20260920-5'));
   assert.ok(html.includes('i18n.js?v=20260920-3'));
-  assert.ok(html.includes('app.js?v=20260920-5'));
+  assert.ok(html.includes('app.js?v=20260920-6'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
@@ -670,6 +670,8 @@ test('host power stacks 3090, 4090 and CPU below total, with other as a value on
   assert.ok(js.includes("plotGetter: stackedPower('gpu3090', 'gpu4090', 'cpu')"));
   assert.ok(js.includes("getter: powerPart('other'), valueOnly: true"));
   assert.ok(js.includes('spec.powerSeries?.filter((series) => series.plotGetter).forEach'));
+  assert.ok(js.includes('monitorChart.holdPowerReadings(samples'));
+  assert.ok(js.includes('monitorChart.stackedPower(sample, keys)'));
   assert.ok(js.includes('maximum: powerMaximum'));
   assert.ok(js.includes('cpu_power_w: staleSnapshot ? null : host?.power?.cpu_package_w'));
   assert.ok(js.includes("element('small', '', '窗口耗电量')"));

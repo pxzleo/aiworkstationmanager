@@ -150,3 +150,43 @@ test('bucketed other power stays missing when component averages use fewer sampl
   assert.equal(parts.cpu, 90);
   assert.equal(parts.other, null);
 });
+
+test('short power read gaps hold only the missing component without hiding available GPU curves', () => {
+  const at = (seconds) => new Date(end - (60 - seconds) * 1000).toISOString();
+  const sampleAt = (seconds, cpu, gpu3090, gpu4090) => ({ sampled_at: at(seconds), total_power_w: 500, cpu_power_w: cpu, gpus: [
+    ...(gpu3090 === null ? [] : [{ name: 'RTX 3090', power_w: gpu3090 }]),
+    { name: 'RTX 4090', power_w: gpu4090 },
+  ] });
+  const samples = monitorChart.holdPowerReadings([
+    sampleAt(0, 80, 150, 200), sampleAt(5, null, 150, 200), sampleAt(10, 80, null, 200),
+    sampleAt(45, null, null, 200),
+  ], 30_000);
+  assert.equal(samples[1].display_power.cpu, 80);
+  assert.equal(samples[1].display_power.other, null);
+  assert.equal(samples[2].display_power.gpu3090, 150);
+  assert.equal(samples[3].display_power.cpu, null);
+  assert.equal(samples[3].display_power.gpu3090, null);
+  assert.equal(samples[3].display_power.gpu4090, 200);
+  assert.equal(monitorChart.stackedPower(samples[1], ['gpu3090']), 150);
+  assert.equal(monitorChart.stackedPower(samples[1], ['gpu3090', 'gpu4090']), 350);
+  assert.equal(monitorChart.stackedPower(samples[1], ['gpu3090', 'gpu4090', 'cpu']), 430);
+  assert.equal(monitorChart.stackedPower(samples[3], ['gpu3090']), null);
+  assert.equal(monitorChart.stackedPower({ ...samples[1], total_power_w: 300 }, ['gpu3090', 'gpu4090']), null);
+});
+
+test('incomplete aggregate keeps usable component curves while remainder stays missing', () => {
+  const bucket = monitorChart.holdPowerReadings([{
+    sampled_at: new Date(end).toISOString(), total_power_w: 610, cpu_power_w: 90,
+    power_sample_count: 2, total_power_sample_count: 2, cpu_power_sample_count: 1,
+    gpus: [{ name: 'RTX 3090', power_w: 170, power_sample_count: 2 }, { name: 'RTX 4090', power_w: 300, power_sample_count: 2 }],
+  }], 30_000)[0];
+  assert.equal(bucket.display_power.other, null);
+  assert.equal(monitorChart.stackedPower(bucket, ['gpu3090', 'gpu4090']), 470);
+  assert.equal(monitorChart.stackedPower(bucket, ['gpu3090', 'gpu4090', 'cpu']), 560);
+});
+
+test('power chart separates a long unsampled interval', () => {
+  const model = monitorChart.buildChartModel([sample(14, 100), sample(13, 110), sample(1, 120)],
+    (item) => item.value, end, 15 * minute, { maxSegmentGapMs: 2 * minute });
+  assert.deepEqual(model.segments.map((segment) => segment.length), [2, 1]);
+});

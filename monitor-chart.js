@@ -63,8 +63,10 @@
     if (typeof getter !== 'function') throw new TypeError('getter must be a function');
     if (!finite(endTimeMs) || !finite(windowMs) || windowMs <= 0) throw new RangeError('chart time window is invalid');
     const minimum = options.minimum ?? 0; const maximum = options.maximum ?? 100; const precision = options.precision ?? 0;
+    const maxSegmentGapMs = options.maxSegmentGapMs ?? Infinity;
     if (!finite(minimum) || !finite(maximum) || maximum <= minimum) throw new RangeError('chart value range is invalid');
     if (!Number.isInteger(precision) || precision < 0 || precision > 3) throw new RangeError('chart precision is invalid');
+    if (maxSegmentGapMs !== Infinity && (!finite(maxSegmentGapMs) || maxSegmentGapMs <= 0)) throw new RangeError('chart segment gap is invalid');
     const startTimeMs = endTimeMs - windowMs;
     const entries = (Array.isArray(samples) ? samples : []).map((sample) => ({
       timestamp: Date.parse(sample?.sampled_at),
@@ -74,6 +76,7 @@
     const segments = []; let segment = [];
     entries.forEach((entry) => {
       if (!finite(entry.value)) { if (segment.length) segments.push(segment); segment = []; return; }
+      if (segment.length && entry.timestamp - segment.at(-1).timestamp > maxSegmentGapMs) { segments.push(segment); segment = []; }
       const plotted = Math.min(maximum, Math.max(minimum, entry.value));
       segment.push({ x: ((entry.timestamp - startTimeMs) / windowMs) * WIDTH, y: HEIGHT - ((plotted - minimum) / (maximum - minimum)) * HEIGHT, value: entry.value, timestamp: entry.timestamp });
     });
@@ -137,5 +140,26 @@
     return { gpu3090, gpu4090, cpu, other: remainder !== null && remainder >= -0.05 ? Math.max(0, remainder) : null };
   }
 
-  return { axisLabels, windowMilliseconds, energyKWh, beginPointerGesture, movePointerGesture, finishPointerGesture, buildChartModel, buildChartGeometry, nearestPoint, nearestSample, powerBreakdown };
+  function holdPowerReadings(samples, maxAgeMs) {
+    if (!finite(maxAgeMs) || maxAgeMs <= 0) throw new RangeError('power hold duration is invalid');
+    const latest = {};
+    return (Array.isArray(samples) ? samples : []).slice().sort((left, right) => Date.parse(left?.sampled_at) - Date.parse(right?.sampled_at)).map((sample) => {
+      const timestamp = Date.parse(sample?.sampled_at); const displayPower = powerBreakdown(sample);
+      for (const key of ['gpu3090', 'gpu4090', 'cpu']) {
+        if (finite(displayPower[key])) latest[key] = { value: displayPower[key], timestamp };
+        else if (latest[key] && timestamp >= latest[key].timestamp && timestamp - latest[key].timestamp <= maxAgeMs) displayPower[key] = latest[key].value;
+      }
+      return { ...sample, display_power: displayPower };
+    });
+  }
+
+  function stackedPower(sample, keys) {
+    const total = sample?.total_power_w; const readings = sample?.display_power || powerBreakdown(sample);
+    if (!finite(total) || !Array.isArray(keys)) return null;
+    let sum = 0;
+    for (const key of keys) { if (!finite(readings[key])) return null; sum += readings[key]; }
+    return sum <= total ? sum : null;
+  }
+
+  return { axisLabels, windowMilliseconds, energyKWh, beginPointerGesture, movePointerGesture, finishPointerGesture, buildChartModel, buildChartGeometry, nearestPoint, nearestSample, powerBreakdown, holdPowerReadings, stackedPower };
 }));
