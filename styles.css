@@ -530,6 +530,12 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .gpu-correlation-stack .chart-section + .chart-section { border-left: 0; border-top: 1px solid var(--line); }
 .gpu-context-column .chart-section { border-left: 0; }
 .chart-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+.power-chart-total .chart-title { flex-wrap: wrap; }
+.chart-heading-values { display: flex; align-items: flex-start; justify-content: flex-end; gap: 18px; margin-left: auto; }
+.chart-energy { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chart-energy small, .chart-energy strong { display: block; }
+.chart-energy small { color: var(--muted); font-size: 8px; }
+.chart-energy strong { margin-top: 5px; font-size: 16px; font-weight: 580; }
 .chart-title h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .chart-title p { margin: 5px 0 0; color: var(--muted); font-size: 9px; }
 .chart-kicker { display: block; color: var(--chart-color); font-size: 8px; font-weight: 750; letter-spacing: .12em; margin-bottom: 6px; }

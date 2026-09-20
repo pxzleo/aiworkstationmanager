@@ -167,7 +167,7 @@
     '部分数据降级': 'Some data is degraded', '采集失败': 'Collection failed', '监控数据延迟': 'Monitoring data delayed', 'GPU 数据延迟': 'GPU data delayed', '采样状态': 'Sampling status', '上次数据': 'Last data', '最后成功采样': 'Last successful sample',
     'CPU 总负载': 'Total CPU load', '内存占用': 'Memory usage', 'GPU 负载': 'GPU load', '% 当前': '% current',
     '采样点': 'Samples', '监控设备': 'Monitored devices',
-    'CPU 温度': 'CPU temperature', '整机功耗': 'Total system power', '内存用量': 'Memory used', '主机资源': 'Host resources',
+    'CPU 温度': 'CPU temperature', '整机功耗': 'Total system power', '窗口耗电量': 'Window energy', '度': 'kWh', '内存用量': 'Memory used', '主机资源': 'Host resources',
     '处理器与系统内存使用同一条采样时间线': 'Processor and system memory share one sampling timeline',
     '处理器负载': 'Processor load', '全部逻辑处理器综合使用率': 'Combined utilization across all logical processors',
     'GPU 与系统已暴露功耗传感器总和': 'Sum of GPU power and system-exposed power sensors',

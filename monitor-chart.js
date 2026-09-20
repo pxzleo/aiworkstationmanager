@@ -26,6 +26,20 @@
   function axisLabels(minutes) { return [...RANGE_AXIS_LABELS[supportedWindowMinutes(minutes)]]; }
   function windowMilliseconds(minutes) { return supportedWindowMinutes(minutes) * 60 * 1000; }
 
+  function energyKWh(samples, getter, startTimeMs, endTimeMs, maxGapMs) {
+    if (!Array.isArray(samples) || !finite(startTimeMs) || !finite(endTimeMs) || !finite(maxGapMs) || endTimeMs <= startTimeMs || maxGapMs <= 0) return null;
+    const entries = samples.map((sample) => ({ timestamp: Date.parse(sample?.sampled_at), watts: getter(sample) }))
+      .filter(({ timestamp }) => Number.isFinite(timestamp) && timestamp >= startTimeMs && timestamp < endTimeMs)
+      .sort((left, right) => left.timestamp - right.timestamp);
+    let wattMilliseconds = 0; let counted = false;
+    for (let index = 1; index < entries.length; index += 1) {
+      const previous = entries[index - 1]; const current = entries[index]; const elapsed = current.timestamp - previous.timestamp;
+      if (elapsed <= 0 || elapsed > maxGapMs || !finite(previous.watts) || !finite(current.watts) || previous.watts < 0 || current.watts < 0) continue;
+      wattMilliseconds += (previous.watts + current.watts) / 2 * elapsed; counted = true;
+    }
+    return counted ? wattMilliseconds / 3_600_000_000 : null;
+  }
+
   function beginPointerGesture(pointerId, clientX, clientY) {
     if (!finite(pointerId) || !finite(clientX) || !finite(clientY)) throw new TypeError('pointer gesture coordinates must be finite numbers');
     return { id: pointerId, startX: clientX, startY: clientY, dragging: false };
@@ -123,5 +137,5 @@
     return { gpu3090, gpu4090, cpu, other: remainder !== null && remainder >= -0.05 ? Math.max(0, remainder) : null };
   }
 
-  return { axisLabels, windowMilliseconds, beginPointerGesture, movePointerGesture, finishPointerGesture, buildChartModel, buildChartGeometry, nearestPoint, nearestSample, powerBreakdown };
+  return { axisLabels, windowMilliseconds, energyKWh, beginPointerGesture, movePointerGesture, finishPointerGesture, buildChartModel, buildChartGeometry, nearestPoint, nearestSample, powerBreakdown };
 }));

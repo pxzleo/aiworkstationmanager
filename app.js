@@ -30,7 +30,7 @@ const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
   fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', mediaPath: '',
-  historyWindowMinutes: 15, historyAnchorMs: null, historyFollowingCurrent: true, historyLoaded: false, historyLoading: false, powerModel: null,
+  historyWindowMinutes: 15, historyAnchorMs: null, historyFollowingCurrent: true, historyLoaded: false, historyLoading: false, historyBucketSeconds: 0, powerModel: null,
   chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
 
@@ -226,7 +226,7 @@ async function refreshHistory() {
     const period = activeHistoryPeriod(); const minutes = Math.round((period.endMs - period.startMs) / 60000);
     const end = `&end=${encodeURIComponent(new Date(period.endMs).toISOString())}`;
     const result = await api(`/history?window=${minutes}m${end}`, { resource: 'history', timeout: state.historyWindowMinutes >= 10080 ? 30000 : REQUEST_TIMEOUT_MS });
-    state.history = (result.samples || []).map(normalizeHistorySample); state.historyLoaded = true; updateHistoryPeriodNavigation(); renderCharts();
+    state.history = (result.samples || []).map(normalizeHistorySample); state.historyBucketSeconds = result.bucket_seconds || 0; state.historyLoaded = true; updateHistoryPeriodNavigation(); renderCharts();
   } catch (error) {
     showPollingError('历史数据读取失败', error);
   } finally { setHistoryLoading(false); }
@@ -463,7 +463,10 @@ function updatePowerLegend(spec, sample) { spec.powerLegend?.forEach(({ series, 
 function createMonitorChart(spec, chartIndex) {
   const section = element('section', `chart-section${spec.compact ? ' chart-compact' : ''}${spec.showXAxis === false ? ' chart-no-x-axis' : ''}${spec.powerTotal ? ' power-chart-total' : ''}`); section.style.setProperty('--chart-color', spec.color);
   const heading = element('div', 'chart-title'); const copy = element('div'); copy.append(element('span', 'chart-kicker', spec.kicker), element('h3', '', spec.title), element('p', '', spec.description));
-  const current = element('strong', 'chart-current', '--'); const currentLabel = element('small', '', `${spec.unit || '%'} 当前`); current.append(currentLabel); heading.append(copy, current);
+  const current = element('strong', 'chart-current', '--'); const currentLabel = element('small', '', `${spec.unit || '%'} 当前`); current.append(currentLabel);
+  const energy = spec.powerTotal ? element('span', 'chart-energy') : null; const energyValue = energy ? element('strong', '', '--') : null;
+  if (energy) energy.append(element('small', '', '窗口耗电量'), energyValue);
+  const headingValues = element('div', 'chart-heading-values'); if (energy) headingValues.append(energy); headingValues.append(current); heading.append(copy, headingValues);
   const statistics = element('div', 'chart-statistics'); const statisticRefs = {};
   [['average', '平均'], ['peak', '峰值'], ['minimum', '最低']].forEach(([key, label]) => { const item = element('span'); const value = userElement('b', '', '--'); item.append(element('small', '', label), value); statistics.append(item); statisticRefs[key] = value; });
   const frame = element('div', 'chart-frame'); const yAxis = element('span', 'chart-y-axis'); chartAxisValues({ minimum: spec.minimum ?? 0, maximum: typeof spec.maximum === 'number' ? spec.maximum : spec.initialMaximum ?? 100 }, spec).forEach((label) => yAxis.append(element('i', '', label)));
@@ -472,7 +475,7 @@ function createMonitorChart(spec, chartIndex) {
   const grid = svgElement('path', { class: 'chart-grid-lines', d: 'M0 1H900M0 50H900M0 100H900M0 150H900M0 199H900M1 0V200M300 0V200M600 0V200M899 0V200' }); const areaLayer = svgElement('g', { class: 'chart-areas' }); const lineLayer = svgElement('g', { class: 'chart-lines' }); const isolatedLayer = svgElement('g', { class: 'chart-isolated-points' }); const cursor = svgElement('line', { class: 'chart-cursor', x1: '0', x2: '0', y1: '0', y2: '200', hidden: '' }); const marker = svgElement('circle', { class: 'chart-marker', cx: '0', cy: '0', r: '4', hidden: '' }); svg.append(defs, grid, areaLayer, lineLayer, isolatedLayer, cursor, marker);
   const noData = element('span', 'chart-no-data', '暂无采样数据'); plot.append(svg, noData); const xAxis = element('div', 'chart-x-axis'); historyAxisLabels().forEach((label) => xAxis.append(element('span', '', label))); xAxis.hidden = spec.showXAxis === false; frame.append(yAxis, plot, xAxis);
   const powerLegend = spec.powerSeries?.map((series) => { const item = element('span', 'power-legend-item'); item.style.setProperty('--series-color', series.color); const value = element('b', '', '--'); if (!series.valueOnly) item.append(element('i')); item.append(element('span', '', series.label), value); return { series, item, value }; });
-  section.append(heading, statistics); if (powerLegend) section.append(element('div', 'power-series-legend')); if (powerLegend) section.querySelector('.power-series-legend').append(...powerLegend.map(({ item }) => item)); section.append(frame); return { ...spec, section, current, currentLabel, statisticRefs, powerLegend, yAxis, svg, gradientId, areaLayer, lineLayer, isolatedLayer, cursor, marker, noData, lastModel: null };
+  section.append(heading, statistics); if (powerLegend) section.append(element('div', 'power-series-legend')); if (powerLegend) section.querySelector('.power-series-legend').append(...powerLegend.map(({ item }) => item)); section.append(frame); return { ...spec, section, current, currentLabel, energyValue, statisticRefs, powerLegend, yAxis, svg, gradientId, areaLayer, lineLayer, isolatedLayer, cursor, marker, noData, lastModel: null };
 }
 function bindCorrelationCursor(charts, announcement) {
   let selectedTimestamp = null;
@@ -604,6 +607,7 @@ function renderMonitorDetails(samples) {
 function renderCharts() {
   const samples = currentSeries(); const period = activeHistoryPeriod(); const endTimeMs = period.endMs; const windowMs = period.endMs - period.startMs; renderMonitorDetails(samples); state.chartSpecs.forEach((spec) => {
     const scale = chartScale(spec, samples); const model = monitorChart.buildChartModel(samples, spec.getter, endTimeMs, windowMs, { ...scale, precision: spec.decimals ?? 0 }); const geometry = monitorChart.buildChartGeometry(model); spec.lastModel = model; updateChartCurrent(spec, model.current); Object.entries(spec.statisticRefs).forEach(([key, node]) => { node.textContent = chartValue(model[key], spec, spec.statisticsIncludeUnit === true); }); const axisValues = chartAxisValues(scale, spec); [...spec.yAxis.children].forEach((node, index) => { node.textContent = axisValues[index]; }); spec.svg.setAttribute('aria-label', model.pointCount ? `${ui(spec.title)}: ${ui('当前')} ${chartCurrentValue(model.current, spec, true)}, ${ui('峰值')} ${chartValue(model.peak, spec)}, ${ui('平均')} ${chartValue(model.average, spec)}` : `${ui(spec.title)}: ${ui('暂无采样数据')}`);
+    if (spec.energyValue) { const kWh = monitorChart.energyKWh(samples, (sample) => sample?.total_power_w, period.startMs, period.endMs, Math.max(60_000, state.historyBucketSeconds * 1_500)); spec.energyValue.textContent = kWh === null ? '--' : `${kWh.toFixed(3)} ${ui('度')}`; }
     const lines = []; const isolatedPoints = [];
     spec.powerSeries?.filter((series) => series.plotGetter).forEach((series) => {
       const seriesModel = monitorChart.buildChartModel(samples, series.plotGetter, endTimeMs, windowMs, { ...scale, precision: spec.decimals ?? 0 }); const seriesGeometry = monitorChart.buildChartGeometry(seriesModel);

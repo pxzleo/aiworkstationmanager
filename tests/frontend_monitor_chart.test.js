@@ -33,6 +33,14 @@ const minute = 60 * 1000;
 const end = Date.parse('2026-08-28T12:15:00Z');
 const sample = (minuteOffset, value) => ({ sampled_at: new Date(end - minuteOffset * minute).toISOString(), value });
 
+test('window energy integrates system watts over observed intervals only', () => {
+  const samples = [sample(60, 1000), sample(30, 500), sample(0, 1500)];
+  assert.equal(monitorChart.energyKWh(samples, (item) => item.value, end - 60 * minute, end + 1, 31 * minute), 0.875);
+  assert.equal(monitorChart.energyKWh(samples, (item) => item.value, end - 30 * minute, end, 31 * minute), null);
+  assert.equal(monitorChart.energyKWh(samples, (item) => item.value, end - 60 * minute, end + 1, 20 * minute), null);
+  assert.equal(monitorChart.energyKWh([sample(10, 1000), sample(5, null), sample(0, 1000)], (item) => item.value, end - 10 * minute, end + 1, 6 * minute), null);
+});
+
 test('chart model positions samples on the fixed fifteen-minute timeline', () => {
   const model = monitorChart.buildChartModel([sample(14, 10), sample(5, null), sample(1, 30)], (item) => item.value, end);
 
