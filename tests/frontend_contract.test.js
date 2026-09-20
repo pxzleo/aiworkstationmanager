@@ -319,7 +319,7 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260920-6'));
+  assert.ok(html.includes('styles.css?v=20260920-7'));
   assert.ok(html.includes('i18n.js?v=20260920-4'));
   assert.ok(html.includes('app.js?v=20260920-7'));
 });
@@ -599,7 +599,7 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260920-6'));
+  assert.ok(html.includes('styles.css?v=20260920-7'));
   assert.ok(html.includes('i18n.js?v=20260920-4'));
   assert.ok(html.includes('app.js?v=20260920-7'));
   assert.ok(i18n.includes("navigator.languages"));

@@ -866,6 +866,9 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .correlation-heading { align-items: flex-start; flex-direction: column; gap: 8px; padding-block: 12px; }
   .correlation-time { justify-items: start; }
   .chart-section { padding: 18px 15px 17px 18px; }
+  .power-chart-total .chart-heading-values { align-items: flex-end; }
+  .power-chart-total .chart-energy small { line-height: 12px; }
+  .power-chart-total .chart-energy strong { line-height: 20px; }
   .chart-section + .chart-section { border-left: 0; border-top: 1px solid var(--line); }
   .chart-frame { grid-template-rows: 180px 20px; }
   .line-chart { height: 180px; }
