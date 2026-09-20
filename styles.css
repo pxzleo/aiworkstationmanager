@@ -982,6 +982,16 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .operation-row { display: grid; grid-template-columns: minmax(160px, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 12px; }
 .video-job-row { grid-template-columns: minmax(220px, 1fr) auto auto auto; }
 .automatic-task-row { grid-template-columns: minmax(220px, 1fr) auto auto auto; transition: border-color .18s ease, background .18s ease; }
+.automatic-task-tabs { display: flex; gap: 8px; margin: 0 0 16px; }
+.automatic-task-tabs .button.active { border-color: var(--accent); color: var(--accent); }
+.automatic-task-execution { max-width: 720px; }
+.automatic-task-execution > p { color: var(--muted); margin: 0 0 18px; }
+.automatic-task-execution-form { display: grid; gap: 10px; }
+.automatic-task-execution-form > label:not(.automatic-task-switch) { font-weight: 600; }
+.automatic-task-execution-form > input { min-height: 40px; width: 100%; box-sizing: border-box; }
+.automatic-task-switch { display: flex; align-items: center; gap: 10px; margin: 7px 0; }
+.automatic-task-execution-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.automatic-task-execution .status-banner { margin-top: 18px; }
 .automatic-task-row.automatic-task-running { border-color: rgba(var(--accent-rgb), .55); background: rgba(var(--accent-rgb), .055); }
 .automatic-task-copy { display: grid; gap: 5px; }
 .automatic-task-content { display: -webkit-box; margin: 0; overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }

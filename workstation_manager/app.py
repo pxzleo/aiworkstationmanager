@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -24,6 +25,7 @@ from .auth import (
     AuthService,
     is_loopback,
 )
+from .automatic_task_execution import AutomaticTaskExecutionError, AutomaticTaskExecutor
 from .config import ConfigError, Settings, load_settings
 from .database import SCHEMA_VERSION as DATABASE_SCHEMA_VERSION, Database, DatabaseError
 from .file_service import FileCatalog, FileServiceError
@@ -155,6 +157,13 @@ class VideoJobBatchPayload(BaseModel):
 class AutomaticTaskPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     content: str = Field(min_length=1, max_length=20_000)
+
+
+class AutomaticTaskExecutionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    enabled: bool
+    time_local: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    working_directory: str = Field(min_length=1, max_length=2048)
 
 
 class AutomaticTaskOrderPayload(BaseModel):
@@ -370,6 +379,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         generation_timeout_seconds=resolved_settings.video_job_generation_timeout_seconds,
         resource_snapshot=lambda: resolved_sampler.current,
     )
+    automatic_task_executor = AutomaticTaskExecutor(resolved_database)
     file_catalog = FileCatalog(resolved_settings.file_service_root)
     auth_concurrency = asyncio.Semaphore(resolved_settings.auth_concurrency_limit)
     if resolved_settings.host.lower() != "localhost" and not is_loopback(resolved_settings.host) \
@@ -391,9 +401,11 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             await resolved_registry.start()
             await _submit_default_scene_when_docker_ready(resolved_registry)
             await resolved_video_jobs.start()
+            automatic_task_executor.start_scheduler()
             yield
         finally:
             try:
+                await automatic_task_executor.shutdown()
                 await resolved_video_jobs.shutdown()
             finally:
                 try:
@@ -415,6 +427,7 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     app.state.auth = resolved_auth
     app.state.registry = resolved_registry
     app.state.video_jobs = resolved_video_jobs
+    app.state.automatic_task_executor = automatic_task_executor
     app.state.file_catalog = file_catalog
     app.state.manager_logger = manager_logger
 
@@ -903,6 +916,42 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             "offset": offset,
             "has_more": len(tasks) > limit,
         }
+
+    @app.get("/api/v1/automatic-tasks/execution")
+    async def automatic_task_execution(
+        _: AuthenticatedSession = Depends(require_session),
+    ) -> dict[str, Any]:
+        return automatic_task_executor.snapshot()
+
+    @app.put("/api/v1/automatic-tasks/execution")
+    async def update_automatic_task_execution(
+        payload: AutomaticTaskExecutionPayload, request: Request,
+        session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        try:
+            directory = automatic_task_executor.validate_directory(payload.working_directory)
+        except AutomaticTaskExecutionError as exc:
+            raise HTTPException(422, {"error_type": "invalid_working_directory", "message": str(exc)}) from exc
+        current = datetime.now().astimezone()
+        previous = resolved_database.automatic_task_execution_settings()
+        skip_today = current.date().isoformat() if (
+            payload.enabled and not previous["enabled"]
+            and current.strftime("%H:%M") >= payload.time_local
+        ) else None
+        resolved_database.update_automatic_task_execution_settings(
+            payload.enabled, payload.time_local, directory,
+            session.username, _client_ip(request), skip_today,
+        )
+        return automatic_task_executor.snapshot()
+
+    @app.post("/api/v1/automatic-tasks/execution/start", status_code=202)
+    async def start_automatic_task_execution(
+        request: Request, session: AuthenticatedSession = Depends(require_csrf),
+    ) -> dict[str, Any]:
+        try:
+            return await automatic_task_executor.start("manual", session.username, _client_ip(request))
+        except AutomaticTaskExecutionError as exc:
+            raise HTTPException(409, {"error_type": "automatic_task_execution_unavailable", "message": str(exc)}) from exc
 
     @app.post("/api/v1/automatic-tasks", status_code=201)
     async def create_automatic_task(

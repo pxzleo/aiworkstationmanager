@@ -14,7 +14,7 @@ from .config import MAX_HISTORY_MINUTES
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 36
+SCHEMA_VERSION = 37
 
 
 class DatabaseError(RuntimeError):
@@ -134,6 +134,7 @@ class Database:
                         34: self._migrate_to_34,
                         35: self._migrate_to_35,
                         36: self._migrate_to_36,
+                        37: self._migrate_to_37,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -472,6 +473,23 @@ class Database:
         )
         connection.execute(
             "INSERT OR IGNORE INTO electricity_rate(id,yuan_per_kwh,updated_at) VALUES (1,0.5,?)",
+            (utc_now(),),
+        )
+
+    @staticmethod
+    def _migrate_to_37(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS automatic_task_execution (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                enabled INTEGER NOT NULL DEFAULT 0,
+                time_local TEXT NOT NULL DEFAULT '09:00',
+                working_directory TEXT NOT NULL DEFAULT '',
+                last_trigger_date TEXT,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO automatic_task_execution(id,updated_at) VALUES (1,?)",
             (utc_now(),),
         )
 
@@ -2023,6 +2041,75 @@ class Database:
             }
         except sqlite3.Error as exc:
             raise DatabaseError(f"读取自动任务统计失败: {exc}") from exc
+
+    def automatic_task_execution_queue_state(self) -> dict[str, bool]:
+        now = utc_now()
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    """SELECT
+                           SUM(CASE WHEN status='running' AND lease_expires_at>? THEN 1 ELSE 0 END) AS busy,
+                           SUM(CASE WHEN status='pending' OR
+                               (status='running' AND (lease_expires_at IS NULL OR lease_expires_at<=?))
+                               THEN 1 ELSE 0 END) AS runnable
+                       FROM automatic_tasks""",
+                    (now, now),
+                ).fetchone()
+            return {"busy": bool(row["busy"]), "runnable": bool(row["runnable"])}
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取自动任务执行状态失败: {exc}") from exc
+
+    def automatic_task_execution_settings(self) -> dict[str, Any]:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    "SELECT enabled,time_local,working_directory,last_trigger_date,updated_at "
+                    "FROM automatic_task_execution WHERE id=1"
+                ).fetchone()
+            if row is None:
+                raise DatabaseError("自动任务执行设置不存在")
+            result = dict(row)
+            result["enabled"] = bool(result["enabled"])
+            return result
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取自动任务执行设置失败: {exc}") from exc
+
+    def update_automatic_task_execution_settings(
+        self, enabled: bool, time_local: str, working_directory: str,
+        username: str, source_ip: str, skip_today: str | None,
+    ) -> dict[str, Any]:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    connection.execute(
+                        """UPDATE automatic_task_execution
+                           SET enabled=?,time_local=?,working_directory=?,
+                               last_trigger_date=CASE WHEN ? IS NOT NULL THEN ? ELSE last_trigger_date END,
+                               updated_at=? WHERE id=1""",
+                        (int(enabled), time_local, working_directory, skip_today, skip_today, utc_now()),
+                    )
+                    self.insert_audit(
+                        connection, source_ip, "management.automatic_task.execution_settings", "success",
+                        {"username": username, "enabled": enabled, "time_local": time_local,
+                         "working_directory": working_directory},
+                    )
+            return self.automatic_task_execution_settings()
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"保存自动任务执行设置失败: {exc}") from exc
+
+    def mark_automatic_task_daily_trigger(self, local_date: str) -> bool:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        """UPDATE automatic_task_execution SET last_trigger_date=?
+                           WHERE id=1 AND enabled=1 AND
+                                 (last_trigger_date IS NULL OR last_trigger_date<>?)""",
+                        (local_date, local_date),
+                    )
+                    return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"记录自动任务每日触发失败: {exc}") from exc
 
     def update_automatic_task(
         self, task_id: str, content: str, username: str, source_ip: str,

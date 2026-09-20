@@ -21,6 +21,7 @@ import psutil
 
 from workstation_manager import __version__
 from workstation_manager.app import create_app
+from workstation_manager.automatic_task_execution import AutomaticTaskExecutionError, AutomaticTaskExecutor
 from workstation_manager.auth import REMEMBER_SESSION_TTL_SECONDS
 from workstation_manager.collectors import (
     _cached, _slow_cache, collect_docker, collect_docker_resources,
@@ -69,6 +70,57 @@ def _hang_with_child_process(settings: Settings) -> dict:
     )
     time.sleep(60)
     raise RuntimeError("阻塞采集意外返回")
+
+
+class AutomaticTaskExecutorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_expired_lease_can_be_relaunched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "tasks.db")
+            database.create_automatic_task("b" * 32, "检查系统", "admin", "127.0.0.1")
+            database.claim_automatic_task("old-session")
+            self.assertEqual(database.automatic_task_execution_queue_state(), {"busy": True, "runnable": False})
+            with database.connect() as connection:
+                with connection:
+                    connection.execute(
+                        "UPDATE automatic_tasks SET lease_expires_at=? WHERE status='running'",
+                        ("2020-01-01T00:00:00+00:00",),
+                    )
+            self.assertEqual(database.automatic_task_execution_queue_state(), {"busy": False, "runnable": True})
+
+    async def test_daily_trigger_is_persisted_and_manual_start_rejects_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "tasks.db")
+            database.create_automatic_task("a" * 32, "检查系统", "admin", "127.0.0.1")
+            database.update_automatic_task_execution_settings(
+                True, "08:00", directory, "admin", "127.0.0.1", None,
+            )
+            executor = AutomaticTaskExecutor(database)
+            waiting = asyncio.Event()
+            launches = []
+
+            class FakeProcess:
+                async def wait(self) -> int:
+                    await waiting.wait()
+                    return 0
+
+            async def launch(*args, **kwargs):
+                launches.append((args, kwargs))
+                return FakeProcess()
+
+            with patch.object(AutomaticTaskExecutor, "_opencode_path", return_value="opencode"), \
+                    patch("asyncio.create_subprocess_exec", side_effect=launch):
+                await executor.tick(datetime(2026, 9, 20, 8, 0, 1, tzinfo=timezone.utc))
+                self.assertEqual(len(launches), 1)
+                self.assertIn("--dir", launches[0][0])
+                self.assertEqual(database.automatic_task_execution_settings()["last_trigger_date"], "2026-09-20")
+                await AutomaticTaskExecutor(database).tick(datetime(2026, 9, 20, 8, 0, 2, tzinfo=timezone.utc))
+                self.assertEqual(len(launches), 1)
+                with self.assertRaises(AutomaticTaskExecutionError):
+                    await executor.start("manual")
+                waiting.set()
+                await executor._worker
+                self.assertEqual(executor.status, "failed")
+                self.assertIn("仍有 1 项未完成", executor.last_error)
 
 
 class ConfigTests(unittest.TestCase):
@@ -1423,6 +1475,34 @@ class ApiTests(unittest.TestCase):
             and event["result"] == "success"
             and event["summary"].get("path") == "待删除目录"
             for event in audit
+        ))
+
+    def test_automatic_task_execution_settings_and_start_guards(self) -> None:
+        self.assertEqual(self.client.get("/api/v1/automatic-tasks/execution").status_code, 401)
+        setup = self.client.post(
+            "/api/v1/auth/setup", json={"username": "admin", "password": "1234"}
+        )
+        headers = {"X-CSRF-Token": setup.json()["csrf_token"]}
+        endpoint = "/api/v1/automatic-tasks/execution"
+        self.assertFalse(self.client.get(endpoint).json()["settings"]["enabled"])
+        body = {
+            "enabled": True, "time_local": "23:59",
+            "working_directory": str(self.settings.database_path.parent),
+        }
+        self.assertEqual(self.client.put(endpoint, json=body).status_code, 403)
+        self.assertEqual(self.client.put(endpoint, json={**body, "time_local": "25:00"}, headers=headers).status_code, 422)
+        self.assertEqual(self.client.put(endpoint, json={**body, "working_directory": "missing"}, headers=headers).status_code, 422)
+        saved = self.client.put(endpoint, json=body, headers=headers)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertTrue(saved.json()["settings"]["enabled"])
+        self.assertEqual(saved.json()["settings"]["time_local"], "23:59")
+        self.assertEqual(self.client.post(endpoint + "/start").status_code, 403)
+        empty = self.client.post(endpoint + "/start", headers=headers)
+        self.assertEqual(empty.status_code, 409, empty.text)
+        self.assertIn("没有未执行", empty.text)
+        self.assertTrue(any(
+            event["event"] == "management.automatic_task.execution_settings"
+            for event in self.client.get("/api/v1/audit?limit=10").json()["events"]
         ))
 
     def test_automatic_tasks_crud_and_opencode_serial_execution(self) -> None:

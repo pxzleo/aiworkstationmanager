@@ -25,6 +25,7 @@ let progressCancelLabel = '终止切换并返回';
 let draggedSceneId = null;
 let fileThumbnailObserver = null;
 let automaticTaskOrderSaving = false;
+let automaticTaskExecutionLoaded = false;
 let mediaSwipeNoticeTimer = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
@@ -289,7 +290,49 @@ async function refreshAutomaticTasks() {
     } while (result.has_more);
     tasks.sort((left, right) => { const rank = (task) => task.status === 'running' ? 0 : task.status === 'pending' ? 1 : 2; const rankDelta = rank(left) - rank(right); if (rankDelta) return rankDelta; if (['running', 'pending'].includes(left.status)) return (left.queue_position ?? Number.MAX_SAFE_INTEGER) - (right.queue_position ?? Number.MAX_SAFE_INTEGER); return String(right.updated_at).localeCompare(String(left.updated_at)) || String(right.id).localeCompare(String(left.id)); });
     state.automaticTasks = tasks; state.automaticTaskSummary = result?.summary || { pending: 0, running: 0, total: 0 }; renderAutomaticTasks();
+    await refreshAutomaticTaskExecution();
   } catch (error) { showPollingError(ui('自动任务读取失败'), error); }
+}
+async function refreshAutomaticTaskExecution() {
+  const result = await api('/automatic-tasks/execution', { resource: 'automatic-task-execution' });
+  if (!automaticTaskExecutionLoaded) {
+    byId('automaticTaskWorkingDirectory').value = result.settings.working_directory || '';
+    byId('automaticTaskDailyTime').value = result.settings.time_local;
+    byId('automaticTaskDailyEnabled').checked = result.settings.enabled;
+    automaticTaskExecutionLoaded = true;
+  }
+  const statuses = { idle: '尚未从本页面启动', running: 'OpenCode 正在执行', succeeded: '上次启动已完成', failed: '上次启动失败' };
+  const trigger = result.last_trigger === 'schedule' ? ui('定时启动') : ui('手动启动');
+  const parts = [result.queue.busy && result.status !== 'running' ? ui('已有 OpenCode 会话正在执行') : ui(statuses[result.status] || '状态未知')];
+  if (result.last_started_at) parts.push(`${trigger}：${formatDate(result.last_started_at, true)}`);
+  if (result.last_error) parts.push(result.last_error);
+  text('automaticTaskExecutionStatus', parts.join(' · '));
+  byId('startAutomaticTaskExecutionButton').disabled = result.status === 'running' || !result.queue.runnable || result.queue.busy;
+}
+function showAutomaticTaskPanel(panel) {
+  const executing = panel === 'execution';
+  byId('automaticTaskListPanel').hidden = executing;
+  byId('automaticTaskExecutionPanel').hidden = !executing;
+  for (const [id, selected] of [['automaticTaskListTab', !executing], ['automaticTaskExecutionTab', executing]]) {
+    byId(id).classList.toggle('active', selected);
+    byId(id).setAttribute('aria-selected', String(selected));
+  }
+}
+async function saveAutomaticTaskExecution(event) {
+  event?.preventDefault();
+  const body = { working_directory: byId('automaticTaskWorkingDirectory').value.trim(), time_local: byId('automaticTaskDailyTime').value, enabled: byId('automaticTaskDailyEnabled').checked };
+  const result = await api('/automatic-tasks/execution', { method: 'PUT', body });
+  byId('automaticTaskWorkingDirectory').value = result.settings.working_directory;
+  showToast(ui('执行设置已保存'));
+  await refreshAutomaticTaskExecution();
+}
+async function startAutomaticTaskExecution() {
+  try {
+    await saveAutomaticTaskExecution();
+    await api('/automatic-tasks/execution/start', { method: 'POST' });
+    showToast(ui('已启动 OpenCode 执行队列'));
+    await refreshAutomaticTasks();
+  } catch (error) { showToast(error.message); await refreshAutomaticTaskExecution().catch(() => {}); }
 }
 async function refreshUsers() { if (document.hidden) return; try { const result = await api('/users', { resource: 'users' }); state.users = result.users || []; renderUsers(); } catch (error) { const rows = byId('userRows'); rows.replaceChildren(element('p', 'empty-state', `用户加载失败：${error.message}`)); throw error; } }
 
@@ -914,6 +957,10 @@ byId('electricityRateForm').addEventListener('submit', submitElectricityRate);
 byId('clearPowerCalibrationButton').addEventListener('click', clearPowerCalibration);
 byId('refreshVideoJobsButton').addEventListener('click', refreshVideoJobs);
 byId('refreshAutomaticTasksButton').addEventListener('click', refreshAutomaticTasks);
+byId('automaticTaskListTab').addEventListener('click', () => showAutomaticTaskPanel('list'));
+byId('automaticTaskExecutionTab').addEventListener('click', () => showAutomaticTaskPanel('execution'));
+byId('automaticTaskExecutionForm').addEventListener('submit', (event) => { saveAutomaticTaskExecution(event).catch((error) => showToast(error.message)); });
+byId('startAutomaticTaskExecutionButton').addEventListener('click', startAutomaticTaskExecution);
 byId('refreshFilesButton').addEventListener('click', () => refreshFiles(state.filePath).catch(() => {}));
 byId('uploadFilesButton').addEventListener('click', () => byId('fileUploadInput').click());
 byId('fileUploadInput').addEventListener('change', (event) => uploadSelectedFiles([...event.target.files]));
