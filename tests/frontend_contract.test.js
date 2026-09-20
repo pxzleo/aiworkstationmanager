@@ -317,9 +317,9 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260920-1'));
+  assert.ok(html.includes('styles.css?v=20260920-2'));
   assert.ok(html.includes('i18n.js?v=20260920-1'));
-  assert.ok(html.includes('app.js?v=20260920-1'));
+  assert.ok(html.includes('app.js?v=20260920-2'));
 });
 
 test('read polling tolerates transient network failures without retrying writes', () => {
@@ -597,9 +597,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260920-1'));
+  assert.ok(html.includes('styles.css?v=20260920-2'));
   assert.ok(html.includes('i18n.js?v=20260920-1'));
-  assert.ok(html.includes('app.js?v=20260920-1'));
+  assert.ok(html.includes('app.js?v=20260920-2'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
@@ -656,12 +656,14 @@ test('total system power separates measured sensors from the estimate', () => {
   assert.ok(i18n.includes("'实测 / 估算': 'Measured / estimated'"));
 });
 
-test('host power shows synchronized 3090, 4090, CPU and other curves below total', () => {
+test('host power shows total, 3090, 4090, CPU and other curves in one chart', () => {
   for (const label of ['3090 功率', '4090 功率', 'CPU 功率', '其他功率']) {
-    assert.ok(js.includes(`title: '${label}'`));
+    assert.ok(js.includes(`label: '${label}'`));
     assert.ok(i18n.includes(`'${label}':`));
   }
-  assert.ok(js.includes("bindCorrelationCursor(charts.slice(0, powerSpecs.length), announcement)"));
+  assert.ok(js.includes('powerTotal: true, powerSeries'));
+  assert.ok(js.includes('bindCorrelationCursor([charts[0]], announcement)'));
+  assert.ok(js.includes('spec.powerSeries?.slice(1).forEach'));
   assert.ok(js.includes('maximum: powerMaximum'));
   assert.ok(js.includes('cpu_power_w: staleSnapshot ? null : host?.power?.cpu_package_w'));
   assert.ok(css.includes('.monitor-host-group .power-chart-total { grid-column: 1 / -1;'));

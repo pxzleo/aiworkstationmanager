@@ -504,9 +504,12 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .host-power-sync { grid-column: 1 / -1; min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 22px 8px 25px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; }
 .host-power-sync .correlation-time-value { font-size: 13px; }
 .monitor-host-group .power-chart-total { grid-column: 1 / -1; border-bottom: 1px solid var(--line); }
-.monitor-host-group .power-chart-detail { border-bottom: 1px solid var(--line); }
-.monitor-host-group .power-chart-detail:nth-of-type(even) { border-left: 0; }
-.monitor-host-group .power-chart-detail .chart-plot, .monitor-host-group .power-chart-total .chart-plot { touch-action: pan-y; user-select: none; }
+.monitor-host-group .power-chart-total + .chart-section { border-left: 0; }
+.monitor-host-group .power-chart-total .chart-plot { touch-action: pan-y; user-select: none; }
+.power-series-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 12px; }
+.power-legend-item { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.power-legend-item i { width: 13px; height: 3px; border-radius: 2px; background: var(--series-color); }
+.power-legend-item b { color: var(--text); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .monitor-gpu-layout { grid-template-columns: 1fr; }
 .gpu-correlation-stack, .gpu-context-column { min-width: 0; }
 .gpu-correlation-stack { background: linear-gradient(90deg, color-mix(in srgb, var(--monitor-color) 4%, transparent), transparent 28%); }
@@ -544,6 +547,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .chart-gradient-end { stop-color: var(--chart-color); stop-opacity: 0; }
 .chart-area { opacity: .8; }
 .chart-line { fill: none; stroke: var(--chart-color); stroke-width: 2.2; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--chart-color) 35%, transparent)); transition: points .3s ease; }
+.power-series-line { stroke-width: 1.8; }
 .chart-isolated-point { fill: var(--chart-color); stroke: var(--surface); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .chart-marker { fill: var(--surface); stroke: var(--chart-color); stroke-width: 3; vector-effect: non-scaling-stroke; }
 .chart-cursor { stroke: rgba(255,255,255,.72); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; pointer-events: none; }
