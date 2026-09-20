@@ -30,7 +30,7 @@ const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
   fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', mediaPath: '',
-  historyWindowMinutes: 15, historyLoading: false, powerModel: null,
+  historyWindowMinutes: 15, historyAnchorMs: null, historyFollowingCurrent: true, historyLoaded: false, historyLoading: false, powerModel: null,
   chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
 
@@ -169,7 +169,7 @@ async function submitAuth(event) {
   catch (error) { text('authError', error.message); }
 }
 async function bootstrap() {
-  buildMonitorCharts(); syncSidebar();
+  updateHistoryPeriodNavigation(); buildMonitorCharts(); syncSidebar();
   try { const status = await api('/auth/status', { authRequest: true }); if (!status.configured) return showAuth('setup'); if (!status.authenticated) return showAuth('login'); const me = await api('/auth/me', { authRequest: true }); state.csrfToken = me.csrf_token; state.username = me.username; enterApplication(); }
   catch (error) { showAuth('login', error.message); }
 }
@@ -220,11 +220,13 @@ async function clearPowerCalibration() {
 }
 async function refreshSnapshot() { if (document.hidden) return; try { state.snapshot = normalizeSnapshot(await api('/snapshot', { resource: 'snapshot' })); renderSnapshot(); if (state.powerModel) renderPowerModel(); } catch (error) { if (!(error instanceof StaleRequestError)) { text('freshnessLabel', '监控离线'); } } }
 async function refreshHistory() {
-  if (document.hidden) return;
+  if (document.hidden || (!state.historyFollowingCurrent && state.historyLoaded)) return;
   setHistoryLoading(true);
   try {
-    const result = await api(`/history?window=${state.historyWindowMinutes}m`, { resource: 'history' });
-    state.history = (result.samples || []).map(normalizeHistorySample); renderCharts();
+    const period = activeHistoryPeriod(); const minutes = Math.round((period.endMs - period.startMs) / 60000);
+    const end = `&end=${encodeURIComponent(new Date(period.endMs).toISOString())}`;
+    const result = await api(`/history?window=${minutes}m${end}`, { resource: 'history', timeout: state.historyWindowMinutes >= 10080 ? 30000 : REQUEST_TIMEOUT_MS });
+    state.history = (result.samples || []).map(normalizeHistorySample); state.historyLoaded = true; updateHistoryPeriodNavigation(); renderCharts();
   } catch (error) {
     showPollingError('历史数据读取失败', error);
   } finally { setHistoryLoading(false); }
@@ -232,9 +234,20 @@ async function refreshHistory() {
 function setHistoryLoading(loading) { state.historyLoading = loading; const select = byId('historyRangeSelect'); if (select) { select.classList.toggle('loading', loading); select.setAttribute('aria-busy', String(loading)); } }
 async function selectHistoryWindow(minutes) {
   if (minutes === state.historyWindowMinutes || state.historyLoading) return;
-  monitorChart.windowMilliseconds(minutes); state.historyWindowMinutes = minutes; state.history = [];
+  monitorChart.windowMilliseconds(minutes); state.historyWindowMinutes = minutes; state.historyAnchorMs = null; state.historyFollowingCurrent = true; state.history = []; state.historyLoaded = false;
   byId('historyRangeSelect').querySelectorAll('[data-history-minutes]').forEach((button) => { const selected = Number(button.dataset.historyMinutes) === minutes; button.classList.toggle('active', selected); button.setAttribute('aria-pressed', String(selected)); });
-  buildMonitorCharts(); await refreshHistory();
+  updateHistoryPeriodNavigation(); buildMonitorCharts(); await refreshHistory();
+}
+async function shiftHistoryPeriod(direction) {
+  if (state.historyLoading) return;
+  const period = activeHistoryPeriod(); if (direction > 0 && state.historyFollowingCurrent) return;
+  const calendar = state.historyWindowMinutes >= 1440;
+  const anchor = direction < 0 ? period.startMs - (calendar ? 1 : 0) : period.endMs + (calendar ? 0 : period.endMs - period.startMs);
+  const next = historyPeriodForRange(state.historyWindowMinutes, anchor);
+  state.historyFollowingCurrent = calendar ? next.startMs <= Date.now() && Date.now() < next.endMs : next.endMs >= Date.now();
+  state.historyAnchorMs = state.historyFollowingCurrent ? null : anchor;
+  state.history = []; state.historyLoaded = false;
+  updateHistoryPeriodNavigation(); buildMonitorCharts(); await refreshHistory();
 }
 async function refreshServicesAndScenes() {
   if (document.hidden) return;
@@ -378,8 +391,33 @@ function normalizeGpu(gpu) { return { ...gpu, load_percent: normalizedPercent(gp
 function normalizeHistorySample(sample) { return { ...sample, total_power_w: finite(sample.total_power_w) ? Number(sample.total_power_w) : null, measured_power_w: finite(sample.measured_power_w) ? Number(sample.measured_power_w) : null, estimated_power_w: finite(sample.estimated_power_w) ? Number(sample.estimated_power_w) : null, cpu_power_w: finite(sample.cpu_power_w) ? Number(sample.cpu_power_w) : null, cpu_load_percent: normalizedPercent(sample.cpu_load_percent), memory_percent: normalizedPercent(sample.memory_percent), gpus: Array.isArray(sample.gpus) ? sample.gpus.map(normalizeGpu) : [], disks: Array.isArray(sample.disks) ? sample.disks : [] }; }
 function normalizeSnapshot(snapshot) { const host = snapshot.host || {}; const staleGpu = snapshot.stale_collectors?.nvidia || snapshot.stale_collectors?.snapshot; return { ...snapshot, host: { ...host, cpu: { ...(host.cpu || {}), load_percent: normalizedPercent(host.cpu?.load_percent) }, memory: { ...(host.memory || {}), percent: normalizedPercent(host.memory?.percent) }, disks: Array.isArray(host.disks) ? host.disks.map((disk) => ({ ...disk, percent: normalizedPercent(disk.percent) })) : [] }, gpus: Array.isArray(snapshot.gpus) ? snapshot.gpus.map((gpu) => normalizeGpu({ ...gpu, _stale: Boolean(staleGpu), _lastSuccessAt: staleGpu?.last_success_at || null })) : [] }; }
 function snapshotAsHistory(snapshot) { const host = snapshot?.host; const memory = host?.memory; const network = host?.primary_network; const wsl = host?.wsl; const staleSnapshot = Boolean(snapshot?.stale_collectors?.snapshot); const staleGpu = staleSnapshot || Boolean(snapshot?.stale_collectors?.nvidia); return snapshot ? { sampled_at: snapshot.sampled_at, total_power_w: staleSnapshot ? null : host?.power?.total_w, measured_power_w: staleSnapshot ? null : host?.power?.measured_w, estimated_power_w: staleSnapshot ? null : host?.power?.estimated_w, cpu_power_w: staleSnapshot ? null : host?.power?.cpu_package_w, cpu_load_percent: staleSnapshot ? null : host?.cpu?.load_percent, cpu_temperature_c: staleSnapshot ? null : host?.cpu?.temperature_c, cpu_frequency_mhz: staleSnapshot ? null : host?.cpu?.frequency_mhz, memory_percent: staleSnapshot ? null : memory?.percent, memory_used_bytes: staleSnapshot ? null : memory?.used_bytes, memory_total_bytes: memory?.total_bytes, memory_available_bytes: staleSnapshot ? null : memory?.available_bytes, commit_used_bytes: staleSnapshot ? null : memory?.commit_used_bytes, commit_limit_bytes: memory?.commit_limit_bytes, swap_used_bytes: staleSnapshot ? null : memory?.swap_used_bytes, swap_total_bytes: memory?.swap_total_bytes, network_received_bytes_per_second: staleSnapshot ? null : network?.received_bytes_per_second, network_sent_bytes_per_second: staleSnapshot ? null : network?.sent_bytes_per_second, wsl_memory_used_bytes: staleSnapshot ? null : wsl?.memory_used_bytes, wsl_swap_used_bytes: staleSnapshot ? null : wsl?.swap_used_bytes, disks: staleSnapshot ? [] : host?.disk_io || [], gpus: staleGpu ? [] : snapshot.gpus || [] } : null; }
-function currentSeries() { const samples = state.history.slice(); const current = snapshotAsHistory(state.snapshot); if (current && !samples.some((sample) => sample.sampled_at === current.sampled_at)) samples.push(current); return samples.sort((a, b) => new Date(a.sampled_at) - new Date(b.sampled_at)); }
-function historyWindowLabel() { return { 15: '15m', 60: '1h', 1440: '24h' }[state.historyWindowMinutes]; }
+function currentSeries() { const samples = state.history.slice(); const current = state.historyFollowingCurrent ? snapshotAsHistory(state.snapshot) : null; if (current && !samples.some((sample) => sample.sampled_at === current.sampled_at)) samples.push(current); return samples.sort((a, b) => new Date(a.sampled_at) - new Date(b.sampled_at)); }
+function historyWindowLabel() { return { 15: '15m', 60: '1h', 1440: '24h', 10080: '1周', 43200: '1月' }[state.historyWindowMinutes]; }
+function historyPeriodForRange(minutes, anchorMs = Date.now()) {
+  if (minutes < 1440) return { startMs: anchorMs - monitorChart.windowMilliseconds(minutes), endMs: anchorMs };
+  const anchor = new Date(anchorMs); const year = anchor.getFullYear(); const month = anchor.getMonth(); const day = anchor.getDate();
+  const start = minutes === 1440 ? new Date(year, month, day) : minutes === 10080 ? new Date(year, month, day - (anchor.getDay() + 6) % 7) : new Date(year, month, 1);
+  const end = minutes === 1440 ? new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1) : minutes === 10080 ? new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7) : new Date(year, month + 1, 1);
+  return { startMs: start.getTime(), endMs: end.getTime() };
+}
+function activeHistoryPeriod() { return historyPeriodForRange(state.historyWindowMinutes, state.historyFollowingCurrent ? Date.now() : state.historyAnchorMs); }
+function historyPeriodLabel(period) {
+  const locale = window.axisI18n.language === 'zh' ? 'zh-CN' : 'en-US'; const start = new Date(period.startMs); const end = new Date(period.endMs - 1);
+  if (state.historyFollowingCurrent && state.historyWindowMinutes < 1440) return ui(state.historyWindowMinutes === 15 ? '最近 15 分钟' : '最近 1 小时');
+  if (state.historyWindowMinutes === 43200) return start.toLocaleDateString(locale, { year: 'numeric', month: 'long' });
+  if (state.historyWindowMinutes === 10080) { const format = new Intl.DateTimeFormat(locale, { month: '2-digit', day: '2-digit' }); return `${start.getFullYear()} ${format.format(start)}–${format.format(end)}`; }
+  if (state.historyWindowMinutes === 1440) return start.toLocaleDateString(locale);
+  const format = new Intl.DateTimeFormat(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${format.format(start)}–${format.format(new Date(period.endMs))}`;
+}
+function updateHistoryPeriodNavigation() { const period = activeHistoryPeriod(); text('historyPeriodLabel', historyPeriodLabel(period)); byId('historyNextButton').disabled = state.historyFollowingCurrent; }
+function historyAxisLabels() {
+  const period = activeHistoryPeriod(); const minutes = state.historyWindowMinutes;
+  if (minutes < 1440 && state.historyFollowingCurrent) return monitorChart.axisLabels(minutes);
+  const locale = window.axisI18n.language === 'zh' ? 'zh-CN' : 'en-US';
+  const format = new Intl.DateTimeFormat(locale, minutes < 1440 ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false } : minutes === 1440 ? { hour: '2-digit', minute: '2-digit', hour12: false } : { month: '2-digit', day: '2-digit' });
+  return [0, 1 / 3, 2 / 3, 1].map((ratio) => format.format(new Date(period.startMs + (period.endMs - period.startMs) * ratio)));
+}
 
 function renderSnapshot() {
   const snapshot = state.snapshot; if (!snapshot) return; const host = snapshot.host || {}; const cpu = host.cpu || {}; const memory = host.memory || {};
@@ -432,7 +470,7 @@ function createMonitorChart(spec, chartIndex) {
   const plot = element('div', 'chart-plot'); const svg = svgElement('svg', { class: 'line-chart', viewBox: '0 0 900 200', preserveAspectRatio: 'none', role: 'img', 'aria-label': `${ui(spec.title)} · ${historyWindowLabel()}` });
   const gradientId = `monitorGradient${chartIndex}`; const defs = svgElement('defs'); const gradient = svgElement('linearGradient', { id: gradientId, x1: '0', y1: '0', x2: '0', y2: '1' }); gradient.append(svgElement('stop', { class: 'chart-gradient-start', offset: '0%' }), svgElement('stop', { class: 'chart-gradient-end', offset: '100%' })); defs.append(gradient);
   const grid = svgElement('path', { class: 'chart-grid-lines', d: 'M0 1H900M0 50H900M0 100H900M0 150H900M0 199H900M1 0V200M300 0V200M600 0V200M899 0V200' }); const areaLayer = svgElement('g', { class: 'chart-areas' }); const lineLayer = svgElement('g', { class: 'chart-lines' }); const isolatedLayer = svgElement('g', { class: 'chart-isolated-points' }); const cursor = svgElement('line', { class: 'chart-cursor', x1: '0', x2: '0', y1: '0', y2: '200', hidden: '' }); const marker = svgElement('circle', { class: 'chart-marker', cx: '0', cy: '0', r: '4', hidden: '' }); svg.append(defs, grid, areaLayer, lineLayer, isolatedLayer, cursor, marker);
-  const noData = element('span', 'chart-no-data', '暂无采样数据'); plot.append(svg, noData); const xAxis = element('div', 'chart-x-axis'); monitorChart.axisLabels(state.historyWindowMinutes).forEach((label) => xAxis.append(element('span', '', label))); xAxis.hidden = spec.showXAxis === false; frame.append(yAxis, plot, xAxis);
+  const noData = element('span', 'chart-no-data', '暂无采样数据'); plot.append(svg, noData); const xAxis = element('div', 'chart-x-axis'); historyAxisLabels().forEach((label) => xAxis.append(element('span', '', label))); xAxis.hidden = spec.showXAxis === false; frame.append(yAxis, plot, xAxis);
   const powerLegend = spec.powerSeries?.map((series) => { const item = element('span', 'power-legend-item'); item.style.setProperty('--series-color', series.color); const value = element('b', '', '--'); if (!series.valueOnly) item.append(element('i')); item.append(element('span', '', series.label), value); return { series, item, value }; });
   section.append(heading, statistics); if (powerLegend) section.append(element('div', 'power-series-legend')); if (powerLegend) section.querySelector('.power-series-legend').append(...powerLegend.map(({ item }) => item)); section.append(frame); return { ...spec, section, current, currentLabel, statisticRefs, powerLegend, yAxis, svg, gradientId, areaLayer, lineLayer, isolatedLayer, cursor, marker, noData, lastModel: null };
 }
@@ -564,11 +602,11 @@ function renderMonitorDetails(samples) {
   const wsl = host.wsl || {}; if (details.wslMemory) details.wslMemory.textContent = finite(wsl.memory_used_bytes) ? `${gib(wsl.memory_used_bytes).toFixed(1)} GB` : ui('未运行'); if (details.wslSwap) details.wslSwap.textContent = finite(wsl.swap_used_bytes) ? `${gib(wsl.swap_used_bytes).toFixed(1)} GB` : ui('不支持'); if (details.dockerContainers) { details.dockerContainers.replaceChildren(); const containers = (snapshot.docker?.containers || []).filter((container) => String(container.state).toLowerCase() === 'running'); if (!containers.length) details.dockerContainers.append(element('p', 'empty-state', '没有运行中的 Docker 容器。')); else containers.forEach((container) => { const row = element('div', 'runtime-row'); const resources = container.resources || {}; row.append(userElement('strong', '', container.name || container.id), element('span', 'status-label ready', ui('运行中')), element('span', 'mono', resources.cpu_percent || '--'), element('span', 'mono', resources.memory_usage || '--'), element('span', 'mono', resources.network_io || '--')); details.dockerContainers.append(row); }); }
 }
 function renderCharts() {
-  const samples = currentSeries(); const endTimeMs = Date.now(); renderMonitorDetails(samples); state.chartSpecs.forEach((spec) => {
-    const scale = chartScale(spec, samples); const model = monitorChart.buildChartModel(samples, spec.getter, endTimeMs, monitorChart.windowMilliseconds(state.historyWindowMinutes), { ...scale, precision: spec.decimals ?? 0 }); const geometry = monitorChart.buildChartGeometry(model); spec.lastModel = model; updateChartCurrent(spec, model.current); Object.entries(spec.statisticRefs).forEach(([key, node]) => { node.textContent = chartValue(model[key], spec, spec.statisticsIncludeUnit === true); }); const axisValues = chartAxisValues(scale, spec); [...spec.yAxis.children].forEach((node, index) => { node.textContent = axisValues[index]; }); spec.svg.setAttribute('aria-label', model.pointCount ? `${ui(spec.title)}: ${ui('当前')} ${chartCurrentValue(model.current, spec, true)}, ${ui('峰值')} ${chartValue(model.peak, spec)}, ${ui('平均')} ${chartValue(model.average, spec)}` : `${ui(spec.title)}: ${ui('暂无采样数据')}`);
+  const samples = currentSeries(); const period = activeHistoryPeriod(); const endTimeMs = period.endMs; const windowMs = period.endMs - period.startMs; renderMonitorDetails(samples); state.chartSpecs.forEach((spec) => {
+    const scale = chartScale(spec, samples); const model = monitorChart.buildChartModel(samples, spec.getter, endTimeMs, windowMs, { ...scale, precision: spec.decimals ?? 0 }); const geometry = monitorChart.buildChartGeometry(model); spec.lastModel = model; updateChartCurrent(spec, model.current); Object.entries(spec.statisticRefs).forEach(([key, node]) => { node.textContent = chartValue(model[key], spec, spec.statisticsIncludeUnit === true); }); const axisValues = chartAxisValues(scale, spec); [...spec.yAxis.children].forEach((node, index) => { node.textContent = axisValues[index]; }); spec.svg.setAttribute('aria-label', model.pointCount ? `${ui(spec.title)}: ${ui('当前')} ${chartCurrentValue(model.current, spec, true)}, ${ui('峰值')} ${chartValue(model.peak, spec)}, ${ui('平均')} ${chartValue(model.average, spec)}` : `${ui(spec.title)}: ${ui('暂无采样数据')}`);
     const lines = []; const isolatedPoints = [];
     spec.powerSeries?.filter((series) => series.plotGetter).forEach((series) => {
-      const seriesModel = monitorChart.buildChartModel(samples, series.plotGetter, endTimeMs, monitorChart.windowMilliseconds(state.historyWindowMinutes), { ...scale, precision: spec.decimals ?? 0 }); const seriesGeometry = monitorChart.buildChartGeometry(seriesModel);
+      const seriesModel = monitorChart.buildChartModel(samples, series.plotGetter, endTimeMs, windowMs, { ...scale, precision: spec.decimals ?? 0 }); const seriesGeometry = monitorChart.buildChartGeometry(seriesModel);
       seriesGeometry.lines.forEach((segment) => { const line = svgElement('polyline', { class: 'chart-line power-series-line', points: segment.map(({ x, y }) => `${x},${y}`).join(' ') }); line.style.setProperty('--chart-color', series.color); lines.push(line); });
       seriesGeometry.isolatedPoints.forEach((point) => { const circle = svgElement('circle', { class: 'chart-isolated-point', cx: String(point.x), cy: String(point.y), r: '3' }); circle.style.setProperty('--chart-color', series.color); isolatedPoints.push(circle); });
     });
@@ -834,8 +872,10 @@ async function resetAutomaticTask(task) { const running = task.status === 'runni
 
 byId('authForm').addEventListener('submit', submitAuth); byId('logoutButton').addEventListener('click', logout); byId('refreshButton').addEventListener('click', refreshAll); byId('refreshLogsButton').addEventListener('click', refreshLogs); byId('overviewSceneSelect').addEventListener('change', handleOverviewSceneChange); byId('stopAllServicesButton').addEventListener('click', stopAllServices); byId('addServiceButton').addEventListener('click', () => openServiceDialog()); byId('addSceneButton').addEventListener('click', () => openSceneDialog()); byId('addAutomaticTaskButton').addEventListener('click', () => openAutomaticTaskDialog()); byId('addUserButton').addEventListener('click', openUserDialog); byId('cancelSceneSwitchButton').addEventListener('click', cancelSceneSwitch); byId('closeSceneProgressButton').addEventListener('click', () => byId('sceneProgressDialog').close()); byId('sceneProgressDialog').addEventListener('cancel', (event) => { if (sceneProgressOperationId) event.preventDefault(); }); byId('serviceForm').addEventListener('submit', saveService); byId('serviceWslPortproxyEnabled').addEventListener('change', updateServicePortproxyFields); byId('sceneForm').addEventListener('submit', saveScene); byId('automaticTaskForm').addEventListener('submit', saveAutomaticTask); byId('userForm').addEventListener('submit', saveUser); byId('passwordForm').addEventListener('submit', saveUserPassword); byId('serviceSearch').addEventListener('input', renderRegisteredServiceTable); byId('serviceFilters').addEventListener('click', (event) => { const button = event.target.closest('[data-filter]'); if (!button) return; state.serviceFilter = button.dataset.filter; byId('serviceFilters').querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item === button)); renderRegisteredServiceTable(); }); document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => byId(button.dataset.close).close())); document.addEventListener('visibilitychange', () => { if (!document.hidden && !document.body.classList.contains('auth-pending')) refreshAll(); });
 byId('historyRangeSelect').addEventListener('click', (event) => { const button = event.target.closest('[data-history-minutes]'); if (button) selectHistoryWindow(Number(button.dataset.historyMinutes)); });
+byId('historyPrevButton').addEventListener('click', () => shiftHistoryPeriod(-1));
+byId('historyNextButton').addEventListener('click', () => shiftHistoryPeriod(1));
 byId('monitorTabbar').addEventListener('click', (event) => { const button = event.target.closest('[data-monitor-view]'); if (button) selectMonitorView(button.dataset.monitorView); });
-document.addEventListener('languagechange', () => { buildMonitorCharts(); if (state.snapshot) renderSnapshot(); renderServices(); renderScenes(); renderUsers(); renderOperations(); renderOperationTimeline(); renderVideoJobs(); renderAutomaticTasks(); renderPowerModel(); renderFiles(); text('pageTitle', byId(`page-${state.activePage}`)?.dataset.title || ''); });
+document.addEventListener('languagechange', () => { updateHistoryPeriodNavigation(); buildMonitorCharts(); if (state.snapshot) renderSnapshot(); renderServices(); renderScenes(); renderUsers(); renderOperations(); renderOperationTimeline(); renderVideoJobs(); renderAutomaticTasks(); renderPowerModel(); renderFiles(); text('pageTitle', byId(`page-${state.activePage}`)?.dataset.title || ''); });
 byId('powerCalibrationForm').addEventListener('submit', submitPowerCalibration);
 byId('clearPowerCalibrationButton').addEventListener('click', clearPowerCalibration);
 byId('refreshVideoJobsButton').addEventListener('click', refreshVideoJobs);

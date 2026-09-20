@@ -4,6 +4,7 @@
   "file_service_port": 18765,
   "file_service_root": "D:/共享/",
   "database_path": "data/workstation-manager.db",
+  "history_minutes": 129600,
   "script_status_timeout_seconds": 3,
   "script_action_timeout_seconds": 600,
   "manager_log_path": "logs/manager.log",

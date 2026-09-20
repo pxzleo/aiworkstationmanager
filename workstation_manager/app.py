@@ -27,7 +27,7 @@ from .auth import (
 from .config import ConfigError, Settings, load_settings
 from .database import SCHEMA_VERSION as DATABASE_SCHEMA_VERSION, Database, DatabaseError
 from .file_service import FileCatalog, FileServiceError
-from .history import Sampler, parse_window
+from .history import Sampler, parse_history_end, parse_window
 from .power_model import (
     MAX_PLAUSIBLE_WALL_W,
     PowerModel,
@@ -660,15 +660,17 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             else await resolved_sampler.sample_once()
 
     @app.get("/api/v1/history", dependencies=[Depends(protected_access)])
-    async def history(window: str = Query(default="15m")) -> dict[str, Any]:
+    async def history(window: str = Query(default="15m"),
+                      end: str | None = Query(default=None)) -> dict[str, Any]:
         try:
             minutes = parse_window(window)
+            end_time = parse_history_end(end) if end is not None else None
         except ValueError as exc:
             raise HTTPException(422, {"error_type": type(exc).__name__,
-                                      "message": "无效的历史窗口", "cause": str(exc)}) from exc
-        bucket_seconds = 0 if minutes <= 15 else 15 if minutes <= 60 else 60
+                                      "message": "无效的历史查询参数", "cause": str(exc)}) from exc
+        bucket_seconds = 0 if minutes <= 15 else 15 if minutes <= 60 else 60 if minutes <= 26 * 60 else 900 if minutes <= 8 * 24 * 60 else 3600
         result = await asyncio.to_thread(
-            resolved_database.query_resource_history, minutes, bucket_seconds
+            resolved_database.query_resource_history, minutes, bucket_seconds, end_time
         )
         return {"window": f"{minutes}m", **result}
 

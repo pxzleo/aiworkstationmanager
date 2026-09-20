@@ -72,6 +72,8 @@ test('time ranges expose matching axis labels and durations', () => {
   assert.deepEqual(monitorChart.axisLabels(15), ['-15m', '-10m', '-5m', '现在']);
   assert.deepEqual(monitorChart.axisLabels(60), ['-1h', '-40m', '-20m', '现在']);
   assert.deepEqual(monitorChart.axisLabels(1440), ['-24h', '-16h', '-8h', '现在']);
+  assert.deepEqual(monitorChart.axisLabels(10080), ['-7d', '-4d16h', '-2d8h', '现在']);
+  assert.deepEqual(monitorChart.axisLabels(43200), ['-30d', '-20d', '-10d', '现在']);
   assert.equal(monitorChart.windowMilliseconds(60), 60 * 60 * 1000);
   assert.throws(() => monitorChart.axisLabels(30), /unsupported/i);
 });

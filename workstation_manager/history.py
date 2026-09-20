@@ -16,7 +16,7 @@ from .collectors import collect_snapshot, summarize_power
 from .power_model import PowerModel
 
 
-MAX_HISTORY_WINDOW_MINUTES = 24 * 60
+MAX_HISTORY_WINDOW_MINUTES = 31 * 24 * 60 + 60
 
 
 class SamplerStopError(RuntimeError):
@@ -547,3 +547,13 @@ def parse_window(window: str) -> int:
     if minutes > MAX_HISTORY_WINDOW_MINUTES:
         raise ValueError(f"window 不能超过 {MAX_HISTORY_WINDOW_MINUTES} 分钟")
     return minutes
+
+
+def parse_history_end(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("end 必须是带时区的 ISO 8601 时间") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("end 必须是带时区的 ISO 8601 时间")
+    return parsed.astimezone(timezone.utc)

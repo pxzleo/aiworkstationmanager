@@ -120,14 +120,14 @@ Most installations need only these fields:
 | `file_service_root` | `D:/共享/` | Root folder available for browsing, download, and playback |
 | `database_path` | `data/workstation-manager.db` | Users, services, scenes, and operation records |
 | `sample_interval_seconds` | `5` | Resource sampling interval; it never calls service scripts |
-| `history_minutes` | `1440` | SQLite resource-history retention in minutes |
+| `history_minutes` | `129600` | SQLite resource-history retention in minutes (90 days) |
 | `script_status_timeout_seconds` | `3` | Per-`status` timeout for Deep Check, startup reconciliation, and failed-action reconciliation |
 | `script_action_timeout_seconds` | `600` | Service-action timeout |
 | `comfyui_base_url` | `http://127.0.0.1:8189` | Local ComfyUI API used for video jobs |
 | `ninfer_base_url` | `http://127.0.0.1:8080` | Local NInfer API used for idle checks and recovery verification |
 | `video_output_directory` | `outputs/video-jobs` | Default directory when a video job omits an output path |
 
-Resource monitoring writes one SQLite sample every 5 seconds by default and retains the latest 24 hours. The UI supports `15m`, `1h`, and `24h`; longer windows are aggregated by the server before they are returned. For each GPU, aligned charts and a linked pointer compare core load, clock, power, and temperature, while VRAM capacity remains separate. Only the latest 15 minutes remain in memory, so 24-hour history does not create a large in-memory buffer.
+Resource monitoring writes one SQLite sample every 5 seconds by default and retains the latest 90 days. The UI supports `15m`, `1h`, `24h`, one week, and one month, with period navigation for earlier intervals and calendar days, weeks, and months. Longer windows are aggregated by the server before they are returned. For each GPU, aligned charts and a linked pointer compare core load, clock, power, and temperature, while VRAM capacity remains separate. Only the latest 15 minutes remain in memory, so long-term history does not create a large in-memory buffer.
 
 LAN mode does not provide HTTPS. Credentials travel over unencrypted HTTP, so use it only on a trusted LAN and never expose it directly to the internet.
 

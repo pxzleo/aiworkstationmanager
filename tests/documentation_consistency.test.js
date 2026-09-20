@@ -39,7 +39,7 @@ test('development guides cover API request fields and query bounds', () => {
   for (const relative of ['DEVELOPMENT.md', 'DEVELOPMENT.en.md']) {
     const source = read(relative);
     for (const field of new Set(fields)) assert.ok(source.includes(`\`${field}\``), `${relative} is missing payload field ${field}`);
-    assert.ok(source.includes('1m..1440m'), `${relative} is missing the history window range`);
+    assert.ok(source.includes('1m..44700m'), `${relative} is missing the history window range`);
     assert.ok(source.includes('1..500'), `${relative} is missing the list limit range`);
   }
 });

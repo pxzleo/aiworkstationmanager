@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from .config import MAX_HISTORY_MINUTES
 from .redaction import redact_value
 
 
@@ -47,7 +48,7 @@ class Database:
         audit_retention_days: int = 90,
         login_failure_max_rows: int = 10_000,
         operation_retention_max: int = 1000,
-        resource_history_retention_minutes: int = 1440,
+        resource_history_retention_minutes: int = MAX_HISTORY_MINUTES,
     ) -> None:
         self.path = Path(path)
         self.audit_retention_max_events = audit_retention_max_events
@@ -1041,9 +1042,8 @@ class Database:
         current_time = now or datetime.now(timezone.utc)
         if current_time.tzinfo is None:
             raise DatabaseError("资源历史查询时间必须包含时区")
-        cutoff = (
-            current_time.astimezone(timezone.utc) - timedelta(minutes=window_minutes)
-        ).isoformat()
+        end_at = current_time.astimezone(timezone.utc).isoformat()
+        cutoff = (current_time.astimezone(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
         try:
             with self.connect() as connection:
                 summary = connection.execute(
@@ -1076,9 +1076,9 @@ class Database:
                                   AVG(network_sent_bytes_per_second) AS network_sent_bytes_per_second,
                                   AVG(wsl_memory_used_bytes) AS wsl_memory_used_bytes,
                                   AVG(wsl_swap_used_bytes) AS wsl_swap_used_bytes
-                           FROM resource_samples WHERE sampled_at>=?
+                           FROM resource_samples WHERE sampled_at>=? AND sampled_at<?
                            GROUP BY bucket ORDER BY bucket""",
-                        (bucket_seconds, cutoff),
+                        (bucket_seconds, cutoff, end_at),
                     ).fetchall()
                     gpu_rows = connection.execute(
                         """SELECT CAST(strftime('%s',s.sampled_at) AS INTEGER)/? AS bucket,
@@ -1096,9 +1096,9 @@ class Database:
                                   AVG(g.decoder_percent) AS decoder_percent
                            FROM resource_gpu_samples g
                            JOIN resource_samples s ON s.id=g.sample_id
-                           WHERE s.sampled_at>=? GROUP BY bucket,g.gpu_key
+                           WHERE s.sampled_at>=? AND s.sampled_at<? GROUP BY bucket,g.gpu_key
                            ORDER BY bucket,g.gpu_index,g.gpu_key""",
-                        (bucket_seconds, cutoff),
+                        (bucket_seconds, cutoff, end_at),
                     ).fetchall()
                     disk_rows = connection.execute(
                         """SELECT CAST(strftime('%s',s.sampled_at) AS INTEGER)/? AS bucket,
@@ -1108,9 +1108,9 @@ class Database:
                                   AVG(d.latency_ms) AS latency_ms
                            FROM resource_disk_samples d
                            JOIN resource_samples s ON s.id=d.sample_id
-                           WHERE s.sampled_at>=? GROUP BY bucket,d.disk_key
+                           WHERE s.sampled_at>=? AND s.sampled_at<? GROUP BY bucket,d.disk_key
                            ORDER BY bucket,d.disk_key""",
-                        (bucket_seconds, cutoff),
+                        (bucket_seconds, cutoff, end_at),
                     ).fetchall()
                     samples = self._assemble_resource_history(
                         host_rows, gpu_rows, disk_rows, "bucket"
@@ -1125,20 +1125,20 @@ class Database:
                                   swap_total_bytes,network_received_bytes_per_second,
                                   network_sent_bytes_per_second,wsl_memory_used_bytes,
                                   wsl_swap_used_bytes
-                           FROM resource_samples WHERE sampled_at>=? ORDER BY sampled_at""",
-                        (cutoff,),
+                           FROM resource_samples WHERE sampled_at>=? AND sampled_at<? ORDER BY sampled_at""",
+                        (cutoff, end_at),
                     ).fetchall()
                     gpu_rows = connection.execute(
                         """SELECT g.*,s.sampled_at FROM resource_gpu_samples g
                            JOIN resource_samples s ON s.id=g.sample_id
-                           WHERE s.sampled_at>=? ORDER BY s.sampled_at,g.gpu_index,g.gpu_key""",
-                        (cutoff,),
+                           WHERE s.sampled_at>=? AND s.sampled_at<? ORDER BY s.sampled_at,g.gpu_index,g.gpu_key""",
+                        (cutoff, end_at),
                     ).fetchall()
                     disk_rows = connection.execute(
                         """SELECT d.*,s.sampled_at FROM resource_disk_samples d
                            JOIN resource_samples s ON s.id=d.sample_id
-                           WHERE s.sampled_at>=? ORDER BY s.sampled_at,d.disk_key""",
-                        (cutoff,),
+                           WHERE s.sampled_at>=? AND s.sampled_at<? ORDER BY s.sampled_at,d.disk_key""",
+                        (cutoff, end_at),
                     ).fetchall()
                     samples = self._assemble_resource_history(
                         host_rows, gpu_rows, disk_rows, "sample_id"

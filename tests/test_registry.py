@@ -633,6 +633,17 @@ class DatabaseRegistryTests(unittest.TestCase):
                 result["samples"][0]["gpus"][0]["memory_utilization_percent"], 12.5
             )
             self.assertEqual(result["samples"][1]["cpu_load_percent"], 30)
+            anchored = reopened.query_resource_history(
+                60, bucket_seconds=15, now=bucket_start + timedelta(seconds=10)
+            )
+            self.assertEqual(len(anchored["samples"]), 1)
+            self.assertEqual(anchored["samples"][0]["power_sample_count"], 2)
+            boundary = bucket_start + timedelta(seconds=16)
+            before = reopened.query_resource_history(60, now=boundary)
+            after = reopened.query_resource_history(60, now=boundary + timedelta(seconds=1))
+            self.assertEqual(len(before["samples"]), 2)
+            self.assertEqual(len(after["samples"]), 3)
+            self.assertEqual(after["samples"][-1]["sampled_at"], boundary.isoformat())
             with reopened.connect() as connection:
                 self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
 

@@ -31,11 +31,11 @@ DEFAULT_PORTS = (1234, 3000, 8000, 8001, 8080, 8081, 8765, 18020, 18030, 18031, 
 MIN_SAMPLE_INTERVAL_SECONDS = 0.5
 MAX_SAMPLE_INTERVAL_SECONDS = 3600.0
 MIN_HISTORY_MINUTES = 1
-MAX_HISTORY_MINUTES = 1440
+MAX_HISTORY_MINUTES = 90 * 24 * 60
 REALTIME_HISTORY_MINUTES = 15
 MIN_COMMAND_TIMEOUT_SECONDS = 0.1
 MAX_COMMAND_TIMEOUT_SECONDS = 120.0
-MAX_HISTORY_CAPACITY = 172801
+MAX_HISTORY_CAPACITY = 15552001
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ class Settings:
     file_service_port: int = 18765
     file_service_root: Path = Path("D:/共享/")
     sample_interval_seconds: float = 5.0
-    history_minutes: int = 1440
+    history_minutes: int = MAX_HISTORY_MINUTES
     command_timeout_seconds: float = 4.0
     critical_ports: tuple[int, ...] = DEFAULT_PORTS
     database_path: Path = PROJECT_ROOT / "data" / "workstation-manager.db"
@@ -381,7 +381,7 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
     if manager_port == file_service_port:
         raise ConfigError("file_service_port 不能与管理器 port 相同")
     history_minutes = _bounded_integer(
-        data.get("history_minutes", 1440),
+        data.get("history_minutes", MAX_HISTORY_MINUTES),
         "history_minutes",
         MIN_HISTORY_MINUTES,
         MAX_HISTORY_MINUTES,

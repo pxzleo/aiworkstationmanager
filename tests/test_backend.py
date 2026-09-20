@@ -86,7 +86,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_default_history_uses_disk_retention_and_bounded_realtime_memory(self) -> None:
         settings = Settings()
-        self.assertEqual(settings.history_minutes, 1440)
+        self.assertEqual(settings.history_minutes, 129600)
         self.assertEqual(settings.realtime_history_capacity, 181)
 
     def test_security_and_storage_configuration(self) -> None:
@@ -145,8 +145,8 @@ class ConfigTests(unittest.TestCase):
         invalid_cases = (
             ({"WM_SAMPLE_INTERVAL_SECONDS": "0.49"}, "0.5..3600"),
             ({"WM_SAMPLE_INTERVAL_SECONDS": "3600.1"}, "0.5..3600"),
-            ({"WM_HISTORY_MINUTES": "0"}, "1..1440"),
-            ({"WM_HISTORY_MINUTES": "1441"}, "1..1440"),
+            ({"WM_HISTORY_MINUTES": "0"}, "1..129600"),
+            ({"WM_HISTORY_MINUTES": "129601"}, "1..129600"),
             ({"WM_COMMAND_TIMEOUT_SECONDS": "0.09"}, "0.1..120"),
             ({"WM_COMMAND_TIMEOUT_SECONDS": "120.1"}, "0.1..120"),
         )
@@ -569,11 +569,11 @@ class HistoryTests(unittest.TestCase):
 
     def test_window_validation(self) -> None:
         self.assertEqual(parse_window("15m"), 15)
-        self.assertEqual(parse_window("1440m"), 1440)
+        self.assertEqual(parse_window("43200m"), 43200)
         with self.assertRaisesRegex(ValueError, "分钟格式"):
             parse_window("1h")
         with self.assertRaisesRegex(ValueError, "不能超过"):
-            parse_window("1441m")
+            parse_window("44701m")
         with self.assertRaisesRegex(ValueError, "不能超过"):
             parse_window("9" * 10000 + "m")
 
@@ -1002,7 +1002,7 @@ class PowerModelApiTests(unittest.TestCase):
             }]
             gpus = [{"uuid": "GPU-a", "index": 0, "name": "RTX", "power_w": self.gpu_power}]
             return {
-                "sampled_at": "2099-01-01T00:00:00+00:00",
+                "sampled_at": datetime.now(timezone.utc).isoformat(),
                 "host": {
                     "cpu": {"load_percent": 12.5},
                     "memory": {"percent": 50.0},
@@ -1115,7 +1115,7 @@ class ApiTests(unittest.TestCase):
 
         def fake_collector(_: Settings) -> dict:
             return {
-                "sampled_at": "2099-01-01T00:00:00+00:00",
+                "sampled_at": datetime.now(timezone.utc).isoformat(),
                 "host": {
                     "cpu": {"load_percent": 12.5, "temperature_c": None},
                     "memory": {"percent": 50.0},
@@ -1155,11 +1155,21 @@ class ApiTests(unittest.TestCase):
         history = self.client.get("/api/v1/history?window=15m").json()
         self.assertEqual(len(history["samples"]), 1)
         self.assertEqual(history["bucket_seconds"], 0)
-        self.assertEqual(history["retention_minutes"], 1440)
+        self.assertEqual(history["retention_minutes"], 129600)
         self.assertEqual(history["stored_sample_count"], 1)
         services = self.client.get("/api/v1/host-services").json()
         self.assertEqual(services["containers"][0]["name"], "example")
         self.assertEqual(services["listening_ports"][0]["port"], 8080)
+
+    def test_history_supports_long_windows_and_selected_end_time(self) -> None:
+        end = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        for window, bucket in (("10080m", 900), ("44640m", 3600)):
+            response = self.client.get("/api/v1/history", params={"window": window, "end": end})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["bucket_seconds"], bucket)
+            self.assertEqual(response.json()["samples"], [])
+        invalid = self.client.get("/api/v1/history?window=15m&end=2026-09-20T12:00:00")
+        self.assertEqual(invalid.status_code, 422)
 
     def test_setup_accepts_four_character_password(self) -> None:
         response = self.client.post(

@@ -120,14 +120,14 @@ Copy-Item .\config\settings.example.json .\config\settings.json
 | `file_service_root` | `D:/共享/` | 文件服务允许浏览、下载和播放的根目录 |
 | `database_path` | `data/workstation-manager.db` | 用户、服务、场景和操作记录数据库 |
 | `sample_interval_seconds` | `5` | 资源监控采样间隔，不会调用服务脚本 |
-| `history_minutes` | `1440` | 资源历史的 SQLite 保留时长（分钟） |
+| `history_minutes` | `129600` | 资源历史的 SQLite 保留时长（分钟，即 90 天） |
 | `script_status_timeout_seconds` | `3` | 深度检查、启动校准及失败动作校准中单个 `status` 的超时 |
 | `script_action_timeout_seconds` | `600` | 启停服务的超时 |
 | `comfyui_base_url` | `http://127.0.0.1:8189` | 视频任务使用的本机 ComfyUI API |
 | `ninfer_base_url` | `http://127.0.0.1:8080` | 空闲检查及恢复验证使用的本机 NInfer API |
 | `video_output_directory` | `outputs/video-jobs` | 视频任务未指定输出路径时的默认目录 |
 
-资源监控默认每 5 秒写入一次 SQLite，保留最近 24 小时；页面可切换 `15m`/`1h`/`24h`，其中长时间范围由服务端聚合后返回。每张 GPU 的核心负载、频率、功率和温度使用对齐曲线与联动指针显示，显存容量单独展示。内存中只保留最近 15 分钟，不会因 24 小时历史持续占用大量内存。
+资源监控默认每 5 秒写入一次 SQLite，保留最近 90 天；页面可切换 `15m`/`1h`/`24h`/`1周`/`1月`，通过前方的周期导航查看更早的连续时段或自然日、周、月，长时间范围由服务端聚合后返回。每张 GPU 的核心负载、频率、功率和温度使用对齐曲线与联动指针显示，显存容量单独展示。内存中只保留最近 15 分钟，不会因长期历史持续占用大量内存。
 
 局域网模式没有 HTTPS，账号密码会以未加密 HTTP 传输，只适合可信局域网，不要直接暴露到公网。
 

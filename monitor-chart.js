@@ -10,6 +10,8 @@
     15: Object.freeze(['-15m', '-10m', '-5m', '现在']),
     60: Object.freeze(['-1h', '-40m', '-20m', '现在']),
     1440: Object.freeze(['-24h', '-16h', '-8h', '现在']),
+    10080: Object.freeze(['-7d', '-4d16h', '-2d8h', '现在']),
+    43200: Object.freeze(['-30d', '-20d', '-10d', '现在']),
   });
   const WIDTH = 900;
   const HEIGHT = 200;

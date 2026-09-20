@@ -96,10 +96,12 @@ test('overview cards and monitor charts follow the detected GPU count', () => {
   assert.ok(html.includes('id="historyRangeSelect"'));
   assert.ok(html.includes('id="monitorTabbar"'));
   for (const view of ['summary', 'gpu', 'host', 'system']) assert.ok(html.includes(`data-monitor-view="${view}"`));
-  for (const minutes of ['15', '60', '1440']) assert.ok(html.includes(`data-history-minutes="${minutes}"`));
-  assert.ok(js.includes('monitorChart.axisLabels(state.historyWindowMinutes)'));
-  assert.ok(js.includes('monitorChart.windowMilliseconds(state.historyWindowMinutes)'));
-  assert.ok(js.includes("`/history?window=${state.historyWindowMinutes}m`"));
+  for (const minutes of ['15', '60', '1440', '10080', '43200']) assert.ok(html.includes(`data-history-minutes="${minutes}"`));
+  for (const id of ['historyPrevButton', 'historyPeriodLabel', 'historyNextButton']) assert.ok(html.includes(`id="${id}"`));
+  assert.ok(js.includes('monitorChart.axisLabels(minutes)'));
+  assert.ok(js.includes('historyPeriodForRange(state.historyWindowMinutes'));
+  assert.ok(js.includes('const windowMs = period.endMs - period.startMs'));
+  assert.ok(js.includes('`/history?window=${minutes}m${end}`'));
   assert.ok(js.indexOf("title: '整机功耗'") < js.indexOf("title: '处理器负载'"));
   assert.ok(js.includes("geometry.isolatedPoints.map((point) => svgElement('circle'"));
   assert.ok(css.includes('.chart-isolated-point'));
@@ -317,9 +319,9 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260920-2'));
-  assert.ok(html.includes('i18n.js?v=20260920-1'));
-  assert.ok(html.includes('app.js?v=20260920-3'));
+  assert.ok(html.includes('styles.css?v=20260920-4'));
+  assert.ok(html.includes('i18n.js?v=20260920-2'));
+  assert.ok(html.includes('app.js?v=20260920-4'));
 });
 
 test('read polling tolerates transient network failures without retrying writes', () => {
@@ -597,9 +599,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260920-2'));
-  assert.ok(html.includes('i18n.js?v=20260920-1'));
-  assert.ok(html.includes('app.js?v=20260920-3'));
+  assert.ok(html.includes('styles.css?v=20260920-4'));
+  assert.ok(html.includes('i18n.js?v=20260920-2'));
+  assert.ok(html.includes('app.js?v=20260920-4'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
