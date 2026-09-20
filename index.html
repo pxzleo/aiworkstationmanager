@@ -8,7 +8,7 @@
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
   <script src="theme.js?v=20260828-1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260920-7">
+  <link rel="stylesheet" href="styles.css?v=20260920-8">
 </head>
 <body class="auth-pending app-initializing">
   <svg class="svg-sprite" aria-hidden="true">
@@ -110,9 +110,9 @@
 
           <div class="status-banner" id="collectorStatus" hidden aria-live="polite"></div>
           <div class="system-line" aria-label="主机状态">
-            <div><span>CPU</span><strong id="cpuMetric">--</strong><small id="cpuDetail">等待数据</small></div>
-            <div><span>内存</span><strong id="memoryMetric">--</strong><small id="memoryDetail">等待数据</small></div>
-            <div id="diskMetricBox"><span id="diskLabel">磁盘可用</span><strong id="diskMetric">--</strong><small id="diskDetail">等待数据</small></div>
+            <div><span>CPU</span><strong id="cpuMetric">--</strong><small id="cpuDetail">等待数据</small><div class="usage-track unavailable" id="cpuUsage" role="progressbar" aria-label="CPU 负载" aria-valuemin="0" aria-valuemax="100"><i></i></div></div>
+            <div><span>内存</span><strong id="memoryMetric">--</strong><small id="memoryDetail">等待数据</small><div class="usage-track unavailable" id="memoryUsage" role="progressbar" aria-label="内存占用" aria-valuemin="0" aria-valuemax="100"><i></i></div></div>
+            <div id="diskMetricBox"><span id="diskLabel">磁盘可用</span><strong id="diskMetric">--</strong><small id="diskDetail">等待数据</small><div class="usage-track unavailable" id="diskUsage" role="progressbar" aria-label="磁盘已用容量" aria-valuemin="0" aria-valuemax="100"><i></i></div></div>
             <div><span>Docker</span><strong id="dockerMetric">--</strong><small id="dockerDetail">等待数据</small></div>
           </div>
 
@@ -393,10 +393,10 @@
       <div class="dialog-actions"><button class="button secondary" id="cancelSceneSwitchButton" type="button">终止切换并返回</button><button class="button primary" id="closeSceneProgressButton" type="button" hidden>返回工作场景</button></div>
     </section>
   </dialog>
-  <script src="i18n.js?v=20260920-4"></script>
+  <script src="i18n.js?v=20260920-5"></script>
   <script src="request-guard.js?v=20260827-5"></script>
   <script src="gpu-layout.js?v=20260828-1"></script>
   <script src="monitor-chart.js?v=20260920-4"></script>
-  <script src="app.js?v=20260920-7"></script>
+  <script src="app.js?v=20260920-8"></script>
 </body>
 </html>

@@ -136,6 +136,12 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .system-line small { grid-column: 1/-1; color: var(--muted); font-size: 10px; margin-top: 5px; display: flex; align-items: center; gap: 5px; }
 .system-line small svg { width: 12px; height: 12px; }
 .system-line .disk-warn small { color: var(--warning); }
+.usage-track { width: 100%; height: 5px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.08); }
+.usage-track i { display: block; width: var(--usage, 0%); height: 100%; border-radius: inherit; background: var(--accent); transition: width .3s ease; }
+.usage-track.warning i { background: var(--warning); }
+.usage-track.danger i { background: var(--danger); }
+.usage-track.unavailable { opacity: .45; }
+.system-line .usage-track { grid-column: 1 / -1; margin-top: 8px; }
 
 .gpu-stage { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 18px; align-items: stretch; margin-bottom: 32px; }
 .gpu-lane { border: 1px solid var(--line); background: linear-gradient(145deg, rgba(255,255,255,.026), rgba(255,255,255,.008)); padding: 24px; min-width: 0; position: relative; overflow: hidden; animation: gpuCardIn .28s both; animation-delay: calc(var(--gpu-order, 0) * 40ms); }
@@ -595,6 +601,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .monitor-summary-item small { color: var(--muted); font-size: 9px; }
 .monitor-summary-item strong { justify-self: end; font-size: 17px; font-weight: 580; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .monitor-summary-item em { grid-column: 1/-1; color: var(--muted-2); font-size: 9px; font-style: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.monitor-summary-item .usage-track { grid-column: 1 / -1; margin-top: 4px; }
 .monitor-health-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 55%, transparent); }
 .monitor-health-dot.warning { background: var(--warning); box-shadow: 0 0 10px color-mix(in srgb, var(--warning) 55%, transparent); }
 .monitor-health-dot.danger { background: var(--danger); box-shadow: 0 0 10px color-mix(in srgb, var(--danger) 55%, transparent); }
@@ -614,6 +621,12 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .runtime-row { min-height: 48px; display: grid; grid-template-columns: minmax(180px,1.6fr) repeat(4, minmax(90px,auto)); align-items: center; gap: 15px; border-bottom: 1px solid var(--line); font-size: 9px; }
 .runtime-row:last-child { border-bottom: 0; }
 .runtime-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 580; }
+.storage-volume-row { padding: 13px 0 15px; border-bottom: 1px solid var(--line); }
+.storage-volume-row:last-child { border-bottom: 0; }
+.storage-volume-heading { display: grid; grid-template-columns: minmax(120px, 1fr) auto auto auto; align-items: baseline; gap: 12px 24px; margin-bottom: 10px; font-size: 10px; font-variant-numeric: tabular-nums; }
+.storage-volume-heading strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.storage-volume-heading b { font-weight: 600; }
+.storage-volume-heading span, .storage-volume-heading small { color: var(--muted); font-size: 9px; }
 .runtime-more { margin: 0; padding: 12px 0; color: var(--muted); font-size: 9px; }
 .monitor-system-group .monitor-chart-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); }
 .empty-state { color: var(--muted); font-size: 10px; line-height: 1.6; padding: 18px 0; margin: 0; }
@@ -863,6 +876,9 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .gpu-state-row span:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
   .runtime-row { grid-template-columns: minmax(120px,1fr) auto; padding: 11px 0; }
   .runtime-row > :nth-child(n+3) { grid-column: 1/-1; }
+  .storage-volume-heading { grid-template-columns: minmax(0, 1fr) auto; gap: 5px 12px; }
+  .storage-volume-heading span { grid-column: 1; }
+  .storage-volume-heading small { grid-column: 2; text-align: right; }
   .correlation-heading { align-items: flex-start; flex-direction: column; gap: 8px; padding-block: 12px; }
   .correlation-time { justify-items: start; }
   .chart-section { padding: 18px 15px 17px 18px; }

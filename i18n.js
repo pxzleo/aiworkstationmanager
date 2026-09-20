@@ -167,7 +167,7 @@
     '已退出登录。': 'Signed out.', '监控离线': 'Monitoring offline', '实时': 'Live',
     '总量不可用': 'Total unavailable', '本机': 'Local host', '未检测到': 'Not detected', '已检测': 'Detected',
     '部分数据降级': 'Some data is degraded', '采集失败': 'Collection failed', '监控数据延迟': 'Monitoring data delayed', 'GPU 数据延迟': 'GPU data delayed', '采样状态': 'Sampling status', '上次数据': 'Last data', '最后成功采样': 'Last successful sample',
-    'CPU 总负载': 'Total CPU load', '内存占用': 'Memory usage', 'GPU 负载': 'GPU load', '% 当前': '% current',
+    'CPU 总负载': 'Total CPU load', 'CPU 负载': 'CPU load', '内存占用': 'Memory usage', '磁盘已用容量': 'Used disk capacity', 'GPU 负载': 'GPU load', '% 当前': '% current',
     '采样点': 'Samples', '监控设备': 'Monitored devices',
     'CPU 温度': 'CPU temperature', '整机功耗': 'Total system power', '窗口电费': 'Window cost', '窗口耗电量': 'Window energy', '度': 'kWh', '内存用量': 'Memory used', '主机资源': 'Host resources',
     '处理器与系统内存使用同一条采样时间线': 'Processor and system memory share one sampling timeline',
