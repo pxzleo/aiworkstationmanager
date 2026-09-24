@@ -14,7 +14,7 @@ from .config import MAX_HISTORY_MINUTES
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 38
+SCHEMA_VERSION = 39
 
 
 class DatabaseError(RuntimeError):
@@ -136,6 +136,7 @@ class Database:
                         36: self._migrate_to_36,
                         37: self._migrate_to_37,
                         38: self._migrate_to_38,
+                        39: self._migrate_to_39,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -497,6 +498,23 @@ class Database:
     @classmethod
     def _migrate_to_38(cls, connection: sqlite3.Connection) -> None:
         cls._ensure_column(connection, "automatic_tasks", "model", "TEXT")
+
+    @staticmethod
+    def _migrate_to_39(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS base_services (
+                id INTEGER PRIMARY KEY CHECK(id=1),
+                description TEXT NOT NULL DEFAULT '',
+                detailed_description TEXT NOT NULL DEFAULT ''
+            )"""
+        )
+        connection.execute("INSERT OR IGNORE INTO base_services(id) VALUES (1)")
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS base_service_members (
+                service_id TEXT PRIMARY KEY REFERENCES registered_services(id) ON DELETE CASCADE,
+                start_order INTEGER NOT NULL UNIQUE
+            )"""
+        )
 
     @classmethod
     def _migrate_to_18(cls, connection: sqlite3.Connection) -> None:
@@ -1794,6 +1812,44 @@ class Database:
             return result
         except sqlite3.Error as exc:
             raise DatabaseError(f"读取场景失败: {exc}") from exc
+
+    def get_base_services(self) -> dict[str, Any]:
+        try:
+            with self.connect() as connection:
+                row = connection.execute(
+                    "SELECT description,detailed_description FROM base_services WHERE id=1"
+                ).fetchone()
+                if row is None:
+                    raise DatabaseError("基础服务设置不存在")
+                members = connection.execute(
+                    """SELECT service_id FROM base_service_members
+                       ORDER BY start_order"""
+                ).fetchall()
+                return {**dict(row), "service_ids": [item["service_id"] for item in members]}
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"读取基础服务失败: {exc}") from exc
+
+    def update_base_services(self, item: dict[str, Any]) -> None:
+        try:
+            with self.connect() as connection:
+                with connection:
+                    cursor = connection.execute(
+                        """UPDATE base_services SET description=?,detailed_description=?
+                           WHERE id=1""",
+                        (item["description"], item["detailed_description"]),
+                    )
+                    if cursor.rowcount != 1:
+                        raise DatabaseError("基础服务设置不存在")
+                    connection.execute("DELETE FROM base_service_members")
+                    for order, service_id in enumerate(item["service_ids"]):
+                        connection.execute(
+                            "INSERT INTO base_service_members(service_id,start_order) VALUES (?,?)",
+                            (service_id, order),
+                        )
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError("基础服务列表包含不存在的已登记服务") from exc
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"保存基础服务失败: {exc}") from exc
 
     def get_scene(self, scene_id: str) -> dict[str, Any] | None:
         return next((item for item in self.list_scenes() if item["id"] == scene_id), None)

@@ -243,7 +243,7 @@ test('scene editor and management log remain wired', () => {
   assert.ok(js.includes("const progress = terminal ? 100"));
   assert.ok(js.includes('let sceneProgressExpectedTotal = null'));
   assert.ok(js.includes('function renderSceneProgress(scene, operation) { const total = Number.isInteger(operation.total_steps) ? operation.total_steps : sceneProgressExpectedTotal'));
-  assert.ok(js.includes('function openSceneProgress(scene, operationId) { sceneProgressExpectedTotal = state.services.filter'));
+  assert.ok(js.includes('function openSceneProgress(scene, operationId) { const managed = new Set(state.scenes.flatMap'));
   assert.ok(js.includes('finally { sceneProgressOperationId = null; sceneProgressExpectedTotal = null'));
   assert.ok(js.includes("terminal ? '没有需要执行的服务步骤。'"));
   assert.ok(js.includes("interrupted: '已终止'"));
@@ -319,9 +319,9 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260920-9'));
-  assert.ok(html.includes('i18n.js?v=20260920-7'));
-  assert.ok(html.includes('app.js?v=20260920-10'));
+  assert.ok(html.includes('styles.css?v=20260924-1'));
+  assert.ok(html.includes('i18n.js?v=20260924-1'));
+  assert.ok(html.includes('app.js?v=20260924-1'));
 });
 
 test('read polling tolerates transient network failures without retrying writes', () => {
@@ -556,6 +556,7 @@ test('scene progress freezes the legacy fallback and prefers backend total steps
   const totals = [];
   const sandbox = {
     state: {
+      scenes: [{ service_ids: ['target-running', 'target-stopped', 'target-unknown'] }, { service_ids: ['outside-running', 'outside-stopped'] }],
       services: [
         { id: 'target-running', status: { state: 'running' } },
         { id: 'target-stopped', status: { state: 'stopped' } },
@@ -599,9 +600,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260920-9'));
-  assert.ok(html.includes('i18n.js?v=20260920-7'));
-  assert.ok(html.includes('app.js?v=20260920-10'));
+  assert.ok(html.includes('styles.css?v=20260924-1'));
+  assert.ok(html.includes('i18n.js?v=20260924-1'));
+  assert.ok(html.includes('app.js?v=20260924-1'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

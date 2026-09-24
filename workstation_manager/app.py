@@ -115,6 +115,13 @@ class ScenePayload(BaseModel):
     service_ids: list[str] = Field(default_factory=list, max_length=1000)
 
 
+class BaseServicesPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    description: str = Field(default="", max_length=1000)
+    detailed_description: str = Field(default="", max_length=8000)
+    service_ids: list[str] = Field(default_factory=list, max_length=1000)
+
+
 class SceneOrderPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scene_ids: list[str] = Field(max_length=1000)
@@ -831,6 +838,16 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     @app.get("/api/v1/scenes")
     async def scenes(_: AuthenticatedSession = Depends(require_session)) -> dict[str, Any]:
         return {"scenes": resolved_registry.list_scenes()}
+
+    @app.get("/api/v1/base-services")
+    async def base_services(_: AuthenticatedSession = Depends(require_session)) -> dict[str, Any]:
+        return resolved_registry.base_services()
+
+    @app.put("/api/v1/base-services")
+    async def update_base_services(payload: BaseServicesPayload, request: Request,
+                                   session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, Any]:
+        return resolved_registry.update_base_services(payload.model_dump(), session.username,
+                                                      _client_ip(request))
 
     @app.post("/api/v1/scenes", status_code=201)
     async def create_scene(payload: ScenePayload, request: Request,

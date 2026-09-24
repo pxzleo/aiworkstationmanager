@@ -229,6 +229,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .timeline small { color: var(--muted); font-size: 9px; margin-top: 3px; overflow-wrap: anywhere; }
 
 .scene-selector { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr)); gap: 16px; }
+#baseServicesList { margin-bottom: 16px; }
 .scene-panel { min-height: 405px; padding: 28px; display: flex; flex-direction: column; border: 1px solid var(--line-strong); border-radius: 12px; background: linear-gradient(180deg, rgba(255,255,255,.025), transparent 38%), var(--surface); box-shadow: 0 12px 28px rgba(0,0,0,.18); position: relative; transition: background .2s, border-color .2s, box-shadow .2s, opacity .16s, transform .16s; }
 .scene-panel:hover { transform: translateY(-2px); border-color: rgba(255,255,255,.23); background: linear-gradient(180deg, rgba(255,255,255,.04), transparent 42%), var(--surface-2); box-shadow: 0 18px 38px rgba(0,0,0,.28); }
 .scene-panel[draggable="true"] { cursor: grab; }

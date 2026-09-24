@@ -604,6 +604,11 @@ class RegisteredServiceManager:
                 for service in unknown_services:
                     await self._reconcile_service_status(service, "startup")
             self._health_task = asyncio.create_task(self._health_loop())
+            base = self.database.get_base_services()
+            if base["service_ids"]:
+                self._submit("service_group", "base", "start_base", "system", "startup",
+                             self._run_base_services_start)
+                await asyncio.gather(*tuple(self._operation_tasks))
         except Exception:
             self._instance_lock.release()
             raise
@@ -957,6 +962,39 @@ class RegisteredServiceManager:
     def list_scenes(self) -> list[dict[str, Any]]:
         return [self._scene_with_state(item) for item in self.database.list_scenes()]
 
+    def base_services(self) -> dict[str, Any]:
+        item = self.database.get_base_services()
+        services = {service["id"]: service for service in self.database.list_registered_services()}
+        return {**item, "name": "基础服务", "services": [
+            {"id": service_id, "name": services[service_id]["name"],
+             "ui_url": services[service_id]["ui_url"],
+             "desired_state": services[service_id].get("desired_state", "unknown"),
+             "status": self.statuses.get(service_id, {"state": "unknown"}),
+             "busy": service_id in self._busy_services}
+            for service_id in item["service_ids"] if service_id in services
+        ], "busy": self._operation_pending}
+
+    def update_base_services(self, payload: dict[str, Any], username: str,
+                             source_ip: str) -> dict[str, Any]:
+        self._require_idle()
+        service_ids = payload.get("service_ids")
+        if not isinstance(service_ids, list) or any(not isinstance(value, str) for value in service_ids):
+            raise RegistryError(422, "invalid_services", "基础服务必须是有序 ID 数组")
+        service_ids = list(dict.fromkeys(service_ids))
+        known = {service["id"] for service in self.database.list_registered_services()}
+        if set(service_ids) - known:
+            raise RegistryError(422, "service_not_found", "基础服务包含不存在的已登记服务")
+        description = str(payload.get("description") or "").strip()
+        detailed = str(payload.get("detailed_description") or "").strip()
+        if len(description) > 1000 or len(detailed) > 8000:
+            raise RegistryError(422, "invalid_description", "基础服务说明超出长度限制")
+        self.database.update_base_services({"description": description,
+                                            "detailed_description": detailed,
+                                            "service_ids": service_ids})
+        self.database.append_audit(source_ip, "management.base_services.update", "success",
+                                   {"service_ids": service_ids, "requested_by": username})
+        return self.base_services()
+
     def active_scene(self) -> dict[str, Any] | None:
         scene = self.database.get_last_activated_scene()
         if scene is None or self._scene_with_state(scene)["state"] != "active":
@@ -968,7 +1006,7 @@ class RegisteredServiceManager:
             service_id
             for scene in self.database.list_scenes()
             for service_id in scene["service_ids"]
-        }
+        } - set(self.database.get_base_services()["service_ids"])
 
     def _scene_with_state(self, scene: dict[str, Any] | None) -> dict[str, Any]:
         if scene is None:
@@ -979,7 +1017,7 @@ class RegisteredServiceManager:
         matches = True
         target_running = False
         for service in services:
-            if service["id"] not in managed:
+            if service["id"] not in managed and service["id"] not in target:
                 continue
             state = self.statuses.get(service["id"], {}).get("state", "unknown")
             if service["id"] in target:
@@ -1241,6 +1279,27 @@ class RegisteredServiceManager:
             "success" if success else "partial", str(before),
             "stopped" if all_stopped else "partial",
             None if success else "部分服务未能停止",
+        )
+
+    async def _run_base_services_start(self, operation_id: str, _: str, __: str) -> None:
+        await self.refresh_all_health()
+        service_ids = self.database.get_base_services()["service_ids"]
+        services = {service["id"]: service for service in self.database.list_registered_services()}
+        targets = [services[service_id] for service_id in service_ids
+                   if service_id in services and
+                   self.statuses.get(service_id, {}).get("state") != "running"]
+        self.database.update_operation(operation_id, status="running", started_at=utc_now(),
+                                       total_steps=len(targets))
+        success = True
+        for sequence, service in enumerate(targets, start=1):
+            success = await self._run_script_action(
+                operation_id, sequence, "start_base", service, "start"
+            ) and success
+        self.database.finish_operation_with_audit(
+            operation_id, "succeeded" if success else "failed",
+            "success" if success else "partial", None,
+            "running" if success else "partial",
+            None if success else "部分基础服务未能启动",
         )
 
     async def _run_scene_operation(self, operation_id: str, scene_id: str, _: str) -> None:

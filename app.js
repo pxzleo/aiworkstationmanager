@@ -29,7 +29,7 @@ let automaticTaskExecutionLoaded = false;
 let mediaSwipeNoticeTimer = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
-  history: [], services: [], scenes: [], users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
+  history: [], services: [], scenes: [], baseServices: null, users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
   fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', mediaPath: '',
   historyWindowMinutes: 15, historyAnchorMs: null, historyFollowingCurrent: true, historyLoaded: false, historyLoading: false, historyBucketSeconds: 0, powerModel: null,
   chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
@@ -267,7 +267,7 @@ async function shiftHistoryPeriod(direction) {
 }
 async function refreshServicesAndScenes() {
   if (document.hidden) return;
-  try { const [serviceData, sceneData] = await Promise.all([api('/registered-services', { resource: 'services' }), api('/scenes', { resource: 'scenes' })]); state.services = serviceData.services || []; state.scenes = sceneData.scenes || []; renderServices(); renderScenes(); }
+  try { const [serviceData, sceneData, baseData] = await Promise.all([api('/registered-services', { resource: 'services' }), api('/scenes', { resource: 'scenes' }), api('/base-services', { resource: 'base-services' })]); state.services = serviceData.services || []; state.scenes = sceneData.scenes || []; state.baseServices = baseData; renderServices(); renderScenes(); }
   catch (error) { showPollingError('服务状态读取失败', error); }
 }
 async function refreshLogs() {
@@ -765,8 +765,29 @@ function handleOverviewSceneChange(event) {
   select.disabled = true; activateScene(scene).finally(renderOverviewSceneSelect);
 }
 
+function renderBaseServices() {
+  const list = byId('baseServicesList'); list.replaceChildren();
+  const base = state.baseServices; if (!base) return;
+  const panel = element('article', 'scene-panel');
+  const top = element('div', 'scene-panel-top'); top.append(element('span', '', '独立于工作场景'), element('i', 'scene-status', '随管理器启动'));
+  panel.append(top, element('h2', '', '基础服务'), userOrUiElement('p', '', base.description, '场景切换时保持运行'));
+  const map = element('div', 'scene-map');
+  if (!base.services.length) map.append(element('div', '', '尚未配置基础服务'));
+  base.services.forEach((service, order) => {
+    const item = element('div'); item.append(element('span', '', `启动顺序 ${order + 1}`), userElement('strong', '', service.name));
+    const meta = element('small', 'scene-service-meta'); const status = element('i', 'scene-service-status');
+    status.append(element('i', `service-state ${statusClass(service.status.state)}`), document.createTextNode(service.busy ? '操作中' : serviceStatusLabel(service))); meta.append(status); item.append(meta);
+    if (service.ui_url) { const link = element('button', 'scene-ui-link', '打开 UI ↗'); link.type = 'button'; link.addEventListener('click', () => window.open(service.ui_url, '_blank', 'noopener,noreferrer')); item.append(link); }
+    map.append(item);
+  });
+  const actions = element('div', 'scene-card-actions'); const utilities = element('div', 'scene-utility-actions');
+  const details = iconButton('查看详细说明', 'info'); details.addEventListener('click', () => openSceneDetails(base));
+  const edit = iconButton('编辑基础服务', 'edit'); edit.disabled = base.busy || actionGuard.pending; edit.addEventListener('click', openBaseServicesDialog);
+  utilities.append(details, edit); actions.append(utilities); panel.append(map, actions); list.append(panel);
+}
+
 function renderScenes() {
-  text('sceneNavCount', String(state.scenes.length)); renderOverviewSceneSelect(); const list = byId('sceneList'); list.replaceChildren(); if (!state.scenes.length) { list.append(element('p', 'empty-state', '尚未添加场景。')); dataText('activeSceneName', '', '尚未添加场景'); renderOperationTimeline(); return; }
+  renderBaseServices(); text('sceneNavCount', String(state.scenes.length)); renderOverviewSceneSelect(); const list = byId('sceneList'); list.replaceChildren(); if (!state.scenes.length) { list.append(element('p', 'empty-state', '尚未添加场景。')); dataText('activeSceneName', '', '尚未添加场景'); renderOperationTimeline(); return; }
   const displayedScenes = scenesForDisplay();
   displayedScenes.forEach((scene, index) => {
     const panel = element('article', `scene-panel${scene.state === 'active' ? ' selected' : ''}${scene.is_default ? ' scene-default' : ''}`); panel.dataset.sceneId = scene.id; panel.draggable = scene.state !== 'active' && !scene.busy && !actionGuard.pending;
@@ -821,7 +842,7 @@ function openOperationProgress(operationId, title, summary, waiting, cancelLabel
   byId('cancelSceneSwitchButton').hidden = !cancelLabel; byId('cancelSceneSwitchButton').disabled = false; if (cancelLabel) text('cancelSceneSwitchButton', cancelLabel); byId('closeSceneProgressButton').hidden = true; text('closeSceneProgressButton', closeLabel);
   const dialog = byId('sceneProgressDialog'); if (!dialog.open) dialog.showModal();
 }
-function openSceneProgress(scene, operationId) { sceneProgressExpectedTotal = state.services.filter((service) => !scene.service_ids.includes(service.id) && service.status.state === 'running').length + scene.service_ids.filter((serviceId) => state.services.find((service) => service.id === serviceId)?.status.state !== 'running').length; openOperationProgress(operationId, `正在切换到 ${scene.name}`, '管理器正在按顺序停止和启动服务。', '等待第一项服务操作', '终止切换并返回', '返回工作场景'); }
+function openSceneProgress(scene, operationId) { const managed = new Set(state.scenes.flatMap((item) => item.service_ids)); const base = new Set(state.baseServices?.service_ids || []); sceneProgressExpectedTotal = state.services.filter((service) => managed.has(service.id) && !base.has(service.id) && !scene.service_ids.includes(service.id) && service.status.state === 'running').length + scene.service_ids.filter((serviceId) => state.services.find((service) => service.id === serviceId)?.status.state !== 'running').length; openOperationProgress(operationId, `正在切换到 ${scene.name}`, '管理器正在按顺序停止和启动服务。', '等待第一项服务操作', '终止切换并返回', '返回工作场景'); }
 function openStopAllProgress(operationId) { openOperationProgress(operationId, '正在停止全部服务', '管理器正在确认需要停止的服务并按顺序执行。', '正在确认需要停止的服务', '', '返回服务列表'); }
 function renderOperationProgress(operation, total, terminalCopy) {
   const steps = operation.steps || []; const finished = steps.filter((step) => step.status !== 'running').length; const terminal = !['queued', 'running'].includes(operation.status); const knownTotal = Number.isInteger(total) && total >= 0; const denominator = knownTotal ? Math.max(total, steps.length) : null; const progress = terminal ? 100 : denominator > 0 ? Math.min(99, Math.round((finished / denominator) * 100)) : 0;
@@ -850,6 +871,27 @@ async function saveService(event) { event.preventDefault(); const id = byId('ser
 async function deleteService(service) { if (!confirmUi(`删除服务“${service.name}”的登记记录？原始脚本和服务不会被删除。`)) return; try { await api(`/registered-services/${service.id}`, { method: 'DELETE' }); showToast('服务登记已删除'); await refreshServicesAndScenes(); } catch (error) { showToast(error.message); } }
 
 function openSceneDetails(scene) { dataText('sceneDetailTitle', scene.name, '场景名称'); dataText('sceneDetailIntro', scene.description || '', '无说明'); dataText('sceneDetailBody', scene.detailed_description || '', '暂无详细说明。'); byId('sceneDetailDialog').showModal(); }
+function openBaseServicesDialog() {
+  const base = state.baseServices; if (!base) return;
+  text('baseServicesFormError', ''); byId('baseServicesDescription').value = base.description || ''; byId('baseServicesDetailedDescription').value = base.detailed_description || '';
+  const selected = base.service_ids; const container = byId('baseServiceChoices'); container.replaceChildren();
+  const ordered = [...selected.map((id) => state.services.find((service) => service.id === id)).filter(Boolean), ...state.services.filter((service) => !selected.includes(service.id))];
+  ordered.forEach((service) => {
+    const row = element('div', 'scene-service-choice'); row.dataset.id = service.id; const label = element('label'); label.dataset.i18nSkip = '';
+    const checkbox = element('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.includes(service.id);
+    label.append(checkbox, document.createTextNode(service.name)); const controls = element('span');
+    const up = iconButton('上移服务', 'arrow-up'); up.addEventListener('click', () => row.previousElementSibling && container.insertBefore(row, row.previousElementSibling));
+    const down = iconButton('下移服务', 'arrow-down'); down.addEventListener('click', () => row.nextElementSibling && container.insertBefore(row.nextElementSibling, row));
+    controls.append(up, down); row.append(label, controls); container.append(row);
+  });
+  byId('baseServicesDialog').showModal();
+}
+async function saveBaseServices(event) {
+  event.preventDefault(); const serviceIds = [...byId('baseServiceChoices').children].filter((row) => row.querySelector('input').checked).map((row) => row.dataset.id);
+  const payload = { description: byId('baseServicesDescription').value.trim(), detailed_description: byId('baseServicesDetailedDescription').value.trim(), service_ids: serviceIds };
+  try { await api('/base-services', { method: 'PUT', body: payload }); byId('baseServicesDialog').close(); showToast('基础服务已保存，下次管理器启动时自动启动'); await refreshServicesAndScenes(); }
+  catch (error) { text('baseServicesFormError', error.message); }
+}
 function openSceneDialog(scene = null) { byId('sceneForm').reset(); text('sceneFormError', ''); text('sceneDialogTitle', scene ? '编辑场景' : '添加场景'); byId('sceneId').value = scene?.id || ''; byId('sceneName').value = scene?.name || ''; byId('sceneDescription').value = scene?.description || ''; byId('sceneDetailedDescription').value = scene?.detailed_description || ''; byId('sceneDefaultGeneration').checked = Boolean(scene?.is_default_generation); const selected = scene?.service_ids || []; const container = byId('sceneServiceChoices'); container.replaceChildren(); const ordered = [...selected.map((id) => state.services.find((item) => item.id === id)).filter(Boolean), ...state.services.filter((item) => !selected.includes(item.id))]; ordered.forEach((service) => { const row = element('div', 'scene-service-choice'); row.dataset.id = service.id; const label = element('label'); label.dataset.i18nSkip = ''; const checkbox = element('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.includes(service.id); label.append(checkbox, document.createTextNode(service.name)); const controls = element('span'); const up = iconButton('上移服务', 'arrow-up'); up.addEventListener('click', () => row.previousElementSibling && container.insertBefore(row, row.previousElementSibling)); const down = iconButton('下移服务', 'arrow-down'); down.addEventListener('click', () => row.nextElementSibling && container.insertBefore(row.nextElementSibling, row)); controls.append(up, down); row.append(label, controls); container.append(row); }); byId('sceneDialog').showModal(); }
 async function saveScene(event) { event.preventDefault(); const id = byId('sceneId').value; const serviceIds = [...byId('sceneServiceChoices').children].filter((row) => row.querySelector('input').checked).map((row) => row.dataset.id); const payload = { name: byId('sceneName').value.trim(), description: byId('sceneDescription').value.trim(), detailed_description: byId('sceneDetailedDescription').value.trim(), is_default_generation: byId('sceneDefaultGeneration').checked, service_ids: serviceIds }; try { await api(id ? `/scenes/${id}` : '/scenes', { method: id ? 'PUT' : 'POST', body: payload }); byId('sceneDialog').close(); showToast(id ? '场景已更新' : '场景已添加'); await refreshServicesAndScenes(); } catch (error) { text('sceneFormError', error.message); } }
 async function deleteScene(scene) { if (!confirmUi(`删除场景“${scene.name}”？不会停止或删除任何服务。`)) return; try { await api(`/scenes/${scene.id}`, { method: 'DELETE' }); showToast('场景已删除'); await refreshServicesAndScenes(); } catch (error) { showToast(error.message); } }
@@ -881,7 +923,7 @@ async function saveUserPassword(event) {
 }
 async function deleteUser(user) { if (!confirmUi(`删除用户“${user.username}”？该用户的登录会话将立即失效。`)) return; try { await api(`/users/${user.id}`, { method: 'DELETE' }); showToast('用户已删除'); await refreshUsers(); } catch (error) { showToast(error.message); } }
 
-function targetName(kind, id) { if (kind === 'service_group' && id === 'all') return '全部服务'; const collection = kind === 'scene' ? state.scenes : state.services; return collection.find((item) => item.id === id)?.name || id; }
+function targetName(kind, id) { if (kind === 'service_group' && id === 'all') return '全部服务'; if (kind === 'service_group' && id === 'base') return '基础服务'; const collection = kind === 'scene' ? state.scenes : state.services; return collection.find((item) => item.id === id)?.name || id; }
 function defaultSceneOperation(event) { const summary = event.summary || {}; return { id: `audit-${event.id}`, kind: 'scene_default', target_id: summary.scene_id, target_name: summary.name, action: event.event === 'management.scene.default.set' ? 'set_default' : 'clear_default', status: event.result === 'success' ? 'succeeded' : 'failed', result: event.result === 'success' ? 'success' : 'failed', requested_by: summary.requested_by, created_at: event.created_at, steps: [] }; }
 function operationTargetName(operation) { return operation.target_name || targetName(operation.kind, operation.target_id); }
 function operationStatusLabel(status) { return { succeeded: '成功', failed: '失败', interrupted: '已终止', queued: '等待执行', running: '执行中' }[status] || '状态未知'; }
@@ -959,7 +1001,7 @@ async function saveAutomaticTask(event) {
 async function deleteAutomaticTask(task) { const message = window.axisI18n.language === 'zh' ? `删除自动任务“${task.title}”？` : `Delete automatic task “${task.title}”?`; if (!confirm(message)) return; try { await api(`/automatic-tasks/${task.id}`, { method: 'DELETE' }); showToast(ui('自动任务已删除')); await refreshAutomaticTasks(); } catch (error) { showToast(error.message); } }
 async function resetAutomaticTask(task) { const running = task.status === 'running'; const message = window.axisI18n.language === 'zh' ? (running ? `将执行中的任务“${task.title}”重新排队？旧外部操作仍可能继续，重新执行可能重复产生副作用；旧执行者将不能回写结果。` : `将任务“${task.title}”再次排队并重新执行？已有结果将被清除，任务会加入待执行队列末尾。`) : (running ? `Requeue running task “${task.title}”? Existing external work may continue, and running the task again may repeat side effects; the previous worker will no longer be able to save its result.` : `Requeue and run task “${task.title}” again? The previous result will be cleared and the task will be added to the end of the pending queue.`); if (!confirm(message)) return; try { await api(`/automatic-tasks/${task.id}/reset`, { method: 'POST' }); showToast(ui('自动任务已重新排队')); await refreshAutomaticTasks(); } catch (error) { showToast(error.message); } }
 
-byId('authForm').addEventListener('submit', submitAuth); byId('logoutButton').addEventListener('click', logout); byId('refreshButton').addEventListener('click', refreshAll); byId('refreshLogsButton').addEventListener('click', refreshLogs); byId('overviewSceneSelect').addEventListener('change', handleOverviewSceneChange); byId('stopAllServicesButton').addEventListener('click', stopAllServices); byId('addServiceButton').addEventListener('click', () => openServiceDialog()); byId('addSceneButton').addEventListener('click', () => openSceneDialog()); byId('addAutomaticTaskButton').addEventListener('click', () => openAutomaticTaskDialog()); byId('addUserButton').addEventListener('click', openUserDialog); byId('cancelSceneSwitchButton').addEventListener('click', cancelSceneSwitch); byId('closeSceneProgressButton').addEventListener('click', () => byId('sceneProgressDialog').close()); byId('sceneProgressDialog').addEventListener('cancel', (event) => { if (sceneProgressOperationId) event.preventDefault(); }); byId('serviceForm').addEventListener('submit', saveService); byId('serviceWslPortproxyEnabled').addEventListener('change', updateServicePortproxyFields); byId('sceneForm').addEventListener('submit', saveScene); byId('automaticTaskForm').addEventListener('submit', saveAutomaticTask); byId('userForm').addEventListener('submit', saveUser); byId('passwordForm').addEventListener('submit', saveUserPassword); byId('serviceSearch').addEventListener('input', renderRegisteredServiceTable); byId('serviceFilters').addEventListener('click', (event) => { const button = event.target.closest('[data-filter]'); if (!button) return; state.serviceFilter = button.dataset.filter; byId('serviceFilters').querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item === button)); renderRegisteredServiceTable(); }); document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => byId(button.dataset.close).close())); document.addEventListener('visibilitychange', () => { if (!document.hidden && !document.body.classList.contains('auth-pending')) refreshAll(); });
+byId('authForm').addEventListener('submit', submitAuth); byId('logoutButton').addEventListener('click', logout); byId('refreshButton').addEventListener('click', refreshAll); byId('refreshLogsButton').addEventListener('click', refreshLogs); byId('overviewSceneSelect').addEventListener('change', handleOverviewSceneChange); byId('stopAllServicesButton').addEventListener('click', stopAllServices); byId('addServiceButton').addEventListener('click', () => openServiceDialog()); byId('addSceneButton').addEventListener('click', () => openSceneDialog()); byId('addAutomaticTaskButton').addEventListener('click', () => openAutomaticTaskDialog()); byId('addUserButton').addEventListener('click', openUserDialog); byId('cancelSceneSwitchButton').addEventListener('click', cancelSceneSwitch); byId('closeSceneProgressButton').addEventListener('click', () => byId('sceneProgressDialog').close()); byId('sceneProgressDialog').addEventListener('cancel', (event) => { if (sceneProgressOperationId) event.preventDefault(); }); byId('serviceForm').addEventListener('submit', saveService); byId('serviceWslPortproxyEnabled').addEventListener('change', updateServicePortproxyFields); byId('sceneForm').addEventListener('submit', saveScene); byId('baseServicesForm').addEventListener('submit', saveBaseServices); byId('automaticTaskForm').addEventListener('submit', saveAutomaticTask); byId('userForm').addEventListener('submit', saveUser); byId('passwordForm').addEventListener('submit', saveUserPassword); byId('serviceSearch').addEventListener('input', renderRegisteredServiceTable); byId('serviceFilters').addEventListener('click', (event) => { const button = event.target.closest('[data-filter]'); if (!button) return; state.serviceFilter = button.dataset.filter; byId('serviceFilters').querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item === button)); renderRegisteredServiceTable(); }); document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => byId(button.dataset.close).close())); document.addEventListener('visibilitychange', () => { if (!document.hidden && !document.body.classList.contains('auth-pending')) refreshAll(); });
 byId('historyRangeSelect').addEventListener('click', (event) => { const button = event.target.closest('[data-history-minutes]'); if (button) selectHistoryWindow(Number(button.dataset.historyMinutes)); });
 byId('historyPrevButton').addEventListener('click', () => shiftHistoryPeriod(-1));
 byId('historyNextButton').addEventListener('click', () => shiftHistoryPeriod(1));

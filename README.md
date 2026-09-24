@@ -32,6 +32,7 @@ AXIS unifies the services of an AI workstation and organizes them into different
 - Start, stop, restart, and deep-check one service, or stop all services
 - Detect external starts, stops, failures, and unexpected exits through lightweight local health checks
 - Create and reorder scenes that switch an ordered group of services
+- Edit the permanent Base Services card in Work Scenes; its services start in order with AXIS and keep running across scene switches
 - Submit, cancel, and monitor every stage of local video generation on a dedicated Video Jobs page
 - Switch to a named or default generation scene under an exclusive GPU lease, then restore the original scene
 - Monitor CPU, memory, and every detected NVIDIA GPU in distinct sections with consistent scales, current/average/peak/minimum values, and key hardware metrics
@@ -77,11 +78,11 @@ See [Script Requirements](SCRIPT_REQUIREMENTS.en.md) for the full contract and e
 
 ## Use scenes
 
-Create a scene in Work Scenes and select its registered services. Only services assigned to at least one scene participate in scene switching. Registered services that belong to no scene remain monitored and manually controllable, but scene switching neither controls them nor includes them in scene state. Before switching, AXIS refreshes lightweight observed health, stops only running scene-managed services outside the target, and starts only target services that are not already running. Target startup begins only after every required stop succeeds.
+Create a scene in Work Scenes and select its registered services. The permanent Base Services card lets you edit its description, members, and startup order. AXIS starts those services before activating a default scene. Scene switching never stops a base service, even if it also belongs to a scene. Other registered services that belong to no scene remain monitored and manually controllable, but scene switching neither controls them nor includes them in scene state. Before switching, AXIS refreshes lightweight observed health, stops only running scene-managed services outside the target, and starts only target services that are not already running. Target startup begins only after every required stop succeeds.
 
 The progress window shows every step and can cancel steps that have not started. Completed service actions are not rolled back automatically.
 
-A project can have one optional default scene. Setting it does not switch immediately; AXIS activates it the next time the manager starts. Clearing the default only removes this startup behavior and does not stop current services; on the next startup AXIS performs read-only reconciliation for every registered service without starting or stopping it.
+A project can have one optional default scene. Setting it does not switch immediately; AXIS activates it the next time the manager starts. Clearing the default only removes this scene startup behavior and does not stop current services; on the next startup AXIS performs read-only reconciliation for every registered service and starts configured base services.
 
 Scenes no longer have `Code Agent` or `Video Gen` types. The scene editor only adds a single **Default generation scene** checkbox, and at most one scene can be selected. OpenCode submits a ComfyUI API workflow directly to the local `POST /api/v1/video-jobs` endpoint through the bundled `axis_video_submit` tool, with no token, username, password, or authorization header. A request may name its generation scene; otherwise AXIS uses the default generation scene. AXIS persists the job and original active scene, waits until NInfer has no processing or deferred requests, holds an exclusive GPU lease, switches to the generation scene, monitors the ComfyUI `prompt_id`, stores the output, restores the original scene, and finally calls back through the plugin's loopback bridge to the original OpenCode session. AXIS never switches while NInfer is busy. Version 1 accepts submissions only from the local machine; an explicit output path wins, otherwise the configured default directory is used.
 
@@ -147,7 +148,7 @@ Install a system-start task with an explicit configuration file:
 .\Install-ManagerTask.ps1 -Trigger Startup -ConfigFile .\config\settings.json
 ```
 
-Installation requires administrator confirmation. The task runs as the current administrator with the highest available privileges so registered scripts can manage their fixed Windows services and port proxies. Remove it with `.\Uninstall-ManagerTask.ps1`. With no default scene, the task starts AXIS only. When a default scene is configured, AXIS applies the normal scene-switch rules at startup and controls the corresponding services.
+Installation requires administrator confirmation. The task runs as the current administrator with the highest available privileges so registered scripts can manage their fixed Windows services and port proxies. Remove it with `.\Uninstall-ManagerTask.ps1`. AXIS starts configured base services first; when a default scene is configured, it then applies the normal scene-switch rules.
 
 ## More documentation
 

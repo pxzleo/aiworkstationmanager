@@ -235,8 +235,8 @@ class DatabaseRegistryTests(unittest.TestCase):
                        ORDER BY queue_position IS NULL,queue_position,created_at,id"""
                 ).fetchall()
 
-            self.assertEqual(SCHEMA_VERSION, 37)
-            self.assertEqual(version, 37)
+            self.assertEqual(SCHEMA_VERSION, 39)
+            self.assertEqual(version, 39)
             self.assertEqual(
                 [(row["id"], row["queue_position"]) for row in positions],
                 [
@@ -321,7 +321,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 version = connection.execute(
                     "SELECT version FROM schema_version"
                 ).fetchone()["version"]
-            self.assertEqual(version, 37)
+            self.assertEqual(version, 39)
             self.assertIsNone(migrated["total_steps"])
 
             database.update_operation("a" * 32, total_steps=3)
@@ -366,7 +366,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                        WHERE type='index' AND name='idx_scenes_single_default'"""
                 ).fetchone()
 
-            self.assertEqual(version, 37)
+            self.assertEqual(version, 39)
             self.assertEqual(scene["is_default"], 0)
             self.assertEqual(scene["detailed_description"], "")
             self.assertIsNotNone(index)
@@ -407,7 +407,7 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 37)
+            self.assertEqual(SCHEMA_VERSION, 39)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -510,7 +510,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-                self.assertEqual(version, 37)
+                self.assertEqual(version, 39)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -553,7 +553,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 37)
+            self.assertEqual(SCHEMA_VERSION, 39)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -621,7 +621,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 60, bucket_seconds=15, now=now + timedelta(seconds=30)
             )
 
-            self.assertEqual(SCHEMA_VERSION, 37)
+            self.assertEqual(SCHEMA_VERSION, 39)
             self.assertEqual(result["stored_sample_count"], 3)
             self.assertEqual(len(result["samples"]), 2)
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
@@ -682,7 +682,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                        FROM resource_samples"""
                 ).fetchone()
 
-            self.assertEqual(version, 37)
+            self.assertEqual(version, 39)
             # 旧的 total_power_w 本来就是纯实测值，回填到 measured 列。
             self.assertEqual(row["measured_power_w"], 604.0)
             self.assertEqual(row["total_power_w"], 604.0)
@@ -722,7 +722,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_gpu_samples WHERE sample_id=1"
                 ).fetchone()
 
-            self.assertEqual(version, 37)
+            self.assertEqual(version, 39)
             self.assertEqual(row["temperature_c"], 62)
             self.assertIsNone(row["power_w"])
             self.assertIsNone(row["graphics_clock_mhz"])
@@ -761,7 +761,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_samples"
                 ).fetchone()
 
-            self.assertEqual(version, 37)
+            self.assertEqual(version, 39)
             self.assertEqual(row["memory_percent"], 50)
             self.assertIsNone(row["memory_used_bytes"])
             self.assertIsNone(row["memory_total_bytes"])
@@ -1128,6 +1128,38 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action_calls, [("A.ps1", "stop"), ("D.ps1", "start")])
         self.assertEqual(self.manager.list_scenes()[0]["state"], "active")
         self.assertEqual(self.manager.active_scene()["id"], scene["id"])
+
+    async def test_base_services_start_with_manager_and_survive_scene_switch(self) -> None:
+        base = await self.add_service("基础")
+        scene_service = await self.add_service("场景")
+        saved = self.manager.update_base_services(
+            {"description": "常驻", "detailed_description": "说明",
+             "service_ids": [base["id"]]}, "admin", "local",
+        )
+        self.assertEqual(saved["service_ids"], [base["id"]])
+        self.assertEqual(saved["services"][0]["name"], "基础")
+        scene = self.manager.create_scene(
+            {"name": "目标", "description": "", "service_ids": [scene_service["id"]]},
+            "admin", "local",
+        )
+        overlap = self.manager.create_scene(
+            {"name": "包含基础服务", "service_ids": [base["id"]]}, "admin", "local"
+        )
+        self.assertEqual(overlap["service_ids"], [base["id"]])
+        await self.manager.start()
+        self.assertIn(("基础.ps1", "start"), self.runner.calls)
+        self.assertEqual(self.manager.base_services()["services"][0]["status"]["state"], "running")
+        self.assertEqual((await self.wait_operation(
+            self.manager.submit_scene_activation(overlap["id"], "admin", "local")
+        ))["status"], "succeeded")
+        self.runner.calls.clear()
+        result = await self.wait_operation(
+            self.manager.submit_scene_activation(scene["id"], "admin", "local")
+        )
+        self.assertEqual(result["status"], "succeeded")
+        self.assertNotIn(("基础.ps1", "stop"), self.runner.calls)
+        self.assertEqual(next(item for item in self.manager.list_scenes()
+                              if item["id"] == scene["id"])["state"], "active")
 
     async def test_scene_rechecks_target_state_after_stop_phase(self) -> None:
         runner = BlockingActionRunner()
@@ -2264,6 +2296,25 @@ class ApiRegistryTests(unittest.TestCase):
                 })
                 self.assertEqual(created.status_code, 201, created.text)
                 service_id = created.json()["id"]
+                self.assertEqual(client.get("/api/v1/base-services").json()["service_ids"], [])
+                base_saved = client.put("/api/v1/base-services", headers=headers, json={
+                    "description": "常驻服务", "detailed_description": "独立启动",
+                    "service_ids": [service_id],
+                })
+                self.assertEqual(base_saved.status_code, 200, base_saved.text)
+                self.assertEqual(base_saved.json()["service_ids"], [service_id])
+                self.assertEqual(client.delete("/api/v1/base-services", headers=headers).status_code, 405)
+                overlap_scene = client.post("/api/v1/scenes", headers=headers, json={
+                    "name": "共享服务场景", "service_ids": [service_id],
+                })
+                self.assertEqual(overlap_scene.status_code, 201, overlap_scene.text)
+                self.assertEqual(client.delete(
+                    f"/api/v1/scenes/{overlap_scene.json()['id']}", headers=headers,
+                ).status_code, 204)
+                cleared = client.put("/api/v1/base-services", headers=headers, json={
+                    "description": "常驻服务", "service_ids": [],
+                })
+                self.assertEqual(cleared.status_code, 200, cleared.text)
                 scene = client.post("/api/v1/scenes", headers=headers, json={
                     "name": "API 场景", "description": "简短介绍",
                     "detailed_description": "API Base：http://127.0.0.1:8080/v1",
