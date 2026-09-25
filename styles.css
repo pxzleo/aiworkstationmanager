@@ -103,10 +103,12 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .page-heading h1 { margin: 3px 0 6px; font-size: clamp(29px, 3vw, 43px); line-height: 1.05; font-weight: 590; letter-spacing: -.035em; }
 .page-heading p:not(.eyebrow) { color: var(--muted); margin: 0; }
 .overview-heading h1 { display: flex; align-items: center; gap: 13px; }
+.overview-scene-title { display: flex; align-items: center; gap: 16px; }
+.overview-scene-title h1 { min-width: 0; }
 .scene-indicator { width: 11px; height: 11px; background: var(--accent); border-radius: 50%; box-shadow: 0 0 0 6px rgba(var(--accent-rgb),.08), 0 0 16px rgba(var(--accent-rgb),.4); }
 .eyebrow { color: var(--accent); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 7px; }
 .heading-actions { display: flex; gap: 9px; }
-.overview-scene-switch { min-height: 38px; padding: 0 11px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: var(--accent-ink); display: inline-flex; align-items: center; gap: 7px; transition: transform .16s, background .16s, opacity .16s; }
+.overview-scene-switch { flex: 0 0 auto; min-height: 38px; padding: 0 11px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: var(--accent-ink); display: inline-flex; align-items: center; gap: 7px; transition: transform .16s, background .16s, opacity .16s; }
 .overview-scene-switch:hover { transform: translateY(-1px); background: var(--accent-hover); }
 .overview-scene-switch:focus-within { outline: 2px solid rgba(var(--accent-rgb),.28); outline-offset: 2px; }
 .overview-scene-switch:has(select:disabled) { cursor: not-allowed; opacity: .45; transform: none; }
@@ -863,7 +865,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .page-heading .heading-actions { width: 100%; }
   .page-heading .button { flex: 1; }
   .theme-picker { grid-template-columns: 1fr; }
-  .overview-scene-switch { flex: 1; min-height: 44px; justify-content: center; }
+  .overview-scene-switch { min-height: 44px; justify-content: center; }
   .overview-scene-switch select { min-width: 0; }
   .button, .icon-button, .user-button, .mobile-menu { min-height: 44px; }
   .icon-button, .user-button, .mobile-menu { width: 44px; }

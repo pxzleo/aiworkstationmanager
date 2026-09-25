@@ -8,7 +8,7 @@
   <title>AXIS · AI 工作站</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230b0f10%22/><path d=%22M8 23 23 8M14 26l10-10%22 stroke=%22%2358e6c2%22 stroke-width=%222%22/></svg>">
   <script src="theme.js?v=20260828-1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260925-6">
+  <link rel="stylesheet" href="styles.css?v=20260925-7">
 </head>
 <body class="auth-pending app-initializing">
   <svg class="svg-sprite" aria-hidden="true">
@@ -95,17 +95,20 @@
           <div class="page-heading overview-heading">
             <div>
               <p class="eyebrow">当前工作场景</p>
-              <h1><span class="scene-indicator"></span><span id="activeSceneName">场景检测尚未配置</span></h1>
+              <div class="overview-scene-title">
+                <h1><span class="scene-indicator"></span><span id="activeSceneName">场景检测尚未配置</span></h1>
+                <label class="overview-scene-switch" title="选择后立即切换场景">
+                  <svg><use href="#i-layers"/></svg>
+                  <select id="overviewSceneSelect" aria-label="切换场景" disabled>
+                    <option value="">切换场景</option>
+                  </select>
+                </label>
+              </div>
               <p id="activeSceneSummary">场景状态由低开销健康检查发现的实际状态计算。</p>
             </div>
             <div class="heading-actions">
               <button class="button secondary" data-nav="scenes">查看场景</button>
-              <label class="overview-scene-switch" title="选择后立即切换场景">
-                <svg><use href="#i-layers"/></svg>
-                <select id="overviewSceneSelect" aria-label="切换场景" disabled>
-                  <option value="">切换场景</option>
-                </select>
-              </label>
+              <button class="button secondary" data-nav="monitor">资源监控</button>
             </div>
           </div>
 
