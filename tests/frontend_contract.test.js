@@ -319,9 +319,9 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260925-3'));
-  assert.ok(html.includes('i18n.js?v=20260925-3'));
-  assert.ok(html.includes('app.js?v=20260925-4'));
+  assert.ok(html.includes('styles.css?v=20260925-5'));
+  assert.ok(html.includes('i18n.js?v=20260925-5'));
+  assert.ok(html.includes('app.js?v=20260925-5'));
 });
 
 test('read polling tolerates transient network failures without retrying writes', () => {
@@ -433,8 +433,12 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(html.includes('id="mediaStage"'));
   assert.ok(html.includes('id="imageViewerDialog"'));
   assert.ok(html.includes('id="imageViewerThumbnails"'));
-  assert.ok(js.includes("entry.media_type?.startsWith('image/')"));
-  assert.ok(js.includes('function switchImage(offset)'));
+  assert.ok(html.includes('id="imageViewerVideo" controls autoplay playsinline'));
+  assert.ok(html.includes('aria-label="媒体缩略图"'));
+  assert.ok(js.includes('function viewerEntries()'));
+  assert.ok(js.includes('function switchViewerEntry(offset)'));
+  assert.ok(js.includes("button.append(preview, icon('play'))"));
+  assert.ok(js.includes('video.play().catch('));
   assert.ok(js.includes("document.fullscreenElement === dialog"));
   assert.ok(css.includes('.image-viewer-dialog:fullscreen'));
   assert.ok(js.includes("api('/file-service'"));
@@ -458,25 +462,8 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(js.includes('releaseFileThumbnailVideos(rows)'));
   assert.ok(js.includes("video.removeAttribute('src'); video.load()"));
   assert.ok(js.includes('fileContentUrl(entry.path, true)'));
-  assert.ok(js.includes("entry.media_type?.startsWith('audio/') ? 'audio' : 'video'"));
-  assert.ok(js.includes('function requestMediaFullscreen(player)'));
-  assert.ok(js.includes('if (player.requestFullscreen)'));
-  assert.ok(!js.includes("const target = byId('mediaDialog').querySelector('.media-dialog-shell')"));
-  assert.ok(js.includes('player.webkitEnterFullscreen'));
-  assert.ok(js.includes('function requestNativeVideoFullscreen(player, cause)'));
-  assert.ok(js.includes('.catch((error) => requestNativeVideoFullscreen(player, error))'));
-  assert.ok(js.includes('shell.contains(document.fullscreenElement)'));
   assert.ok(js.includes('await document.exitFullscreen()'));
-  assert.ok(js.includes("showMediaSwipeNotice(`${ui('无法退出全屏')}：${error.message}`)"));
-  assert.ok(js.includes('function adjacentMediaVideo(offset)'));
-  assert.ok(js.includes("state.files.filter((item) => item.media_type?.startsWith('video/'))"));
-  assert.ok(js.includes("player.addEventListener('touchstart'"));
-  assert.ok(js.includes("player.addEventListener('touchmove'"));
-  assert.ok(js.includes("player.addEventListener('touchend'"));
-  assert.ok(js.includes('deltaY < 0 ? 1 : -1'));
-  assert.ok(js.includes('Math.abs(deltaY) < MEDIA_SWIPE_MIN_DISTANCE_PX'));
-  assert.ok(js.includes("showMediaSwipeNotice(ui(offset < 0 ? '已经是第一个视频' : '已经是最后一个视频'))"));
-  assert.ok(html.includes('id="mediaSwipeNotice" role="status" aria-live="polite"'));
+  assert.ok(js.includes('function openMedia(entry)'));
   assert.ok(html.includes('<span>操作</span>'));
   assert.ok(!js.includes("fileActionLabel(entry), 'play'"));
   assert.ok(js.includes("function fileActionLabel(entry)"));
@@ -499,18 +486,14 @@ test('file service page browses folders, downloads files and plays media', () =>
   assert.ok(css.includes('.file-browser.thumbnail-view .file-rename-button, .file-browser.thumbnail-view .file-delete-button { width: 30px; height: 30px; min-height: 30px; }'));
   assert.ok(css.includes('.file-browser.thumbnail-view .file-size { display: none; }'));
   assert.ok(i18n.includes("'更名': 'Rename'"));
-  assert.ok(i18n.includes("'已经是第一个视频': 'This is the first video'"));
-  assert.ok(i18n.includes("'已经是最后一个视频': 'This is the last video'"));
-  assert.ok(i18n.includes("'浏览器不支持全屏播放': 'Fullscreen playback is not supported by this browser'"));
+  assert.ok(i18n.includes("'媒体缩略图': 'Media thumbnails'"));
   assert.ok(css.includes('.file-browser.thumbnail-view #fileRows'));
   assert.ok(css.includes('aspect-ratio: 9 / 16'));
   assert.ok(css.includes('.file-browser.thumbnail-view #fileRows { grid-template-columns: repeat(2, minmax(0, 1fr));'));
   assert.ok(css.includes('.file-thumbnail img, .file-thumbnail video'));
   assert.ok(css.includes('.file-thumbnail video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }'));
-  assert.ok(css.includes('.media-stage video'));
-  assert.ok(css.includes('touch-action: pan-x pinch-zoom'));
-  assert.ok(css.includes('.media-dialog-shell:fullscreen'));
-  assert.ok(css.includes('.media-swipe-notice.show'));
+  assert.ok(css.includes('.image-viewer-canvas video'));
+  assert.ok(css.includes('.image-viewer-thumbnail > svg'));
   assert.ok(i18n.includes("'文件服务': 'File Service'"));
 });
 
@@ -606,9 +589,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260925-3'));
-  assert.ok(html.includes('i18n.js?v=20260925-3'));
-  assert.ok(html.includes('app.js?v=20260925-4'));
+  assert.ok(html.includes('styles.css?v=20260925-5'));
+  assert.ok(html.includes('i18n.js?v=20260925-5'));
+  assert.ok(html.includes('app.js?v=20260925-5'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

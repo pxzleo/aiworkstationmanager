@@ -367,11 +367,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .media-dialog-shell > header h2 { max-width: 700px; margin: 3px 0 0; overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .media-dialog-shell > footer { min-height: 64px; justify-content: flex-end; border-top: 1px solid var(--line); border-bottom: 0; }
 .media-stage { min-height: 320px; display: grid; place-items: center; padding: 20px; background: #050708; }
-.media-stage video { width: 100%; max-height: min(68vh, 560px); background: #000; touch-action: pan-x pinch-zoom; }
 .media-stage audio { width: min(680px, 100%); }
-.media-swipe-notice { position: absolute; z-index: 3; left: 50%; bottom: 78px; max-width: calc(100% - 32px); margin: 0; padding: 8px 12px; overflow: hidden; border-radius: 999px; background: rgba(5, 7, 8, .82); color: #fff; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; opacity: 0; transform: translate(-50%, 8px); transition: opacity .16s ease, transform .16s ease; }
-.media-swipe-notice.show { opacity: 1; transform: translate(-50%, 0); }
-.media-dialog-shell:fullscreen { width: 100vw; height: 100vh; min-height: 100%; background: var(--surface); }
 .image-viewer-dialog, .image-viewer-dialog:fullscreen { inset: 0; box-sizing: border-box; width: 100%; max-width: none; height: 100vh; height: 100dvh; max-height: none; margin: 0; padding: 0; overflow: hidden; border: 0; background: #050708; color: #fff; }
 body:has(.image-viewer-dialog[open]) { overflow: hidden; }
 .image-viewer-dialog::backdrop { background: #050708; }
@@ -386,6 +382,9 @@ body:has(.image-viewer-dialog[open]) { overflow: hidden; }
 .image-viewer-stage { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden; }
 .image-viewer-canvas { position: absolute; inset: 0; display: flex; overflow: auto; }
 .image-viewer-canvas img { display: block; flex: none; margin: auto; max-width: none; max-height: none; }
+.image-viewer-canvas video { display: block; flex: none; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.image-viewer-canvas [hidden] { display: none; }
+.image-viewer-dialog.show-video #imageViewerZoomOut, .image-viewer-dialog.show-video #imageViewerZoomReset, .image-viewer-dialog.show-video #imageViewerZoomIn { display: none; }
 .image-viewer-arrow { position: absolute; z-index: 1; top: 50%; width: 48px; height: 56px; display: grid; place-items: center; padding: 0; border: 1px solid #65736f; border-radius: 8px; background: rgba(16, 22, 23, .85); color: #fff; cursor: pointer; transform: translateY(-50%); }
 .image-viewer-arrow.previous { left: 16px; }
 .image-viewer-arrow.next { right: 16px; }
@@ -396,7 +395,9 @@ body:has(.image-viewer-dialog[open]) { overflow: hidden; }
 .image-viewer-thumbnails::-webkit-scrollbar { display: none; }
 .image-viewer-thumbnail { flex: 0 0 70px; width: 70px; height: 70px; padding: 0; overflow: hidden; border: 2px solid transparent; border-radius: 6px; background: #050708; cursor: pointer; }
 .image-viewer-thumbnail[aria-current="true"] { border-color: var(--accent); }
-.image-viewer-thumbnail img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.image-viewer-thumbnail img, .image-viewer-thumbnail video { width: 100%; height: 100%; display: block; object-fit: cover; }
+.image-viewer-thumbnail:has(video) { position: relative; }
+.image-viewer-thumbnail > svg { position: absolute; top: 50%; left: 50%; width: 27px; height: 27px; padding: 5px; border-radius: 50%; background: rgba(5, 7, 8, .8); fill: none; stroke: #fff; stroke-width: 2; transform: translate(-50%, -50%); pointer-events: none; }
 .image-viewer-header button:focus-visible, .image-viewer-arrow:focus-visible, .image-viewer-thumbnail:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .image-viewer-dialog.pure-fullscreen .image-viewer-header { position: absolute; z-index: 3; top: 12px; right: 12px; display: block; min-height: 0; padding: 6px; border-radius: 8px; background: rgba(16, 22, 23, .85); }
 .image-viewer-dialog.pure-fullscreen .image-viewer-shell { grid-template-rows: minmax(0, 1fr); }

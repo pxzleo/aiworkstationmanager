@@ -9,8 +9,6 @@ const ACTION_TIMEOUT_MS = 30000;
 const READ_RETRY_DELAYS_MS = [400, 1200];
 const NETWORK_NOTICE_COOLDOWN_MS = 15000;
 const PAGE_STORAGE_KEY = 'axis-active-page';
-const MEDIA_SWIPE_MIN_DISTANCE_PX = 56;
-const MEDIA_SWIPE_AXIS_RATIO = 1.2;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MONITOR_GPU_COLORS = ['#a78bfa', '#fb923c', '#22c55e', '#f472b6', '#38bdf8', '#eab308'];
 const gpuLayout = window.AxisGpuLayout;
@@ -24,13 +22,13 @@ let sceneProgressExpectedTotal = null;
 let progressCancelLabel = '终止切换并返回';
 let draggedSceneId = null;
 let fileThumbnailObserver = null;
+let viewerThumbnailObserver = null;
 let automaticTaskOrderSaving = false;
 let automaticTaskExecutionLoaded = false;
-let mediaSwipeNoticeTimer = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], baseServices: null, users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
-  fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', mediaPath: '', imagePath: '', imageZoom: 100,
+  fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', viewerPath: '', imageZoom: 100,
   historyWindowMinutes: 15, historyAnchorMs: null, historyFollowingCurrent: true, historyLoaded: false, historyLoading: false, historyBucketSeconds: 0, powerModel: null,
   chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
@@ -342,7 +340,7 @@ function formatFileSize(value) { if (!Number.isFinite(value)) return '—'; if (
 function fileLabel(entry) { if (entry.type === 'directory') return '目录'; if (entry.media_type?.startsWith('image/')) return '图片'; if (entry.playable) return entry.media_type?.startsWith('audio/') ? '音频' : '视频'; return '文件'; }
 function fileActionLabel(entry) { return `${ui(entry.type === 'directory' || entry.media_type?.startsWith('image/') ? '打开' : entry.playable ? '播放' : '下载')} ${entry.name}`; }
 function downloadFile(entry) { const link = document.createElement('a'); link.href = fileContentUrl(entry.path, true); link.download = entry.name; document.body.append(link); link.click(); link.remove(); }
-function imageEntries() { return state.files.filter((entry) => entry.type === 'file' && entry.media_type?.startsWith('image/')); }
+function viewerEntries() { return state.files.filter((entry) => entry.type === 'file' && /^(image|video)\//.test(entry.media_type || '')); }
 function layoutImage() {
   const image = byId('imageViewerImage'); const canvas = byId('imageViewerCanvas');
   if (!image.naturalWidth || !image.naturalHeight || !canvas.clientWidth || !canvas.clientHeight) return;
@@ -359,18 +357,31 @@ function setImageZoom(value) {
   byId('imageViewerZoomIn').disabled = state.imageZoom === 400;
   layoutImage();
 }
-function showImage(entry) {
-  const images = imageEntries(); const index = images.findIndex((item) => item.path === entry.path); if (index < 0) return;
-  state.imagePath = entry.path; text('imageViewerTitle', entry.name); text('imageViewerCount', `${index + 1} / ${images.length}`);
-  const image = byId('imageViewerImage'); image.alt = entry.name; image.style.width = ''; image.style.height = ''; setImageZoom(100); image.src = fileContentUrl(entry.path);
-  byId('imageViewerPrevious').disabled = index === 0; byId('imageViewerNext').disabled = index === images.length - 1;
+function releaseViewerVideo() { const video = byId('imageViewerVideo'); video.pause(); video.removeAttribute('src'); video.load(); video.hidden = true; }
+function showViewerEntry(entry) {
+  const entries = viewerEntries(); const index = entries.findIndex((item) => item.path === entry.path); if (index < 0) return;
+  state.viewerPath = entry.path; text('imageViewerTitle', entry.name); text('imageViewerCount', `${index + 1} / ${entries.length}`);
+  const image = byId('imageViewerImage'); const video = byId('imageViewerVideo'); const isVideo = entry.media_type?.startsWith('video/');
+  releaseViewerVideo(); image.removeAttribute('src'); image.hidden = isVideo;
+  byId('imageViewerDialog').classList.toggle('show-video', isVideo);
+  setImageZoom(100);
+  if (isVideo) { video.hidden = false; video.src = fileContentUrl(entry.path); video.play().catch((error) => { if (state.viewerPath === entry.path && byId('imageViewerDialog').open) showToast(`${ui('视频播放失败')}：${error.message}`); }); }
+  else { image.alt = entry.name; image.style.width = ''; image.style.height = ''; image.src = fileContentUrl(entry.path); }
+  byId('imageViewerPrevious').disabled = index === 0; byId('imageViewerNext').disabled = index === entries.length - 1;
   byId('imageViewerThumbnails').querySelectorAll('button').forEach((button, position) => { button.setAttribute('aria-current', String(position === index)); if (position === index) button.scrollIntoView({ block: 'nearest', inline: 'center' }); });
 }
-function switchImage(offset) { const images = imageEntries(); const index = images.findIndex((entry) => entry.path === state.imagePath); const next = images[index + offset]; if (index >= 0 && next) showImage(next); }
-function openImage(entry) {
+function switchViewerEntry(offset) { const entries = viewerEntries(); const index = entries.findIndex((entry) => entry.path === state.viewerPath); const next = entries[index + offset]; if (index >= 0 && next) showViewerEntry(next); }
+function openViewer(entry) {
   const dialog = byId('imageViewerDialog'); const thumbnails = byId('imageViewerThumbnails'); thumbnails.replaceChildren();
-  imageEntries().forEach((item) => { const button = element('button', 'image-viewer-thumbnail'); button.type = 'button'; button.title = item.name; button.setAttribute('aria-label', `${ui('打开')} ${item.name}`); const preview = document.createElement('img'); preview.src = fileContentUrl(item.path); preview.alt = ''; preview.loading = 'lazy'; button.append(preview); button.addEventListener('click', () => showImage(item)); thumbnails.append(button); });
-  dialog.showModal(); showImage(entry);
+  viewerThumbnailObserver?.disconnect();
+  viewerThumbnailObserver = 'IntersectionObserver' in window ? new IntersectionObserver((items, observer) => items.forEach((item) => { if (!item.isIntersecting) return; item.target.src = item.target.dataset.src; delete item.target.dataset.src; observer.unobserve(item.target); }), { root: thumbnails, rootMargin: '160px' }) : null;
+  viewerEntries().forEach((item) => {
+    const button = element('button', 'image-viewer-thumbnail'); button.type = 'button'; button.title = item.name; button.setAttribute('aria-label', fileActionLabel(item));
+    if (item.media_type?.startsWith('video/')) { const preview = document.createElement('video'); preview.muted = true; preview.playsInline = true; preview.preload = 'metadata'; if (viewerThumbnailObserver) { preview.dataset.src = fileContentUrl(item.path); viewerThumbnailObserver.observe(preview); } else preview.src = fileContentUrl(item.path); button.append(preview, icon('play')); }
+    else { const preview = document.createElement('img'); preview.src = fileContentUrl(item.path); preview.alt = ''; preview.loading = 'lazy'; button.append(preview); }
+    button.addEventListener('click', () => showViewerEntry(item)); thumbnails.append(button);
+  });
+  dialog.showModal(); showViewerEntry(entry);
 }
 async function toggleImageFullscreen() {
   const dialog = byId('imageViewerDialog'); const pure = dialog.classList.toggle('pure-fullscreen');
@@ -383,24 +394,11 @@ async function closeImageViewer() {
   if (document.fullscreenElement === dialog) { try { await document.exitFullscreen(); } catch (error) { showToast(`${ui('无法退出全屏')}：${error.message}`); return; } }
   if (dialog.open) dialog.close();
 }
-function releaseImageViewer() { state.imagePath = ''; const image = byId('imageViewerImage'); image.removeAttribute('src'); image.alt = ''; image.style.width = ''; image.style.height = ''; byId('imageViewerDialog').classList.remove('pure-fullscreen'); text('imageViewerFullscreen', ui('全屏')); byId('imageViewerThumbnails').replaceChildren(); }
-function releaseMedia() { const stage = byId('mediaStage'); stage.querySelectorAll('audio, video').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); state.mediaPath = ''; clearTimeout(mediaSwipeNoticeTimer); byId('mediaSwipeNotice').classList.remove('show'); text('mediaSwipeNotice', ''); }
-async function closeMedia() { const shell = byId('mediaDialog').querySelector('.media-dialog-shell'); if (document.fullscreenElement && shell.contains(document.fullscreenElement)) { try { await document.exitFullscreen(); } catch (error) { showMediaSwipeNotice(`${ui('无法退出全屏')}：${error.message}`); return; } } releaseMedia(); if (byId('mediaDialog').open) byId('mediaDialog').close(); }
-function requestNativeVideoFullscreen(player, cause) { try { if (player.webkitEnterFullscreen) { player.webkitEnterFullscreen(); return; } } catch (error) { showToast(`${ui('无法进入全屏')}：${error.message}`); return; } showToast(`${ui('无法进入全屏')}：${cause?.message || ui('浏览器不支持全屏播放')}`); }
-function requestMediaFullscreen(player) { try { if (player.requestFullscreen) { player.requestFullscreen().catch((error) => requestNativeVideoFullscreen(player, error)); return; } requestNativeVideoFullscreen(player); } catch (error) { requestNativeVideoFullscreen(player, error); } }
-function setMediaEntry(entry, player) { state.mediaPath = entry.path; text('mediaTitle', entry.name); const download = byId('mediaDownloadLink'); download.href = fileContentUrl(entry.path, true); download.download = entry.name; player.src = fileContentUrl(entry.path); }
-function adjacentMediaVideo(offset) { const videos = state.files.filter((item) => item.media_type?.startsWith('video/')); const current = videos.findIndex((item) => item.path === state.mediaPath); return current < 0 ? null : videos[current + offset] || null; }
-function showMediaSwipeNotice(message) { const notice = byId('mediaSwipeNotice'); text('mediaSwipeNotice', message); notice.classList.add('show'); clearTimeout(mediaSwipeNoticeTimer); mediaSwipeNoticeTimer = setTimeout(() => notice.classList.remove('show'), 1800); }
-function switchMediaVideo(offset) { const player = byId('mediaStage').querySelector('video'); if (!player) return; const entry = adjacentMediaVideo(offset); if (!entry) { showMediaSwipeNotice(ui(offset < 0 ? '已经是第一个视频' : '已经是最后一个视频')); return; } showMediaSwipeNotice(entry.name); player.pause(); setMediaEntry(entry, player); player.load(); player.play().catch((error) => showMediaSwipeNotice(`${ui('视频播放失败')}：${error.message}`)); }
-function bindMediaSwipe(player) {
-  let start = null;
-  player.addEventListener('touchstart', (event) => { const touch = event.touches.length === 1 ? event.touches[0] : null; start = touch ? { x: touch.clientX, y: touch.clientY } : null; }, { passive: true });
-  player.addEventListener('touchmove', (event) => { if (!start || event.touches.length !== 1) return; const touch = event.touches[0]; const deltaX = touch.clientX - start.x; const deltaY = touch.clientY - start.y; if (Math.abs(deltaY) >= 12 && Math.abs(deltaY) > Math.abs(deltaX) * MEDIA_SWIPE_AXIS_RATIO) event.preventDefault(); }, { passive: false });
-  player.addEventListener('touchend', (event) => { if (!start || !event.changedTouches.length) { start = null; return; } const touch = event.changedTouches[0]; const deltaX = touch.clientX - start.x; const deltaY = touch.clientY - start.y; start = null; if (Math.abs(deltaY) < MEDIA_SWIPE_MIN_DISTANCE_PX || Math.abs(deltaY) <= Math.abs(deltaX) * MEDIA_SWIPE_AXIS_RATIO) return; event.preventDefault(); switchMediaVideo(deltaY < 0 ? 1 : -1); }, { passive: false });
-  player.addEventListener('touchcancel', () => { start = null; }, { passive: true });
-}
-function openMedia(entry, fullscreen = false) { const kind = entry.media_type?.startsWith('audio/') ? 'audio' : 'video'; const player = document.createElement(kind); player.controls = true; player.autoplay = true; player.preload = 'metadata'; player.dataset.i18nSkip = ''; setMediaEntry(entry, player); if (kind === 'video') bindMediaSwipe(player); byId('mediaStage').replaceChildren(player); byId('mediaDialog').showModal(); if (fullscreen && kind === 'video') requestMediaFullscreen(player); }
-function openFileEntry(entry, fullscreen = false) { if (entry.type === 'directory') refreshFiles(entry.path).catch(() => {}); else if (entry.media_type?.startsWith('image/')) openImage(entry); else if (entry.playable) openMedia(entry, fullscreen); else downloadFile(entry); }
+function releaseImageViewer() { state.viewerPath = ''; releaseViewerVideo(); viewerThumbnailObserver?.disconnect(); viewerThumbnailObserver = null; byId('imageViewerThumbnails').querySelectorAll('video').forEach((video) => { video.removeAttribute('src'); video.load(); }); const image = byId('imageViewerImage'); image.removeAttribute('src'); image.alt = ''; image.style.width = ''; image.style.height = ''; byId('imageViewerDialog').classList.remove('pure-fullscreen', 'show-video'); text('imageViewerFullscreen', ui('全屏')); byId('imageViewerThumbnails').replaceChildren(); }
+function releaseMedia() { const stage = byId('mediaStage'); stage.querySelectorAll('audio').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); }
+function closeMedia() { releaseMedia(); if (byId('mediaDialog').open) byId('mediaDialog').close(); }
+function openMedia(entry) { const player = document.createElement('audio'); player.controls = true; player.autoplay = true; player.preload = 'metadata'; player.dataset.i18nSkip = ''; text('mediaTitle', entry.name); const download = byId('mediaDownloadLink'); download.href = fileContentUrl(entry.path, true); download.download = entry.name; player.src = fileContentUrl(entry.path); byId('mediaStage').replaceChildren(player); byId('mediaDialog').showModal(); }
+function openFileEntry(entry) { if (entry.type === 'directory') refreshFiles(entry.path).catch(() => {}); else if (/^(image|video)\//.test(entry.media_type || '')) openViewer(entry); else if (entry.media_type?.startsWith('audio/')) openMedia(entry); else downloadFile(entry); }
 function releaseFileThumbnailVideos(rows = byId('fileRows')) {
   fileThumbnailObserver?.disconnect(); fileThumbnailObserver = null;
   rows.querySelectorAll('.file-thumbnail video').forEach((video) => { video.removeAttribute('src'); video.load(); });
@@ -412,7 +410,7 @@ function observeFileThumbnail(video, source) {
   fileThumbnailObserver.observe(video);
 }
 function fileThumbnail(entry) {
-  const preview = element('button', 'file-thumbnail'); preview.type = 'button'; preview.setAttribute('aria-label', fileActionLabel(entry)); preview.addEventListener('click', () => openFileEntry(entry, entry.playable));
+  const preview = element('button', 'file-thumbnail'); preview.type = 'button'; preview.setAttribute('aria-label', fileActionLabel(entry)); preview.addEventListener('click', () => openFileEntry(entry));
   if (entry.media_type?.startsWith('image/')) {
     const image = document.createElement('img'); image.src = fileContentUrl(entry.path); image.alt = ''; image.loading = 'lazy'; image.decoding = 'async'; preview.append(image);
   } else if (entry.media_type?.startsWith('video/')) {
@@ -438,7 +436,7 @@ function renderFileBreadcrumbs() {
 function renderFiles() {
   renderFileBreadcrumbs(); const rows = byId('fileRows'); const browser = byId('fileBrowser'); releaseFileThumbnailVideos(rows); rows.replaceChildren(); browser.classList.toggle('list-view', state.fileView === 'list'); browser.classList.toggle('thumbnail-view', state.fileView === 'thumbnail');
   if (!state.files.length) { rows.append(element('p', 'empty-state', '这个目录是空的。')); return; }
-  state.files.forEach((entry) => { const row = element('article', 'file-row'); const name = element('button', 'file-name'); name.type = 'button'; name.setAttribute('aria-label', fileActionLabel(entry)); name.append(icon(entry.type === 'directory' ? 'box' : entry.playable ? 'play' : 'file')); const copy = element('span'); const title = userElement('strong', '', entry.name); const type = element('small', 'file-entry-type', fileLabel(entry)); copy.append(title); name.append(copy); name.addEventListener('click', () => openFileEntry(entry, entry.playable)); const actions = element('span', 'file-actions'); const rename = iconButton('更名', 'edit', 'file-rename-button'); rename.addEventListener('click', () => openFileRenameDialog(entry)); const remove = iconButton('删除', 'trash', 'file-delete-button'); remove.addEventListener('click', () => deleteFileEntry(entry)); actions.append(rename, remove); if (state.fileView === 'thumbnail') { const meta = element('span', 'file-card-meta'); meta.append(type, actions); row.append(fileThumbnail(entry), name, meta); } else { copy.append(type); row.append(name, element('span', 'file-size', entry.type === 'directory' ? '—' : formatFileSize(entry.size)), userElement('time', '', formatDate(entry.modified_at, true)), actions); } rows.append(row); });
+  state.files.forEach((entry) => { const row = element('article', 'file-row'); const name = element('button', 'file-name'); name.type = 'button'; name.setAttribute('aria-label', fileActionLabel(entry)); name.append(icon(entry.type === 'directory' ? 'box' : entry.playable ? 'play' : 'file')); const copy = element('span'); const title = userElement('strong', '', entry.name); const type = element('small', 'file-entry-type', fileLabel(entry)); copy.append(title); name.append(copy); name.addEventListener('click', () => openFileEntry(entry)); const actions = element('span', 'file-actions'); const rename = iconButton('更名', 'edit', 'file-rename-button'); rename.addEventListener('click', () => openFileRenameDialog(entry)); const remove = iconButton('删除', 'trash', 'file-delete-button'); remove.addEventListener('click', () => deleteFileEntry(entry)); actions.append(rename, remove); if (state.fileView === 'thumbnail') { const meta = element('span', 'file-card-meta'); meta.append(type, actions); row.append(fileThumbnail(entry), name, meta); } else { copy.append(type); row.append(name, element('span', 'file-size', entry.type === 'directory' ? '—' : formatFileSize(entry.size)), userElement('time', '', formatDate(entry.modified_at, true)), actions); } rows.append(row); });
 }
 async function refreshFiles(path = '') {
   if (document.hidden) return; const rows = byId('fileRows'); releaseFileThumbnailVideos(rows); rows.setAttribute('aria-busy', 'true');
@@ -1067,8 +1065,8 @@ byId('fileBrowser').parentElement.querySelector('.file-view-switch').addEventLis
 byId('closeMediaButton').addEventListener('click', closeMedia);
 byId('mediaDialog').addEventListener('close', releaseMedia);
 byId('imageViewerBack').addEventListener('click', closeImageViewer);
-byId('imageViewerPrevious').addEventListener('click', () => switchImage(-1));
-byId('imageViewerNext').addEventListener('click', () => switchImage(1));
+byId('imageViewerPrevious').addEventListener('click', () => switchViewerEntry(-1));
+byId('imageViewerNext').addEventListener('click', () => switchViewerEntry(1));
 byId('imageViewerZoomOut').addEventListener('click', () => setImageZoom(state.imageZoom - 25));
 byId('imageViewerZoomIn').addEventListener('click', () => setImageZoom(state.imageZoom + 25));
 byId('imageViewerZoomReset').addEventListener('click', () => setImageZoom(100));
@@ -1078,7 +1076,7 @@ byId('imageViewerImage').addEventListener('load', layoutImage);
 byId('imageViewerImage').addEventListener('error', () => { if (byId('imageViewerDialog').open) showToast(`${ui('图片加载失败')}：${byId('imageViewerTitle').textContent}`); });
 window.addEventListener('resize', () => { if (byId('imageViewerDialog').open) layoutImage(); });
 if ('ResizeObserver' in window) new ResizeObserver(() => { if (byId('imageViewerDialog').open) layoutImage(); }).observe(byId('imageViewerCanvas'));
-document.addEventListener('keydown', (event) => { if (!byId('imageViewerDialog').open) return; if (event.key === 'ArrowLeft') { event.preventDefault(); switchImage(-1); } else if (event.key === 'ArrowRight') { event.preventDefault(); switchImage(1); } });
+document.addEventListener('keydown', (event) => { if (!byId('imageViewerDialog').open) return; if (event.key === 'ArrowLeft') { event.preventDefault(); switchViewerEntry(-1); } else if (event.key === 'ArrowRight') { event.preventDefault(); switchViewerEntry(1); } });
 document.addEventListener('fullscreenchange', () => { const dialog = byId('imageViewerDialog'); if (!document.fullscreenElement && dialog.open && dialog.classList.contains('pure-fullscreen')) { dialog.classList.remove('pure-fullscreen'); text('imageViewerFullscreen', ui('全屏')); } if (dialog.open) requestAnimationFrame(layoutImage); });
 
 bootstrap();
