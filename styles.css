@@ -372,6 +372,27 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .media-swipe-notice { position: absolute; z-index: 3; left: 50%; bottom: 78px; max-width: calc(100% - 32px); margin: 0; padding: 8px 12px; overflow: hidden; border-radius: 999px; background: rgba(5, 7, 8, .82); color: #fff; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; opacity: 0; transform: translate(-50%, 8px); transition: opacity .16s ease, transform .16s ease; }
 .media-swipe-notice.show { opacity: 1; transform: translate(-50%, 0); }
 .media-dialog-shell:fullscreen { width: 100vw; height: 100vh; min-height: 100%; background: var(--surface); }
+.image-viewer-dialog, .image-viewer-dialog:fullscreen { inset: 0; box-sizing: border-box; width: 100%; max-width: none; height: 100vh; height: 100dvh; max-height: none; margin: 0; padding: 0; overflow: hidden; border: 0; background: #050708; color: #fff; }
+body:has(.image-viewer-dialog[open]) { overflow: hidden; }
+.image-viewer-dialog::backdrop { background: #050708; }
+.image-viewer-shell { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: 100%; height: 100%; }
+.image-viewer-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; min-height: 64px; padding: 10px 20px; background: #101617; }
+.image-viewer-header h2 { min-width: 0; margin: 0; overflow: hidden; font-size: 16px; font-weight: 600; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.image-viewer-header > span { color: #b7c4c1; font-size: 13px; white-space: nowrap; }
+.image-viewer-stage { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden; }
+.image-viewer-stage > img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.image-viewer-arrow { position: absolute; z-index: 1; top: 50%; width: 48px; height: 56px; display: grid; place-items: center; padding: 0; border: 1px solid #65736f; border-radius: 8px; background: rgba(16, 22, 23, .85); color: #fff; cursor: pointer; transform: translateY(-50%); }
+.image-viewer-arrow.previous { left: 16px; }
+.image-viewer-arrow.next { right: 16px; }
+.image-viewer-arrow.previous svg { transform: rotate(180deg); }
+.image-viewer-arrow svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.image-viewer-arrow:disabled { opacity: .35; cursor: default; }
+.image-viewer-thumbnails { display: flex; gap: 8px; align-items: center; min-height: 96px; padding: 8px 20px; overflow-x: auto; background: #101617; scrollbar-width: none; }
+.image-viewer-thumbnails::-webkit-scrollbar { display: none; }
+.image-viewer-thumbnail { flex: 0 0 70px; width: 70px; height: 70px; padding: 0; overflow: hidden; border: 2px solid transparent; border-radius: 6px; background: #050708; cursor: pointer; }
+.image-viewer-thumbnail[aria-current="true"] { border-color: var(--accent); }
+.image-viewer-thumbnail img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.image-viewer-header button:focus-visible, .image-viewer-arrow:focus-visible, .image-viewer-thumbnail:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 @media (max-width: 820px) {
   .file-service-heading .heading-actions { width: 100%; }
@@ -389,6 +410,13 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   .file-size, .file-row time { display: none; }
   .media-dialog-shell { min-height: min(560px, calc(100vh - 24px)); }
   .media-stage { min-height: 240px; padding: 8px; }
+  .image-viewer-header { gap: 8px; min-height: 56px; padding: 8px; }
+  .image-viewer-header h2 { font-size: 13px; }
+  .image-viewer-arrow { width: 38px; height: 48px; }
+  .image-viewer-arrow.previous { left: 8px; }
+  .image-viewer-arrow.next { right: 8px; }
+  .image-viewer-thumbnails { min-height: 76px; padding: 6px 8px; }
+  .image-viewer-thumbnail { flex-basis: 58px; width: 58px; height: 58px; }
 }
 .data-table { border-top: 1px solid var(--line-strong); }
 .table-head, .table-row { display: grid; grid-template-columns: minmax(210px,1.35fr) minmax(150px,1fr) 120px 80px 90px minmax(260px,auto); align-items: center; column-gap: 15px; }

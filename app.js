@@ -30,7 +30,7 @@ let mediaSwipeNoticeTimer = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], baseServices: null, users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
-  fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', mediaPath: '',
+  fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', mediaPath: '', imagePath: '',
   historyWindowMinutes: 15, historyAnchorMs: null, historyFollowingCurrent: true, historyLoaded: false, historyLoading: false, historyBucketSeconds: 0, powerModel: null,
   chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
@@ -339,9 +339,30 @@ async function refreshUsers() { if (document.hidden) return; try { const result 
 
 function fileContentUrl(path, download = false) { const params = new URLSearchParams({ path }); if (download) params.set('download', 'true'); return `${API_PREFIX}/file-service/content?${params}`; }
 function formatFileSize(value) { if (!Number.isFinite(value)) return '—'; if (value < 1024) return `${value} B`; const units = ['KB', 'MB', 'GB', 'TB']; let size = value; let unit = -1; do { size /= 1024; unit += 1; } while (size >= 1024 && unit < units.length - 1); return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unit]}`; }
-function fileLabel(entry) { if (entry.type === 'directory') return '目录'; if (entry.playable) return entry.media_type?.startsWith('audio/') ? '音频' : '视频'; return '文件'; }
-function fileActionLabel(entry) { return `${ui(entry.type === 'directory' ? '打开' : entry.playable ? '播放' : '下载')} ${entry.name}`; }
+function fileLabel(entry) { if (entry.type === 'directory') return '目录'; if (entry.media_type?.startsWith('image/')) return '图片'; if (entry.playable) return entry.media_type?.startsWith('audio/') ? '音频' : '视频'; return '文件'; }
+function fileActionLabel(entry) { return `${ui(entry.type === 'directory' || entry.media_type?.startsWith('image/') ? '打开' : entry.playable ? '播放' : '下载')} ${entry.name}`; }
 function downloadFile(entry) { const link = document.createElement('a'); link.href = fileContentUrl(entry.path, true); link.download = entry.name; document.body.append(link); link.click(); link.remove(); }
+function imageEntries() { return state.files.filter((entry) => entry.type === 'file' && entry.media_type?.startsWith('image/')); }
+function showImage(entry) {
+  const images = imageEntries(); const index = images.findIndex((item) => item.path === entry.path); if (index < 0) return;
+  state.imagePath = entry.path; text('imageViewerTitle', entry.name); text('imageViewerCount', `${index + 1} / ${images.length}`);
+  const image = byId('imageViewerImage'); image.alt = entry.name; image.src = fileContentUrl(entry.path);
+  byId('imageViewerPrevious').disabled = index === 0; byId('imageViewerNext').disabled = index === images.length - 1;
+  byId('imageViewerThumbnails').querySelectorAll('button').forEach((button, position) => { button.setAttribute('aria-current', String(position === index)); if (position === index) button.scrollIntoView({ block: 'nearest', inline: 'center' }); });
+}
+function switchImage(offset) { const images = imageEntries(); const index = images.findIndex((entry) => entry.path === state.imagePath); const next = images[index + offset]; if (index >= 0 && next) showImage(next); }
+function openImage(entry) {
+  const dialog = byId('imageViewerDialog'); const thumbnails = byId('imageViewerThumbnails'); thumbnails.replaceChildren();
+  imageEntries().forEach((item) => { const button = element('button', 'image-viewer-thumbnail'); button.type = 'button'; button.title = item.name; button.setAttribute('aria-label', `${ui('打开')} ${item.name}`); const preview = document.createElement('img'); preview.src = fileContentUrl(item.path); preview.alt = ''; preview.loading = 'lazy'; button.append(preview); button.addEventListener('click', () => showImage(item)); thumbnails.append(button); });
+  dialog.showModal(); showImage(entry);
+  if (dialog.requestFullscreen) dialog.requestFullscreen().catch((error) => showToast(`${ui('无法进入全屏')}：${error.message}`));
+}
+async function closeImageViewer() {
+  const dialog = byId('imageViewerDialog');
+  if (document.fullscreenElement === dialog) { try { await document.exitFullscreen(); } catch (error) { showToast(`${ui('无法退出全屏')}：${error.message}`); return; } }
+  if (dialog.open) dialog.close();
+}
+function releaseImageViewer() { state.imagePath = ''; const image = byId('imageViewerImage'); image.removeAttribute('src'); image.alt = ''; byId('imageViewerThumbnails').replaceChildren(); }
 function releaseMedia() { const stage = byId('mediaStage'); stage.querySelectorAll('audio, video').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); state.mediaPath = ''; clearTimeout(mediaSwipeNoticeTimer); byId('mediaSwipeNotice').classList.remove('show'); text('mediaSwipeNotice', ''); }
 async function closeMedia() { const shell = byId('mediaDialog').querySelector('.media-dialog-shell'); if (document.fullscreenElement && shell.contains(document.fullscreenElement)) { try { await document.exitFullscreen(); } catch (error) { showMediaSwipeNotice(`${ui('无法退出全屏')}：${error.message}`); return; } } releaseMedia(); if (byId('mediaDialog').open) byId('mediaDialog').close(); }
 function requestNativeVideoFullscreen(player, cause) { try { if (player.webkitEnterFullscreen) { player.webkitEnterFullscreen(); return; } } catch (error) { showToast(`${ui('无法进入全屏')}：${error.message}`); return; } showToast(`${ui('无法进入全屏')}：${cause?.message || ui('浏览器不支持全屏播放')}`); }
@@ -358,7 +379,7 @@ function bindMediaSwipe(player) {
   player.addEventListener('touchcancel', () => { start = null; }, { passive: true });
 }
 function openMedia(entry, fullscreen = false) { const kind = entry.media_type?.startsWith('audio/') ? 'audio' : 'video'; const player = document.createElement(kind); player.controls = true; player.autoplay = true; player.preload = 'metadata'; player.dataset.i18nSkip = ''; setMediaEntry(entry, player); if (kind === 'video') bindMediaSwipe(player); byId('mediaStage').replaceChildren(player); byId('mediaDialog').showModal(); if (fullscreen && kind === 'video') requestMediaFullscreen(player); }
-function openFileEntry(entry, fullscreen = false) { if (entry.type === 'directory') refreshFiles(entry.path).catch(() => {}); else if (entry.playable) openMedia(entry, fullscreen); else downloadFile(entry); }
+function openFileEntry(entry, fullscreen = false) { if (entry.type === 'directory') refreshFiles(entry.path).catch(() => {}); else if (entry.media_type?.startsWith('image/')) openImage(entry); else if (entry.playable) openMedia(entry, fullscreen); else downloadFile(entry); }
 function releaseFileThumbnailVideos(rows = byId('fileRows')) {
   fileThumbnailObserver?.disconnect(); fileThumbnailObserver = null;
   rows.querySelectorAll('.file-thumbnail video').forEach((video) => { video.removeAttribute('src'); video.load(); });
@@ -1024,5 +1045,12 @@ byId('fileSortSelect').addEventListener('change', (event) => { state.fileSort = 
 byId('fileBrowser').parentElement.querySelector('.file-view-switch').addEventListener('click', (event) => { const button = event.target.closest('[data-file-view]'); if (button) setFileView(button.dataset.fileView); });
 byId('closeMediaButton').addEventListener('click', closeMedia);
 byId('mediaDialog').addEventListener('close', releaseMedia);
+byId('imageViewerBack').addEventListener('click', closeImageViewer);
+byId('imageViewerPrevious').addEventListener('click', () => switchImage(-1));
+byId('imageViewerNext').addEventListener('click', () => switchImage(1));
+byId('imageViewerDialog').addEventListener('close', releaseImageViewer);
+byId('imageViewerImage').addEventListener('error', () => { if (byId('imageViewerDialog').open) showToast(`${ui('图片加载失败')}：${byId('imageViewerTitle').textContent}`); });
+document.addEventListener('keydown', (event) => { if (!byId('imageViewerDialog').open) return; if (event.key === 'ArrowLeft') { event.preventDefault(); switchImage(-1); } else if (event.key === 'ArrowRight') { event.preventDefault(); switchImage(1); } });
+document.addEventListener('fullscreenchange', () => { const dialog = byId('imageViewerDialog'); if (document.fullscreenElement === dialog) dialog.dataset.nativeFullscreen = 'true'; else if (dialog.dataset.nativeFullscreen === 'true') { delete dialog.dataset.nativeFullscreen; if (dialog.open) dialog.close(); } });
 
 bootstrap();
