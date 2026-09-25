@@ -61,6 +61,21 @@ class FakeRunner:
         return ScriptResult(0, self.states.get(key, "stopped"), "")
 
 
+class InteractiveRunner(FakeRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.desktop_ready = False
+
+    def run(self, script_path: str, action: str) -> ScriptResult:
+        if action == "ready":
+            self.calls.append((Path(script_path).name, action))
+            return ScriptResult(0, "ready" if self.desktop_ready else "unavailable", "")
+        if action == "start" and not self.desktop_ready:
+            self.calls.append((Path(script_path).name, action))
+            return ScriptResult(1, "", "AXIS_INTERACTIVE_SESSION_UNAVAILABLE: 未登录")
+        return super().run(script_path, action)
+
+
 class BlockingStatusRunner(FakeRunner):
     def __init__(self) -> None:
         super().__init__()
@@ -1160,6 +1175,49 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(("基础.ps1", "stop"), self.runner.calls)
         self.assertEqual(next(item for item in self.manager.list_scenes()
                               if item["id"] == scene["id"])["state"], "active")
+
+    async def test_base_service_waits_for_desktop_then_starts_through_operation(self) -> None:
+        runner = InteractiveRunner()
+        self.manager.runner = runner
+        bridge = await self.add_service("音频桥")
+        self.manager.update_base_services({"service_ids": [bridge["id"]]}, "admin", "local")
+        await self.manager.start()
+        self.assertIn(bridge["id"], self.manager._deferred_base_services)
+        self.assertEqual(self.database.list_operations(1)[0]["status"], "failed")
+        self.manager._deferred_base_retry_at = 0
+        await self.manager._retry_deferred_base_services()
+        self.assertEqual(self.database.list_operations(1)[0]["action"], "start_base")
+        runner.desktop_ready = True
+        self.manager._deferred_base_retry_at = 0
+        await self.manager._retry_deferred_base_services()
+        operation = self.database.list_operations(1)[0]
+        self.assertEqual((await self.wait_operation(operation["id"]))["status"], "succeeded")
+        self.assertEqual(operation["source_ip"], "startup-deferred")
+        self.assertEqual(self.manager.statuses[bridge["id"]]["state"], "running")
+        self.assertNotIn(bridge["id"], self.manager._deferred_base_services)
+
+    async def test_manual_stop_cancels_deferred_base_start(self) -> None:
+        runner = InteractiveRunner()
+        self.manager.runner = runner
+        bridge = await self.add_service("音频桥")
+        self.manager.update_base_services({"service_ids": [bridge["id"]]}, "admin", "local")
+        await self.manager.start()
+        self.assertIn(bridge["id"], self.manager._deferred_base_services)
+        operation_id = self.manager.submit_service_action(bridge["id"], "stop", "admin", "local")
+        self.assertEqual((await self.wait_operation(operation_id))["status"], "succeeded")
+        runner.desktop_ready = True
+        self.manager._deferred_base_retry_at = 0
+        await self.manager._retry_deferred_base_services()
+        self.assertNotIn(bridge["id"], self.manager._deferred_base_services)
+        self.assertEqual(runner.states[bridge["script_path"]], "stopped")
+
+    async def test_already_running_base_service_reconciles_desired_state(self) -> None:
+        bridge = await self.add_service("音频桥", health_url="http://127.0.0.1:8765/health")
+        self.health_probe.results[bridge["health_url"]] = HealthProbeResult("running", None, True)
+        self.manager.update_base_services({"service_ids": [bridge["id"]]}, "admin", "local")
+        await self.manager.start()
+        self.assertEqual(self.database.get_registered_service(bridge["id"])["desired_state"], "running")
+        self.assertNotIn(("音频桥.ps1", "start"), self.runner.calls)
 
     async def test_scene_rechecks_target_state_after_stop_phase(self) -> None:
         runner = BlockingActionRunner()

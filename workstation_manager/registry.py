@@ -256,10 +256,10 @@ class ScriptRunner:
         )[-cls.OUTPUT_LIMIT:].strip()
 
     def run(self, script_path: str, action: str) -> ScriptResult:
-        if action not in SERVICE_ACTIONS | {"status"}:
+        if action not in SERVICE_ACTIONS | {"status", "ready"}:
             raise RegistryError(422, "invalid_action", "脚本动作无效")
         path = self.validate_path(script_path)
-        timeout = self.status_timeout_seconds if action == "status" else self.action_timeout_seconds
+        timeout = self.status_timeout_seconds if action in {"status", "ready"} else self.action_timeout_seconds
         try:
             with tempfile.TemporaryFile(mode="w+b") as stdout_file, \
                     tempfile.TemporaryFile(mode="w+b") as stderr_file:
@@ -437,6 +437,8 @@ class RegisteredServiceManager:
         self._health_task: asyncio.Task[None] | None = None
         self._health_semaphore = asyncio.Semaphore(HEALTH_CONCURRENCY)
         self._operation_tasks: set[asyncio.Task[None]] = set()
+        self._deferred_base_services: set[str] = set()
+        self._deferred_base_retry_at = 0.0
         self._cancel_requests: dict[str, asyncio.Event] = {}
         self._operation_pending = False
         self._busy_services: set[str] = set()
@@ -614,6 +616,7 @@ class RegisteredServiceManager:
             raise
 
     async def shutdown(self) -> None:
+        self._deferred_base_services.clear()
         health_task = self._health_task
         self._health_task = None
         if health_task is not None:
@@ -738,11 +741,40 @@ class RegisteredServiceManager:
         while True:
             try:
                 await self.refresh_all_health()
+                await self._retry_deferred_base_services()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self.last_health_error = f"{type(exc).__name__}: {exc}"[:1024]
             await asyncio.sleep(self.health_interval_seconds)
+
+    async def _retry_deferred_base_services(self) -> None:
+        if not self._deferred_base_services or self._operation_pending:
+            return
+        now = asyncio.get_running_loop().time()
+        if now < self._deferred_base_retry_at:
+            return
+        self._deferred_base_retry_at = now + 30
+        base_ids = set(self.database.get_base_services()["service_ids"])
+        services = {item["id"]: item for item in self.database.list_registered_services()}
+        for service_id in tuple(self._deferred_base_services):
+            service = services.get(service_id)
+            if service_id not in base_ids or service is None or self.statuses.get(service_id, {}).get("state") == "running":
+                self._deferred_base_services.discard(service_id)
+                continue
+            result = await asyncio.to_thread(self.runner.run, service["script_path"], "ready")
+            if result.returncode != 0 or result.stdout not in {"ready", "unavailable"}:
+                raise RegistryError(500, "deferred_start_probe_failed", result.stderr or result.stdout or "桌面会话就绪检查失败")
+            if result.stdout == "unavailable":
+                continue
+            try:
+                self.submit_service_action(service_id, "start", "system", "startup-deferred")
+            except RegistryError as exc:
+                if exc.code not in {"operation_busy", "docker_handoff_busy", "gpu_4090_leased"}:
+                    raise
+            else:
+                self._deferred_base_services.discard(service_id)
+                return
 
     async def _probe_status(self, service: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -991,6 +1023,7 @@ class RegisteredServiceManager:
         self.database.update_base_services({"description": description,
                                             "detailed_description": detailed,
                                             "service_ids": service_ids})
+        self._deferred_base_services.intersection_update(service_ids)
         self.database.append_audit(source_ip, "management.base_services.update", "success",
                                    {"service_ids": service_ids, "requested_by": username})
         return self.base_services()
@@ -1058,8 +1091,11 @@ class RegisteredServiceManager:
         if action not in SERVICE_ACTIONS:
             raise RegistryError(422, "invalid_action", "动作只支持 start/stop/restart")
         self._require_service(service_id)
-        return self._submit("service", service_id, action, username, source_ip,
-                            self._run_service_operation)
+        operation_id = self._submit("service", service_id, action, username, source_ip,
+                                    self._run_service_operation)
+        if source_ip != "startup-deferred":
+            self._deferred_base_services.discard(service_id)
+        return operation_id
 
     def submit_scene_activation(
         self, scene_id: str, username: str, source_ip: str, *, video_job_id: str | None = None
@@ -1077,8 +1113,10 @@ class RegisteredServiceManager:
         return self.submit_scene_activation(scene["id"], "system", "startup")
 
     def submit_stop_all(self, username: str, source_ip: str) -> str:
-        return self._submit("service_group", "all", "stop_all", username, source_ip,
-                            self._run_stop_all_operation)
+        operation_id = self._submit("service_group", "all", "stop_all", username, source_ip,
+                                    self._run_stop_all_operation)
+        self._deferred_base_services.clear()
+        return operation_id
 
     def request_scene_cancel(self, operation_id: str, username: str,
                              source_ip: str) -> dict[str, str]:
@@ -1245,6 +1283,13 @@ class RegisteredServiceManager:
                                        before_state=before)
         service = self._require_service(service_id)
         success = await self._run_script_action(operation_id, 1, "service", service, action)
+        if not success and action == "start":
+            operation = self.database.get_operation(operation_id)
+            if operation and operation["source_ip"] == "startup-deferred" and any(
+                "AXIS_INTERACTIVE_SESSION_UNAVAILABLE" in (step["error_summary"] or "")
+                for step in operation["steps"]
+            ):
+                self._deferred_base_services.add(service_id)
         after = self.statuses.get(service_id, {}).get("state", "unknown")
         self.database.finish_operation_with_audit(
             operation_id, "succeeded" if success else "failed",
@@ -1285,6 +1330,9 @@ class RegisteredServiceManager:
         await self.refresh_all_health()
         service_ids = self.database.get_base_services()["service_ids"]
         services = {service["id"]: service for service in self.database.list_registered_services()}
+        for service_id in service_ids:
+            if service_id in services and self.statuses.get(service_id, {}).get("state") == "running":
+                self._set_desired_state(service_id, "running")
         targets = [services[service_id] for service_id in service_ids
                    if service_id in services and
                    self.statuses.get(service_id, {}).get("state") != "running"]
@@ -1292,9 +1340,18 @@ class RegisteredServiceManager:
                                        total_steps=len(targets))
         success = True
         for sequence, service in enumerate(targets, start=1):
-            success = await self._run_script_action(
+            step_ok = await self._run_script_action(
                 operation_id, sequence, "start_base", service, "start"
-            ) and success
+            )
+            if not step_ok:
+                operation = self.database.get_operation(operation_id)
+                if operation and any(
+                    step["sequence"] == sequence and
+                    "AXIS_INTERACTIVE_SESSION_UNAVAILABLE" in (step["error_summary"] or "")
+                    for step in operation["steps"]
+                ):
+                    self._deferred_base_services.add(service["id"])
+            success = step_ok and success
         self.database.finish_operation_with_audit(
             operation_id, "succeeded" if success else "failed",
             "success" if success else "partial", None,
