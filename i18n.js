@@ -23,6 +23,7 @@
     '名称：升序': 'Name: A to Z', '名称：降序': 'Name: Z to A', '大小：从大到小': 'Size: largest first', '大小：从小到大': 'Size: smallest first',
     '文件查看方式': 'File view', '列表': 'List', '缩略图': 'Thumbnails', '无法进入全屏': 'Unable to enter fullscreen', '无法退出全屏': 'Unable to exit fullscreen', '浏览器不支持全屏播放': 'Fullscreen playback is not supported by this browser',
     '返回文件': 'Back to files', '前一张': 'Previous image', '后一张': 'Next image', '图片缩略图': 'Image thumbnails', '图片加载失败': 'Unable to load image',
+    '缩小': 'Zoom out', '放大': 'Zoom in', '适应窗口': 'Fit to window', '全屏': 'Fullscreen', '退出全屏': 'Exit fullscreen',
     '已经是第一个视频': 'This is the first video', '已经是最后一个视频': 'This is the last video', '视频播放失败': 'Unable to play video',
     '更名': 'Rename', '新名称': 'New name', '只修改名称，不会移动文件或目录，也不会覆盖同名项目。': 'Only the name changes. The file or folder is not moved, and an existing item is never overwritten.',
     '保存名称': 'Save Name', '请输入新名称。': 'Enter a new name.', '更名完成': 'Rename completed',

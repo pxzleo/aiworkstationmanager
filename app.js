@@ -30,7 +30,7 @@ let mediaSwipeNoticeTimer = null;
 const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], baseServices: null, users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
-  fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', mediaPath: '', imagePath: '',
+  fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', mediaPath: '', imagePath: '', imageZoom: 100,
   historyWindowMinutes: 15, historyAnchorMs: null, historyFollowingCurrent: true, historyLoaded: false, historyLoading: false, historyBucketSeconds: 0, powerModel: null,
   chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
 };
@@ -343,10 +343,26 @@ function fileLabel(entry) { if (entry.type === 'directory') return '目录'; if 
 function fileActionLabel(entry) { return `${ui(entry.type === 'directory' || entry.media_type?.startsWith('image/') ? '打开' : entry.playable ? '播放' : '下载')} ${entry.name}`; }
 function downloadFile(entry) { const link = document.createElement('a'); link.href = fileContentUrl(entry.path, true); link.download = entry.name; document.body.append(link); link.click(); link.remove(); }
 function imageEntries() { return state.files.filter((entry) => entry.type === 'file' && entry.media_type?.startsWith('image/')); }
+function layoutImage() {
+  const image = byId('imageViewerImage'); const canvas = byId('imageViewerCanvas');
+  if (!image.naturalWidth || !image.naturalHeight || !canvas.clientWidth || !canvas.clientHeight) return;
+  const fit = Math.min(canvas.clientWidth / image.naturalWidth, canvas.clientHeight / image.naturalHeight);
+  image.style.width = `${image.naturalWidth * fit * state.imageZoom / 100}px`;
+  image.style.height = `${image.naturalHeight * fit * state.imageZoom / 100}px`;
+  canvas.scrollLeft = (canvas.scrollWidth - canvas.clientWidth) / 2;
+  canvas.scrollTop = (canvas.scrollHeight - canvas.clientHeight) / 2;
+}
+function setImageZoom(value) {
+  state.imageZoom = Math.max(25, Math.min(400, value));
+  text('imageViewerZoomReset', `${state.imageZoom}%`);
+  byId('imageViewerZoomOut').disabled = state.imageZoom === 25;
+  byId('imageViewerZoomIn').disabled = state.imageZoom === 400;
+  layoutImage();
+}
 function showImage(entry) {
   const images = imageEntries(); const index = images.findIndex((item) => item.path === entry.path); if (index < 0) return;
   state.imagePath = entry.path; text('imageViewerTitle', entry.name); text('imageViewerCount', `${index + 1} / ${images.length}`);
-  const image = byId('imageViewerImage'); image.alt = entry.name; image.src = fileContentUrl(entry.path);
+  const image = byId('imageViewerImage'); image.alt = entry.name; image.style.width = ''; image.style.height = ''; setImageZoom(100); image.src = fileContentUrl(entry.path);
   byId('imageViewerPrevious').disabled = index === 0; byId('imageViewerNext').disabled = index === images.length - 1;
   byId('imageViewerThumbnails').querySelectorAll('button').forEach((button, position) => { button.setAttribute('aria-current', String(position === index)); if (position === index) button.scrollIntoView({ block: 'nearest', inline: 'center' }); });
 }
@@ -355,14 +371,19 @@ function openImage(entry) {
   const dialog = byId('imageViewerDialog'); const thumbnails = byId('imageViewerThumbnails'); thumbnails.replaceChildren();
   imageEntries().forEach((item) => { const button = element('button', 'image-viewer-thumbnail'); button.type = 'button'; button.title = item.name; button.setAttribute('aria-label', `${ui('打开')} ${item.name}`); const preview = document.createElement('img'); preview.src = fileContentUrl(item.path); preview.alt = ''; preview.loading = 'lazy'; button.append(preview); button.addEventListener('click', () => showImage(item)); thumbnails.append(button); });
   dialog.showModal(); showImage(entry);
-  if (dialog.requestFullscreen) dialog.requestFullscreen().catch((error) => showToast(`${ui('无法进入全屏')}：${error.message}`));
+}
+async function toggleImageFullscreen() {
+  const dialog = byId('imageViewerDialog'); const pure = dialog.classList.toggle('pure-fullscreen');
+  text('imageViewerFullscreen', ui(pure ? '退出全屏' : '全屏')); requestAnimationFrame(layoutImage);
+  if (pure && dialog.requestFullscreen) { try { await dialog.requestFullscreen(); } catch (error) { showToast(`${ui('无法进入全屏')}：${error.message}`); } }
+  else if (!pure && document.fullscreenElement === dialog) { try { await document.exitFullscreen(); } catch (error) { dialog.classList.add('pure-fullscreen'); text('imageViewerFullscreen', ui('退出全屏')); requestAnimationFrame(layoutImage); showToast(`${ui('无法退出全屏')}：${error.message}`); } }
 }
 async function closeImageViewer() {
   const dialog = byId('imageViewerDialog');
   if (document.fullscreenElement === dialog) { try { await document.exitFullscreen(); } catch (error) { showToast(`${ui('无法退出全屏')}：${error.message}`); return; } }
   if (dialog.open) dialog.close();
 }
-function releaseImageViewer() { state.imagePath = ''; const image = byId('imageViewerImage'); image.removeAttribute('src'); image.alt = ''; byId('imageViewerThumbnails').replaceChildren(); }
+function releaseImageViewer() { state.imagePath = ''; const image = byId('imageViewerImage'); image.removeAttribute('src'); image.alt = ''; image.style.width = ''; image.style.height = ''; byId('imageViewerDialog').classList.remove('pure-fullscreen'); text('imageViewerFullscreen', ui('全屏')); byId('imageViewerThumbnails').replaceChildren(); }
 function releaseMedia() { const stage = byId('mediaStage'); stage.querySelectorAll('audio, video').forEach((player) => { player.pause(); player.removeAttribute('src'); player.load(); }); stage.replaceChildren(); state.mediaPath = ''; clearTimeout(mediaSwipeNoticeTimer); byId('mediaSwipeNotice').classList.remove('show'); text('mediaSwipeNotice', ''); }
 async function closeMedia() { const shell = byId('mediaDialog').querySelector('.media-dialog-shell'); if (document.fullscreenElement && shell.contains(document.fullscreenElement)) { try { await document.exitFullscreen(); } catch (error) { showMediaSwipeNotice(`${ui('无法退出全屏')}：${error.message}`); return; } } releaseMedia(); if (byId('mediaDialog').open) byId('mediaDialog').close(); }
 function requestNativeVideoFullscreen(player, cause) { try { if (player.webkitEnterFullscreen) { player.webkitEnterFullscreen(); return; } } catch (error) { showToast(`${ui('无法进入全屏')}：${error.message}`); return; } showToast(`${ui('无法进入全屏')}：${cause?.message || ui('浏览器不支持全屏播放')}`); }
@@ -1048,9 +1069,16 @@ byId('mediaDialog').addEventListener('close', releaseMedia);
 byId('imageViewerBack').addEventListener('click', closeImageViewer);
 byId('imageViewerPrevious').addEventListener('click', () => switchImage(-1));
 byId('imageViewerNext').addEventListener('click', () => switchImage(1));
+byId('imageViewerZoomOut').addEventListener('click', () => setImageZoom(state.imageZoom - 25));
+byId('imageViewerZoomIn').addEventListener('click', () => setImageZoom(state.imageZoom + 25));
+byId('imageViewerZoomReset').addEventListener('click', () => setImageZoom(100));
+byId('imageViewerFullscreen').addEventListener('click', toggleImageFullscreen);
 byId('imageViewerDialog').addEventListener('close', releaseImageViewer);
+byId('imageViewerImage').addEventListener('load', layoutImage);
 byId('imageViewerImage').addEventListener('error', () => { if (byId('imageViewerDialog').open) showToast(`${ui('图片加载失败')}：${byId('imageViewerTitle').textContent}`); });
+window.addEventListener('resize', () => { if (byId('imageViewerDialog').open) layoutImage(); });
+if ('ResizeObserver' in window) new ResizeObserver(() => { if (byId('imageViewerDialog').open) layoutImage(); }).observe(byId('imageViewerCanvas'));
 document.addEventListener('keydown', (event) => { if (!byId('imageViewerDialog').open) return; if (event.key === 'ArrowLeft') { event.preventDefault(); switchImage(-1); } else if (event.key === 'ArrowRight') { event.preventDefault(); switchImage(1); } });
-document.addEventListener('fullscreenchange', () => { const dialog = byId('imageViewerDialog'); if (document.fullscreenElement === dialog) dialog.dataset.nativeFullscreen = 'true'; else if (dialog.dataset.nativeFullscreen === 'true') { delete dialog.dataset.nativeFullscreen; if (dialog.open) dialog.close(); } });
+document.addEventListener('fullscreenchange', () => { const dialog = byId('imageViewerDialog'); if (!document.fullscreenElement && dialog.open && dialog.classList.contains('pure-fullscreen')) { dialog.classList.remove('pure-fullscreen'); text('imageViewerFullscreen', ui('全屏')); } if (dialog.open) requestAnimationFrame(layoutImage); });
 
 bootstrap();
