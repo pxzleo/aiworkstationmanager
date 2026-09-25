@@ -369,6 +369,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .media-stage { min-height: 320px; display: grid; place-items: center; padding: 20px; background: #050708; }
 .media-stage audio { width: min(680px, 100%); }
 .image-viewer-dialog, .image-viewer-dialog:fullscreen { inset: 0; box-sizing: border-box; width: 100%; max-width: none; height: 100vh; height: 100dvh; max-height: none; margin: 0; padding: 0; overflow: hidden; border: 0; background: #050708; color: #fff; }
+.image-viewer-dialog { user-select: none; }
 body:has(.image-viewer-dialog[open]) { overflow: hidden; }
 .image-viewer-dialog::backdrop { background: #050708; }
 .image-viewer-shell { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: 100%; height: 100%; }
