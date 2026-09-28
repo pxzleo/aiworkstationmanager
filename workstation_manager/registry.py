@@ -1114,8 +1114,18 @@ class RegisteredServiceManager:
 
     def submit_stop_all(self, username: str, source_ip: str) -> str:
         operation_id = self._submit("service_group", "all", "stop_all", username, source_ip,
-                                    self._run_stop_all_operation)
+                                    self._run_stop_group_operation)
         self._deferred_base_services.clear()
+        return operation_id
+
+    def submit_base_services_action(self, action: str, username: str, source_ip: str) -> str:
+        if action not in {"start", "stop"}:
+            raise RegistryError(422, "invalid_action", "动作只支持 start/stop")
+        worker = self._run_base_services_start if action == "start" else self._run_stop_group_operation
+        operation_id = self._submit("service_group", "base", f"{action}_base", username,
+                                    source_ip, worker)
+        if action == "stop":
+            self._deferred_base_services.clear()
         return operation_id
 
     def request_scene_cancel(self, operation_id: str, username: str,
@@ -1297,10 +1307,18 @@ class RegisteredServiceManager:
             None if success else "服务脚本执行失败",
         )
 
-    async def _run_stop_all_operation(self, operation_id: str, _: str, __: str) -> None:
+    async def _run_stop_group_operation(self, operation_id: str, target_id: str, action: str) -> None:
         await self.refresh_all_health(immediate=True)
         before = {key: value.get("state", "unknown") for key, value in self.statuses.items()}
         services = self.database.list_registered_services()
+        if target_id == "base":
+            service_map = {service["id"]: service for service in services}
+            services = [service_map[service_id]
+                        for service_id in self.database.get_base_services()["service_ids"]
+                        if service_id in service_map]
+            for service in services:
+                if self.statuses.get(service["id"], {}).get("state") == "stopped":
+                    self._set_desired_state(service["id"], "stopped")
         targets = [
             service for service in services
             if self.statuses.get(service["id"], {}).get("state") != "stopped"
@@ -1312,7 +1330,7 @@ class RegisteredServiceManager:
         success = True
         for sequence, service in enumerate(targets, start=1):
             success = await self._run_script_action(
-                operation_id, sequence, "stop_all", service, "stop"
+                operation_id, sequence, action, service, "stop"
             ) and success
         all_stopped = all(
             self.statuses.get(service["id"], {}).get("state") == "stopped"
@@ -1323,7 +1341,7 @@ class RegisteredServiceManager:
             operation_id, "succeeded" if success else "failed",
             "success" if success else "partial", str(before),
             "stopped" if all_stopped else "partial",
-            None if success else "部分服务未能停止",
+            None if success else "部分基础服务未能停止" if target_id == "base" else "部分服务未能停止",
         )
 
     async def _run_base_services_start(self, operation_id: str, _: str, __: str) -> None:

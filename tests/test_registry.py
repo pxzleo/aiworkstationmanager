@@ -1176,6 +1176,45 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(next(item for item in self.manager.list_scenes()
                               if item["id"] == scene["id"])["state"], "active")
 
+    async def test_base_card_actions_only_control_members_in_configured_order(self) -> None:
+        first = await self.add_service("基础一")
+        second = await self.add_service("基础二")
+        outside = await self.add_service("场景服务")
+        self.runner.states[outside["script_path"]] = "running"
+        self.manager.update_base_services({"service_ids": [second["id"], first["id"]]}, "admin", "local")
+        for action, expected, step_count in [("start", "running", 2), ("start", "running", 0), ("stop", "stopped", 2)]:
+            self.runner.calls.clear()
+            operation_id = self.manager.submit_base_services_action(action, "admin", "local")
+            operation = await self.wait_operation(operation_id)
+            self.assertEqual(operation["status"], "succeeded")
+            self.assertEqual(operation["action"], f"{action}_base")
+            self.assertEqual(operation["target_id"], "base")
+            self.assertEqual(operation["total_steps"], step_count)
+            calls = [call for call in self.runner.calls if call[1] in {"start", "stop"}]
+            expected_calls = [("基础二.ps1", action), ("基础一.ps1", action)] if step_count else []
+            self.assertEqual(calls, expected_calls)
+            for service in [first, second]:
+                self.assertEqual(self.database.get_registered_service(service["id"])["desired_state"], expected)
+                self.assertEqual(self.runner.states[service["script_path"]], expected)
+            self.assertEqual(self.runner.states[outside["script_path"]], "running")
+        self.assertEqual(self.database.get_base_services()["service_ids"], [second["id"], first["id"]])
+        with self.assertRaises(RegistryError) as caught:
+            self.manager.submit_base_services_action("restart", "admin", "local")
+        self.assertEqual(caught.exception.code, "invalid_action")
+
+    async def test_base_card_stop_cancels_deferred_start_and_reports_failure(self) -> None:
+        bridge = await self.add_service("音频桥")
+        self.manager.update_base_services({"service_ids": [bridge["id"]]}, "admin", "local")
+        self.manager._deferred_base_services.add(bridge["id"])
+        self.runner.states[bridge["script_path"]] = "running"
+        self.runner.failures.add(("音频桥.ps1", "stop"))
+        operation_id = self.manager.submit_base_services_action("stop", "admin", "local")
+        self.assertNotIn(bridge["id"], self.manager._deferred_base_services)
+        operation = await self.wait_operation(operation_id)
+        self.assertEqual(operation["status"], "failed")
+        self.assertEqual(operation["steps"][0]["phase"], "stop_base")
+        self.assertIn("stop failed", operation["steps"][0]["error_summary"])
+
     async def test_base_service_waits_for_desktop_then_starts_through_operation(self) -> None:
         runner = InteractiveRunner()
         self.manager.runner = runner
@@ -2361,6 +2400,21 @@ class ApiRegistryTests(unittest.TestCase):
                 })
                 self.assertEqual(base_saved.status_code, 200, base_saved.text)
                 self.assertEqual(base_saved.json()["service_ids"], [service_id])
+                self.assertEqual(client.post("/api/v1/base-services/actions", json={"action": "start"}).status_code, 403)
+                self.assertEqual(client.post("/api/v1/base-services/actions", headers=headers, json={"action": "restart"}).status_code, 422)
+                for action in ["start", "stop"]:
+                    registry.health_probe.results[created.json()["health_url"]] = HealthProbeResult(
+                        "running" if action == "start" else "stopped", None, True
+                    )
+                    submitted = client.post("/api/v1/base-services/actions", headers=headers, json={"action": action})
+                    self.assertEqual(submitted.status_code, 202, submitted.text)
+                    for _ in range(100):
+                        operation = client.get(f"/api/v1/operations/{submitted.json()['operation_id']}").json()
+                        if operation["status"] not in {"queued", "running"}:
+                            break
+                        time.sleep(0.01)
+                    self.assertEqual(operation["status"], "succeeded", operation)
+                    self.assertEqual(operation["action"], f"{action}_base")
                 self.assertEqual(client.delete("/api/v1/base-services", headers=headers).status_code, 405)
                 overlap_scene = client.post("/api/v1/scenes", headers=headers, json={
                     "name": "共享服务场景", "service_ids": [service_id],

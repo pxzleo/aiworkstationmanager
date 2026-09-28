@@ -849,6 +849,14 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
         return resolved_registry.update_base_services(payload.model_dump(), session.username,
                                                       _client_ip(request))
 
+    @app.post("/api/v1/base-services/actions", status_code=202)
+    async def base_services_action(payload: ServiceActionPayload, request: Request,
+                                   session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, str]:
+        operation_id = resolved_registry.submit_base_services_action(
+            payload.action, session.username, _client_ip(request)
+        )
+        return {"operation_id": operation_id, "status": "queued"}
+
     @app.post("/api/v1/scenes", status_code=201)
     async def create_scene(payload: ScenePayload, request: Request,
                            session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, Any]:

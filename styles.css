@@ -990,6 +990,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
 .scene-service-choice .icon-button svg { width: 13px; height: 13px; }
 .scene-service-choice .icon-button::after { display: none; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.scene-progress-dialog [hidden] { display: none; }
 .dialog-footer { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 28px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 94%, var(--bg)); box-shadow: 0 -12px 28px rgba(0,0,0,.08); }
 .dialog-footer > .auth-error { flex: 1 1 240px; min-height: 0; margin: 0; }
 .dialog-footer-actions { display: flex; justify-content: flex-end; gap: 10px; margin-left: auto; }

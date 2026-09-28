@@ -823,7 +823,12 @@ function renderBaseServices() {
   const actions = element('div', 'scene-card-actions'); const utilities = element('div', 'scene-utility-actions');
   const details = iconButton('查看详细说明', 'info'); details.addEventListener('click', () => openSceneDetails(base));
   const edit = iconButton('编辑基础服务', 'edit'); edit.disabled = base.busy || actionGuard.pending; edit.addEventListener('click', openBaseServicesDialog);
-  utilities.append(details, edit); actions.append(utilities); panel.append(map, actions); list.append(panel);
+  const controls = element('div', 'scene-utility-actions');
+  for (const [action, label, icon] of [['start', '启动', 'play'], ['stop', '停止', 'stop']]) {
+    const button = labeledIconButton(label, icon, 'button'); button.disabled = !base.services.length || base.busy || actionGuard.pending;
+    button.addEventListener('click', () => runBaseServicesAction(action)); controls.append(button);
+  }
+  utilities.append(details, edit); actions.append(utilities, controls); panel.append(map, actions); list.append(panel);
 }
 
 function renderScenes() {
@@ -880,10 +885,25 @@ function openOperationProgress(operationId, title, summary, waiting, cancelLabel
   text('sceneProgressTitle', title); text('sceneProgressSummary', summary); text('sceneProgressPercent', '0%'); text('sceneProgressCurrent', waiting);
   byId('sceneProgressBar').style.width = '0%'; byId('sceneProgressLog').replaceChildren(element('li', '', '等待第一条服务操作记录。'));
   byId('cancelSceneSwitchButton').hidden = !cancelLabel; byId('cancelSceneSwitchButton').disabled = false; if (cancelLabel) text('cancelSceneSwitchButton', cancelLabel); byId('closeSceneProgressButton').hidden = true; text('closeSceneProgressButton', closeLabel);
+  byId('sceneProgressDialog').querySelector('.scene-progress-note').hidden = !cancelLabel;
   const dialog = byId('sceneProgressDialog'); if (!dialog.open) dialog.showModal();
 }
 function openSceneProgress(scene, operationId) { const managed = new Set(state.scenes.flatMap((item) => item.service_ids)); const base = new Set(state.baseServices?.service_ids || []); sceneProgressExpectedTotal = state.services.filter((service) => managed.has(service.id) && !base.has(service.id) && !scene.service_ids.includes(service.id) && service.status.state === 'running').length + scene.service_ids.filter((serviceId) => state.services.find((service) => service.id === serviceId)?.status.state !== 'running').length; openOperationProgress(operationId, `正在切换到 ${scene.name}`, '管理器正在按顺序停止和启动服务。', '等待第一项服务操作', '终止切换并返回', '返回工作场景'); }
 function openStopAllProgress(operationId) { openOperationProgress(operationId, '正在停止全部服务', '管理器正在确认需要停止的服务并按顺序执行。', '正在确认需要停止的服务', '', '返回服务列表'); }
+async function runBaseServicesAction(action) {
+  const owner = actionGuard.acquire(); if (!owner) return showToast('已有操作正在执行');
+  try {
+    const result = await api('/base-services/actions', { method: 'POST', body: { action } });
+    const title = action === 'start' ? '正在启动基础服务' : '正在停止基础服务';
+    openOperationProgress(result.operation_id, title, '管理器正在按配置顺序操作基础服务。', title, '', '返回工作场景');
+    await pollOperation(result.operation_id, (operation) => renderOperationProgress(operation, operation.total_steps, {
+      successCurrent: '基础服务操作完成', interruptedCurrent: '操作已终止', failureCurrent: '基础服务操作失败',
+      successTitle: '基础服务操作完成', interruptedTitle: '操作已终止', failureTitle: '基础服务操作未完成',
+      successSummary: action === 'start' ? '基础服务均已启动。' : '基础服务均已停止。', failureSummary: '请在日志中心查看失败步骤。'
+    }), null);
+  } catch (error) { showToast(error.message); if (byId('sceneProgressDialog').open) byId('sceneProgressDialog').close(); }
+  finally { sceneProgressOperationId = null; actionGuard.release(owner); await refreshServicesAndScenes(); }
+}
 function renderOperationProgress(operation, total, terminalCopy) {
   const steps = operation.steps || []; const finished = steps.filter((step) => step.status !== 'running').length; const terminal = !['queued', 'running'].includes(operation.status); const knownTotal = Number.isInteger(total) && total >= 0; const denominator = knownTotal ? Math.max(total, steps.length) : null; const progress = terminal ? 100 : denominator > 0 ? Math.min(99, Math.round((finished / denominator) * 100)) : 0;
   text('sceneProgressPercent', `${progress}%`); byId('sceneProgressBar').style.width = `${progress}%`;
@@ -967,8 +987,8 @@ function targetName(kind, id) { if (kind === 'service_group' && id === 'all') re
 function defaultSceneOperation(event) { const summary = event.summary || {}; return { id: `audit-${event.id}`, kind: 'scene_default', target_id: summary.scene_id, target_name: summary.name, action: event.event === 'management.scene.default.set' ? 'set_default' : 'clear_default', status: event.result === 'success' ? 'succeeded' : 'failed', result: event.result === 'success' ? 'success' : 'failed', requested_by: summary.requested_by, created_at: event.created_at, steps: [] }; }
 function operationTargetName(operation) { return operation.target_name || targetName(operation.kind, operation.target_id); }
 function operationStatusLabel(status) { return { succeeded: '成功', failed: '失败', interrupted: '已终止', queued: '等待执行', running: '执行中' }[status] || '状态未知'; }
-function operationActionLabel(action) { return { start: '启动', stop: '停止', restart: '重启', activate: '切换场景', stop_all: '停止全部服务', set_default: '设为默认', clear_default: '取消默认' }[action] || action; }
-function operationPhaseLabel(phase) { return { stop_unselected: '停止未选服务', start_selected: '启动目标服务' }[phase] || phase; }
+function operationActionLabel(action) { return { start: '启动', stop: '停止', restart: '重启', activate: '切换场景', start_base: '启动基础服务', stop_base: '停止基础服务', stop_all: '停止全部服务', set_default: '设为默认', clear_default: '取消默认' }[action] || action; }
+function operationPhaseLabel(phase) { return { start_base: '启动基础服务', stop_base: '停止基础服务', stop_all: '停止全部服务', stop_unselected: '停止未选服务', start_selected: '启动目标服务' }[phase] || phase; }
 function operationResultLabel(result) { return { success: '成功', failed: '失败', partial: '部分启动', stop_failed: '停止失败', cancelled: '已终止' }[result] || result; }
 function operationActor(operation) { return String(operation.requested_by || '').trim() || ui('未知账号'); }
 function renderOperationTimeline() { const timeline = byId('auditTimeline'); timeline.replaceChildren(); const recent = state.operations.filter((item) => Date.now() - new Date(item.created_at).getTime() <= 30 * 60 * 1000).slice(0, 5); if (!recent.length) { timeline.append(element('li', 'empty-state', '最近 30 分钟没有服务或场景操作。')); return; } recent.forEach((operation) => { const item = element('li'); const success = operation.status === 'succeeded'; item.append(element('span', `event-dot ${success ? 'good' : 'warn'}`)); const copy = element('div'); const eventLabel = operation.kind === 'scene_default' ? '默认场景' : operation.kind === 'scene' ? '场景切换' : '服务操作'; copy.append(element('strong', '', `${ui(eventLabel)} · ${operationTargetName(operation)}`), element('small', '', `${formatDate(operation.created_at, true)} · ${ui(operationActionLabel(operation.action))} · ${ui(operationStatusLabel(operation.status))} · ${ui('操作账号')} ${operationActor(operation)}`)); item.append(copy); timeline.append(item); }); }
