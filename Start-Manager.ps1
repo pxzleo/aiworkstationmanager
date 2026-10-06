@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$ConfigFile,
     [string]$PythonPath
@@ -97,7 +97,7 @@ try {
 
     Push-Location -LiteralPath $projectRoot
     try {
-        & $pythonExecutable -m workstation_manager
+        & $pythonExecutable -u -X faulthandler -m workstation_manager.supervisor
         if ($LASTEXITCODE -ne 0) {
             throw "管理器启动失败，Python 退出代码: $LASTEXITCODE。请检查 logs\manager.log。"
         }

@@ -607,7 +607,7 @@ class RegisteredServiceManager:
                     await self._reconcile_service_status(service, "startup")
             self._health_task = asyncio.create_task(self._health_loop())
             base = self.database.get_base_services()
-            if base["service_ids"]:
+            if base["service_ids"] and os.environ.get("WM_MANAGER_RECOVERY") != "1":
                 self._submit("service_group", "base", "start_base", "system", "startup",
                              self._run_base_services_start)
                 await asyncio.gather(*tuple(self._operation_tasks))
@@ -1105,6 +1105,8 @@ class RegisteredServiceManager:
                             self._run_scene_operation, video_job_id=video_job_id)
 
     def submit_default_scene_activation(self) -> str | None:
+        if os.environ.get("WM_MANAGER_RECOVERY") == "1":
+            return None
         if self.database.resource_lease_owner("gpu:4090") is not None:
             return None
         scene = self.database.get_default_scene()

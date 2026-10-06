@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([switch]$CheckOnly, [switch]$Pause)
 
 $ErrorActionPreference = 'Stop'
@@ -15,13 +15,13 @@ function Get-AxisProcessFamily {
     foreach ($owner in $PortOwners) {
         $process = $byId[$owner]
         if ($null -eq $process -or $process.Name -ne 'python.exe' -or
-            $process.CommandLine -notmatch '(?i)(?:^|\s)-m\s+workstation_manager(?:\s|$)') {
+            $process.CommandLine -notmatch '(?i)(?:^|\s)-m\s+workstation_manager(?:\.supervisor)?(?:\s|$)') {
             throw "端口由未验证的进程占用，拒绝结束 PID ${owner}。"
         }
         $current = $process
         $chain = @()
         while ($null -ne $current -and $current.Name -eq 'python.exe' -and
-            $current.CommandLine -match '(?i)(?:^|\s)-m\s+workstation_manager(?:\s|$)') {
+            $current.CommandLine -match '(?i)(?:^|\s)-m\s+workstation_manager(?:\.supervisor)?(?:\s|$)') {
             $chain += $current
             $current = $byId[[int]$current.ParentProcessId]
         }
@@ -38,7 +38,7 @@ function Get-AxisProcessFamily {
 
     foreach ($process in $Processes) {
         if ($process.Name -ne 'python.exe' -or
-            $process.CommandLine -notmatch '(?i)(?:^|\s)-m\s+workstation_manager(?:\s|$)') { continue }
+            $process.CommandLine -notmatch '(?i)(?:^|\s)-m\s+workstation_manager(?:\.supervisor)?(?:\s|$)') { continue }
         $parent = $byId[[int]$process.ParentProcessId]
         if ($null -ne $parent -and $parent.Name -eq 'powershell.exe' -and
             ($process.ExecutablePath -ieq $PythonPath -or $process.CommandLine -like "*$PythonPath*") -and
@@ -51,7 +51,7 @@ function Get-AxisProcessFamily {
         $countBefore = $ids.Count
         foreach ($process in $Processes) {
             if ($process.Name -eq 'python.exe' -and $ids.Contains([int]$process.ParentProcessId) -and
-                $process.CommandLine -match '(?i)((?:^|\s)-m\s+workstation_manager(?:\s|$)|multiprocessing\.spawn|resource_tracker)') {
+                $process.CommandLine -match '(?i)((?:^|\s)-m\s+workstation_manager(?:\.supervisor)?(?:\s|$)|multiprocessing\.spawn|resource_tracker)') {
                 [void]$ids.Add([int]$process.ProcessId)
             }
         }

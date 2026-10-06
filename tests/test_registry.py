@@ -1144,6 +1144,18 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.list_scenes()[0]["state"], "active")
         self.assertEqual(self.manager.active_scene()["id"], scene["id"])
 
+    async def test_recovery_starts_monitoring_without_base_or_default_scene_actions(self) -> None:
+        base = await self.add_service("基础")
+        self.manager.update_base_services({"service_ids": [base["id"]]}, "admin", "local")
+        scene = self.manager.create_scene({"name": "默认", "service_ids": [base["id"]]}, "admin", "local")
+        self.manager.set_default_scene(scene["id"], True, "admin", "local")
+        with patch.dict(os.environ, {"WM_MANAGER_RECOVERY": "1"}):
+            await self.manager.start()
+            self.assertIsNotNone(self.manager._health_task)
+            self.assertIsNone(self.manager.submit_default_scene_activation())
+        self.assertNotIn(("基础.ps1", "start"), self.runner.calls)
+        self.assertFalse(self.manager._operation_tasks)
+
     async def test_base_services_start_with_manager_and_survive_scene_switch(self) -> None:
         base = await self.add_service("基础")
         scene_service = await self.add_service("场景")
