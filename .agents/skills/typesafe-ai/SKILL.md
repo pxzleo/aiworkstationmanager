@@ -52,6 +52,8 @@ API contracts, SDK usage, models, limits, and worked examples.
 | Write API code | [HTTP API](https://docs.typesafe.ai/api.md), [Python SDK](https://docs.typesafe.ai/sdk/python.md), or [JavaScript SDK](https://docs.typesafe.ai/sdk/javascript.md) |
 | Update an older integration | [Migration guide](https://docs.typesafe.ai/migrating-to-v1.md) and the installed SDK's current reference |
 
+Python SDK quick reference (common gotcha, saves a round-trip to the docs): `pip install typesafe-sdk`; the importable module is `typesafe_sdk` — `import typesafe` raises `ModuleNotFoundError`. The client is `typesafe_sdk.TypeSafeClient()` and the call is `.system_one(state=..., model="jev-latest", questions={...})`. The API key is read automatically from the `TYPESAFE_API_KEY` env var (server-side; never commit it).
+
 ## Find the useful shape
 
 Start from the behavior the user wants: what will the application show, select,

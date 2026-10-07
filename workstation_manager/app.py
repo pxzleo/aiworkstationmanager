@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import re
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -1151,13 +1152,26 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             raise DatabaseError("完成自动任务后无法读回记录")
         return {"task": _public_automatic_task(task)}
 
+    def _lan_video_authorized(request: Request) -> bool:
+        token = resolved_settings.lan_video_token
+        if not token:
+            return False
+        return hmac.compare_digest(
+            (request.headers.get("x-axis-lan-token") or "").encode("utf-8"),
+            token.encode("utf-8"),
+        )
+
     @app.post("/api/v1/video-jobs", status_code=202)
     async def submit_video_job(
         payload: VideoJobPayload, request: Request, response: Response,
     ) -> dict[str, Any]:
-        if not is_loopback(_client_ip(request)):
+        lan_authorized = _lan_video_authorized(request)
+        if not (is_loopback(_client_ip(request)) or lan_authorized):
             raise VideoJobError("loopback_required", "视频任务只允许从本机提交")
-        job, created = await asyncio.to_thread(resolved_video_jobs.submit, payload.model_dump())
+        job, created = await asyncio.to_thread(
+            resolved_video_jobs.submit, payload.model_dump(),
+            allow_lan_callback=lan_authorized,
+        )
         response.status_code = 202 if created else 200
         return {"job": job, "created": created}
 
@@ -1165,10 +1179,12 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
     async def submit_video_job_batch(
         payload: VideoJobBatchPayload, request: Request, response: Response,
     ) -> dict[str, Any]:
-        if not is_loopback(_client_ip(request)):
+        lan_authorized = _lan_video_authorized(request)
+        if not (is_loopback(_client_ip(request)) or lan_authorized):
             raise VideoJobError("loopback_required", "视频任务只允许从本机提交")
         jobs, created = await asyncio.to_thread(
             resolved_video_jobs.submit_batch, payload.model_dump(),
+            allow_lan_callback=lan_authorized,
         )
         response.status_code = 202 if created else 200
         return {"jobs": jobs, "batch_id": jobs[0]["batch_id"], "created": created}

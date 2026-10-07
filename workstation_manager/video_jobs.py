@@ -478,7 +478,7 @@ class VideoJobManager:
                 pass
 
     @staticmethod
-    def _loopback_url(value: str, field: str) -> str:
+    def _loopback_url(value: str, field: str, *, allow_lan: bool = False) -> str:
         parsed = urlsplit(value)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname \
                 or parsed.username or parsed.password or parsed.path not in {"", "/"} \
@@ -488,14 +488,14 @@ class VideoJobManager:
             loopback = ipaddress.ip_address(parsed.hostname).is_loopback
         except ValueError:
             loopback = parsed.hostname.lower() == "localhost"
-        if not loopback:
+        if not loopback and not allow_lan:
             raise VideoJobError("callback_loopback_required", f"{field} 只允许 loopback 地址")
         return value.rstrip("/")
 
     def _prepare_submission(
         self, payload: dict[str, Any], *, idempotency_key: str,
         batch_id: str | None = None, batch_index: int | None = None,
-        batch_size: int | None = None,
+        batch_size: int | None = None, allow_lan_callback: bool = False,
     ) -> tuple[dict[str, Any], str]:
         session_id = str(payload.get("session_id") or "").strip()
         if not 1 <= len(idempotency_key) <= 200:
@@ -515,7 +515,10 @@ class VideoJobManager:
         output_text = str(payload.get("output_path") or "").strip()
         if output_text and not Path(output_text).is_absolute():
             raise VideoJobError("invalid_output_path", "output_path 必须是绝对路径")
-        callback_url = self._loopback_url(str(payload.get("callback_url") or ""), "callback_url")
+        callback_url = self._loopback_url(
+            str(payload.get("callback_url") or ""), "callback_url",
+            allow_lan=allow_lan_callback,
+        )
         callback_directory = str(payload.get("callback_directory") or "").strip() or None
         if callback_directory and not Path(callback_directory).is_absolute():
             raise VideoJobError("invalid_callback_directory", "callback_directory 必须是绝对路径")
@@ -558,10 +561,13 @@ class VideoJobManager:
         }
         return item, payload_hash
 
-    def submit(self, payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    def submit(
+        self, payload: dict[str, Any], *, allow_lan_callback: bool = False,
+    ) -> tuple[dict[str, Any], bool]:
         idempotency_key = str(payload.get("idempotency_key") or "").strip()
         item_data, payload_hash = self._prepare_submission(
             payload, idempotency_key=idempotency_key,
+            allow_lan_callback=allow_lan_callback,
         )
         item, created = self.database.create_video_job(item_data)
         if item["payload_hash"] != payload_hash:
@@ -577,7 +583,9 @@ class VideoJobManager:
             self._wake.set()
         return item, created
 
-    def submit_batch(self, payload: dict[str, Any]) -> tuple[list[dict[str, Any]], bool]:
+    def submit_batch(
+        self, payload: dict[str, Any], *, allow_lan_callback: bool = False,
+    ) -> tuple[list[dict[str, Any]], bool]:
         batch_key = str(payload.get("idempotency_key") or "").strip()
         workflows = payload.get("workflows")
         if not isinstance(workflows, list) or not 1 <= len(workflows) <= 100:
@@ -598,6 +606,7 @@ class VideoJobManager:
             item, payload_hash = self._prepare_submission(
                 segment_payload, idempotency_key=f"batch:{segment_key_prefix}:{offset + 1}",
                 batch_id=batch_id, batch_index=offset + 1, batch_size=len(workflows),
+                allow_lan_callback=allow_lan_callback,
             )
             items.append(item)
             hashes.append(payload_hash)

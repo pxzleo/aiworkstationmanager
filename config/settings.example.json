@@ -26,6 +26,7 @@
   "setup_disabled": false,
   "allowed_public_origins": [],
   "trusted_proxy_ips": [],
+  "lan_video_token": "",
   "comfyui_base_url": "http://127.0.0.1:8189",
   "ninfer_base_url": "http://127.0.0.1:8080",
   "ninfer_model_id": "qwen3.8-27b",

@@ -70,6 +70,7 @@ class Settings:
     comfyui_base_url: str = "http://127.0.0.1:8189"
     ninfer_base_url: str = "http://127.0.0.1:8080"
     ninfer_model_id: str = "qwen3.8-27b"
+    lan_video_token: str = ""
     video_output_directory: Path = PROJECT_ROOT / "outputs" / "video-jobs"
     video_job_poll_interval_seconds: float = 2.0
     video_job_idle_timeout_seconds: float = 3600.0
@@ -297,6 +298,17 @@ def _nonempty_string(value: Any, name: str, maximum: int = 200) -> str:
     return value.strip()
 
 
+def _lan_video_token(value: Any, name: str) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ConfigError(f"{name} 必须是字符串")
+    token = value.strip()
+    if len(token) > 128:
+        raise ConfigError(f"{name} 长度必须在 0..128，实际值为 {len(token)}")
+    return token
+
+
 def _log_level(value: Any) -> str:
     if not isinstance(value, str):
         raise ConfigError(f"manager_log_level 必须是字符串，实际值为 {value!r}")
@@ -358,6 +370,7 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         "WM_COMFYUI_BASE_URL": "comfyui_base_url",
         "WM_NINFER_BASE_URL": "ninfer_base_url",
         "WM_NINFER_MODEL_ID": "ninfer_model_id",
+        "WM_LAN_VIDEO_TOKEN": "lan_video_token",
         "WM_VIDEO_OUTPUT_DIRECTORY": "video_output_directory",
         "WM_VIDEO_JOB_POLL_INTERVAL_SECONDS": "video_job_poll_interval_seconds",
         "WM_VIDEO_JOB_IDLE_TIMEOUT_SECONDS": "video_job_idle_timeout_seconds",
@@ -468,6 +481,9 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         ),
         ninfer_model_id=_nonempty_string(
             data.get("ninfer_model_id", "qwen3.8-27b"), "ninfer_model_id"
+        ),
+        lan_video_token=_lan_video_token(
+            data.get("lan_video_token", ""), "lan_video_token"
         ),
         video_output_directory=_path(
             data.get("video_output_directory", PROJECT_ROOT / "outputs" / "video-jobs"),

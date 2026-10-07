@@ -1202,6 +1202,40 @@ class VideoJobTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(rejected.status_code, 422)
             self.assertEqual(rejected.json()["error"]["code"], "loopback_required")
 
+    def test_video_submit_api_requires_matching_token_for_remote_requests(self) -> None:
+        settings = Settings(
+            database_path=self.database.path, manager_log_path=self.root / "manager.log",
+            sample_interval_seconds=60, lan_video_token="test-video-token",
+        )
+        sampler = Sampler(settings, collector=lambda _: {
+            "sampled_at": "2099-01-01T00:00:00+00:00",
+            "host": {"cpu": {}, "memory": {}, "disks": []}, "gpus": [],
+            "docker": {"containers": []}, "ports": [], "collector_errors": [],
+        })
+        payload = self.payload("remote-token")
+        payload["callback_url"] = "http://192.0.2.10:9000"
+        batch = self.batch_payload("remote-token-batch", 2)
+        batch["callback_url"] = payload["callback_url"]
+        with TestClient(
+            create_app(settings, sampler, self.database, self.registry, self.manager()),
+            client=("192.0.2.10", 50000),
+        ) as client:
+            for endpoint, body in (
+                ("/api/v1/video-jobs", payload),
+                ("/api/v1/video-job-batches", batch),
+            ):
+                for token in ("", "wrong-token", b"\xff"):
+                    rejected = client.post(
+                        endpoint, json=body, headers={"x-axis-lan-token": token},
+                    )
+                    self.assertEqual(rejected.status_code, 422, rejected.text)
+                    self.assertEqual(rejected.json()["error"]["code"], "loopback_required")
+                accepted = client.post(
+                    endpoint, json=body,
+                    headers={"x-axis-lan-token": settings.lan_video_token},
+                )
+                self.assertEqual(accepted.status_code, 202, accepted.text)
+
     def test_batch_submit_is_atomic_idempotent_and_reports_queue_summary(self) -> None:
         manager = self.manager()
         jobs, created = manager.submit_batch(self.batch_payload("atomic", 3))
