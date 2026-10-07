@@ -324,6 +324,7 @@
   };
 
   const templates = [
+    [/^服务端口:(.+)$/, 'Service port:$1'],
     [/^请求失败（(.+)）$/, 'Request failed ($1)'], [/^服务状态读取失败：(.+)$/, 'Unable to read service states: $1'],
     [/^历史数据读取失败：(.+)$/, 'Unable to read history data: $1'],
     [/^用户加载失败：(.+)$/, 'Unable to load users: $1'], [/^温度 (.+)$/, 'Temperature $1'],
