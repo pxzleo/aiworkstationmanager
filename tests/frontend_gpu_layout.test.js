@@ -77,3 +77,8 @@ test('sparklinePath preserves missing samples as visible gaps', () => {
   );
   assert.equal(gpuLayout.sparklinePath([null, 25]), 'M300,85');
 });
+
+test('sparkline areas preserve missing samples instead of filling across gaps', () => {
+  assert.equal(gpuLayout.sparklineAreaPath([20, 30, null, 40, 50]), 'M0,90 L75,80 L75,110 L0,110 Z M225,70 L300,60 L300,110 L225,110 Z');
+  assert.equal(gpuLayout.sparklineAreaPath([null, null]), '');
+});

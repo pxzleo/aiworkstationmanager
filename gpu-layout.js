@@ -76,6 +76,15 @@
     return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
   }
 
+  function sparklineAreaPath(values, width = 300, baseline = 110) {
+    return sparklinePath(values, width, baseline).split('M').filter(Boolean).map((segment) => {
+      const points = segment.trim().split(' ');
+      const firstX = points[0].split(',')[0];
+      const lastX = points.at(-1).replace(/^L/, '').split(',')[0];
+      return `M${segment.trim()} L${lastX},${baseline} L${firstX},${baseline} Z`;
+    }).join(' ');
+  }
+
   function gpuIndicesFromLabel(label) {
     return [...label.matchAll(/(?:^|[^a-z0-9])gpu[\s_-]*0*(\d+)(?=$|[^a-z0-9])/gi)].map((match) => validGpuIndex(match[1])).filter((index) => index !== null);
   }
@@ -113,5 +122,5 @@
     return keys.length === 1 ? keys[0] : null;
   }
 
-  return { validGpuIndex, prepareGpus, gpuSetSignature, metricForGpu, sparklinePath, serviceGpuKey, serviceGpuKeys };
+  return { validGpuIndex, prepareGpus, gpuSetSignature, metricForGpu, sparklinePath, sparklineAreaPath, serviceGpuKey, serviceGpuKeys };
 }));

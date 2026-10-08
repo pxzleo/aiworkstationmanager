@@ -319,9 +319,9 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20260928-1'));
-  assert.ok(html.includes('i18n.js?v=20261007-1'));
-  assert.ok(html.includes('app.js?v=20261007-1'));
+  assert.ok(html.includes('styles.css?v=20261008-1'));
+  assert.ok(html.includes('i18n.js?v=20261008-1'));
+  assert.ok(html.includes('app.js?v=20261008-1'));
 });
 
 test('read polling tolerates transient network failures without retrying writes', () => {
@@ -590,9 +590,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20260928-1'));
-  assert.ok(html.includes('i18n.js?v=20261007-1'));
-  assert.ok(html.includes('app.js?v=20261007-1'));
+  assert.ok(html.includes('styles.css?v=20261008-1'));
+  assert.ok(html.includes('i18n.js?v=20261008-1'));
+  assert.ok(html.includes('app.js?v=20261008-1'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));
@@ -619,11 +619,12 @@ test('mobile navigation closes when the user taps outside the sidebar', () => {
   assert.ok(i18n.includes("'关闭导航': 'Close navigation'"));
 });
 
-test('system settings provides three persistent display styles', () => {
+test('system settings and topbar provide five persistent display styles', () => {
   assert.ok(html.includes('data-page="settings"'));
   assert.ok(html.includes('id="page-settings"'));
-  for (const value of ['matrix', 'aurora', 'obsidian']) assert.ok(html.includes(`data-theme-option="${value}"`));
-  assert.equal((html.match(/data-theme-option=/g) || []).length, 3);
+  for (const value of ['shadcn-dark', 'shadcn-light', 'matrix', 'aurora', 'obsidian']) assert.ok(html.includes(`data-theme-option="${value}"`));
+  assert.equal((html.match(/data-theme-option=/g) || []).length, 5);
+  assert.ok(html.includes('data-theme-select'));
   assert.ok(html.indexOf('theme.js') < html.indexOf('styles.css'));
   assert.ok(theme.includes("const STORAGE_KEY = 'axis_manager_theme'"));
   assert.ok(theme.includes("document.documentElement.dataset.theme = theme"));
@@ -633,7 +634,7 @@ test('system settings provides three persistent display styles', () => {
   for (const staleColor of ['background: #101516', 'background: #090d0e', 'background: #111617', 'background: #080a0b', 'color: #bac3c1']) {
     assert.ok(!css.includes(staleColor), `fixed Matrix Green surface remains: ${staleColor}`);
   }
-  for (const label of ['矩阵绿', '极光蓝', '曜石金']) assert.ok(i18n.includes(`'${label}':`));
+  for (const label of ['矩阵绿', '极光蓝', '曜石金', 'Shadcn 深黑', 'Shadcn 简白', '工作站总览', '任务与文件', '管理']) assert.ok(i18n.includes(`'${label}':`));
 });
 
 test('total system power separates measured sensors from the estimate', () => {
