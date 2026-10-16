@@ -813,8 +813,7 @@ function sceneServicePortLabel(service) {
   return `服务端口:${port || '—'}`;
 }
 
-function renderBaseServices() {
-  const list = byId('baseServicesList'); list.replaceChildren();
+function renderBaseServices(list) {
   const base = state.baseServices; if (!base) return;
   const panel = element('article', 'scene-panel');
   const top = element('div', 'scene-panel-top'); top.append(element('span', '', '独立于工作场景'), element('i', 'scene-status', '随管理器启动'));
@@ -840,7 +839,7 @@ function renderBaseServices() {
 }
 
 function renderScenes() {
-  renderBaseServices(); text('sceneNavCount', String(state.scenes.length)); renderOverviewSceneSelect(); const list = byId('sceneList'); list.replaceChildren(); if (!state.scenes.length) { list.append(element('p', 'empty-state', '尚未添加场景。')); dataText('activeSceneName', '', '尚未添加场景'); renderOperationTimeline(); return; }
+  text('sceneNavCount', String(state.scenes.length)); renderOverviewSceneSelect(); const list = byId('sceneList'); list.replaceChildren(); renderBaseServices(list); if (!state.scenes.length) { list.append(element('p', 'empty-state', '尚未添加场景。')); dataText('activeSceneName', '', '尚未添加场景'); renderOperationTimeline(); return; }
   const displayedScenes = scenesForDisplay();
   displayedScenes.forEach((scene, index) => {
     const panel = element('article', `scene-panel${scene.state === 'active' ? ' selected' : ''}${scene.is_default ? ' scene-default' : ''}`); panel.dataset.sceneId = scene.id; panel.draggable = scene.state !== 'active' && !scene.busy && !actionGuard.pending;
