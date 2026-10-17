@@ -759,7 +759,9 @@ function renderGpuServiceLabels() {
   const running = runningServices(); document.querySelectorAll('.gpu-lane[data-gpu-key]').forEach((lane) => { const gpu = state.gpus.find((item) => item._uiKey === lane.dataset.gpuKey); if (!gpu) return; const matches = running.filter((item) => gpuLayout.serviceGpuKeys(item, state.gpus).includes(gpu._uiKey)); const names = lane.querySelector('.gpu-service-names'); const meta = lane.querySelector('.gpu-service-meta'); names.toggleAttribute('data-i18n-skip', Boolean(matches.length)); meta.toggleAttribute('data-i18n-skip', Boolean(matches.length)); names.textContent = matches.length ? matches.map((item) => item.name).join(' · ') : '没有已启动服务'; meta.textContent = matches.length ? matches.map((item) => item.name).join(ui('；')) : 'GPU 标签下没有已启动服务'; });
 }
 function renderRegisteredServiceTable() {
-  const rows = byId('registeredServiceRows'); rows.replaceChildren(); const query = byId('serviceSearch').value.trim().toLowerCase(); const filtered = state.services.filter((item) => (state.serviceFilter === 'all' || item.status.state === state.serviceFilter) && [item.name, item.description, item.gpu_label, item.port].join(' ').toLowerCase().includes(query));
+  const rows = byId('registeredServiceRows'); const openMenu = rows.querySelector('.service-action-menu:popover-open');
+  if (openMenu) { const service = state.services.find((item) => item.id === openMenu.dataset.serviceId); if (!service) openMenu.hidePopover(); else openMenu.querySelectorAll('button').forEach((button) => { button.disabled = button.dataset.action !== 'ui' && (service.operation_pending || actionGuard.pending); button.hidden = button.dataset.action === 'ui' && !service.ui_url; }); return; }
+  rows.replaceChildren(); const query = byId('serviceSearch').value.trim().toLowerCase(); const filtered = state.services.filter((item) => (state.serviceFilter === 'all' || item.status.state === state.serviceFilter) && [item.name, item.description, item.gpu_label, item.port].join(' ').toLowerCase().includes(query));
   if (!filtered.length) { rows.append(element('p', 'empty-state', state.services.length ? '没有符合筛选条件的服务。' : '尚未添加服务。')); return; }
   filtered.forEach((service, index) => {
     const row = element('div', 'table-row'); const title = element('span'); const logo = userElement('i', 'env-logo', String(index + 1)); const copy = element('span');
@@ -767,14 +769,26 @@ function renderRegisteredServiceTable() {
     const status = element('i', `status-label ${service.wsl_portproxy_error ? 'danger' : statusClass(service.status.state)}`, service.busy ? '操作中' : serviceStatusLabel(service));
     status.title = service.wsl_portproxy_error || (service.status.checked_at ? `状态检查于 ${formatDate(service.status.checked_at, true)}` : '尚未检查状态');
     const actions = element('span', 'row-buttons service-actions');
-    const check = iconButton('深度检查', 'search', 'service-action-check'); check.disabled = service.operation_pending || actionGuard.pending; check.addEventListener('click', () => runServiceStatusCheck(service)); actions.append(check);
-    for (const [action, label, iconName] of [['start', '启动', 'play'], ['stop', '停止', 'stop'], ['restart', '重启', 'refresh']]) {
+    for (const [action, label, iconName] of [['start', '启动', 'play'], ['stop', '停止', 'stop']]) {
       const button = iconButton(label, iconName, `service-action-${action}`); button.disabled = service.operation_pending || actionGuard.pending;
       button.addEventListener('click', () => runServiceAction(service, action)); actions.append(button);
     }
-    if (service.ui_url) { const openUi = iconButton('打开 UI', 'external', 'service-action-ui'); openUi.addEventListener('click', () => window.open(service.ui_url, '_blank', 'noopener,noreferrer')); actions.append(openUi); }
-    const edit = iconButton('编辑', 'edit', 'service-action-edit'); edit.disabled = service.operation_pending || actionGuard.pending; edit.addEventListener('click', () => openServiceDialog(service));
-    const remove = iconButton('删除', 'trash', 'service-action-delete'); remove.disabled = service.operation_pending || actionGuard.pending; remove.addEventListener('click', () => deleteService(service)); actions.append(edit, remove);
+    const more = element('button', 'service-action-toggle', '操作'); more.type = 'button'; more.append(icon('chevron')); more.setAttribute('aria-expanded', 'false');
+    const menu = element('div', 'service-action-menu'); menu.popover = 'auto'; menu.id = `service-actions-${service.id}`; menu.dataset.serviceId = service.id; more.setAttribute('popovertarget', menu.id);
+    const menuActions = {
+      check: ['深度检查', (item) => runServiceStatusCheck(item)], restart: ['重启', (item) => runServiceAction(item, 'restart')],
+      ui: ['打开 UI', (item) => window.open(item.ui_url, '_blank', 'noopener,noreferrer')], edit: ['编辑', (item) => openServiceDialog(item)], delete: ['删除', (item) => deleteService(item)],
+    };
+    Object.entries(menuActions).forEach(([action, [label, handler]]) => {
+      if (action === 'ui' && !service.ui_url) return; const button = element('button', action === 'delete' ? 'danger' : '', label); button.type = 'button'; button.dataset.action = action; button.disabled = action !== 'ui' && (service.operation_pending || actionGuard.pending);
+      button.addEventListener('click', () => { const current = state.services.find((item) => item.id === service.id); menu.hidePopover(); if (!current) return showToast('已登记服务不存在'); if (action !== 'ui' && (current.operation_pending || actionGuard.pending)) return showToast('已有操作正在执行'); if (action === 'ui' && !current.ui_url) return showToast(`${ui('UI 地址')}：${ui('未配置')}`); handler(current); }); menu.append(button);
+    });
+    menu.addEventListener('toggle', () => {
+      const open = menu.matches(':popover-open'); more.setAttribute('aria-expanded', String(open));
+      if (open) { const rect = more.getBoundingClientRect(); menu.style.left = `${Math.max(8, Math.min(rect.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8))}px`; menu.style.top = `${Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - menu.offsetHeight - 8))}px`; }
+      else if (!rows.querySelector('.service-action-menu:popover-open')) { const restoreFocus = document.activeElement === more || menu.contains(document.activeElement); renderRegisteredServiceTable(); if (restoreFocus) byId(menu.id)?.previousElementSibling.focus(); }
+    });
+    actions.append(more, menu);
     row.append(title, userOrUiElement('span', '', service.description, '—'), userOrUiElement('span', '', service.gpu_label, '未标注'), element('span', 'mono', service.port ? String(service.port) : '—'), status, actions); rows.append(row);
   });
 }
