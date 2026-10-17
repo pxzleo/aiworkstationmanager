@@ -483,6 +483,9 @@ body:has(.image-viewer-dialog[open]) { overflow: hidden; }
 .row-buttons .icon-only { width: 28px; }
 .row-buttons button { padding: 0 7px; color: var(--text); }
 .row-buttons button:disabled { opacity: .4; cursor: not-allowed; }
+.env-table .table-head, .env-table .table-row { min-width: 0; grid-template-columns: minmax(0,1.35fr) minmax(0,1fr) minmax(0,.65fr) 60px 90px 160px; column-gap: 12px; }
+.env-table .table-row > span, .env-table .table-row > span:first-child > span { min-width: 0; overflow-wrap: anywhere; }
+.env-table .table-row { padding-block: 12px; }
 .user-table .table-head, .user-table .table-row { grid-template-columns: minmax(220px,1.4fr) minmax(170px,1fr) 110px 100px minmax(180px,auto); }
 .user-avatar { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 8px; color: var(--accent); background: rgba(var(--accent-rgb),.09); font-style: normal; font-size: 11px; font-weight: 700; }
 .settings-section { border-top: 1px solid var(--line-strong); padding-top: 18px; }
@@ -871,6 +874,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .overview-lower { grid-template-columns: 1fr; }
   .table-head, .table-row { grid-template-columns: minmax(200px,1.5fr) 1fr 90px 90px minmax(260px,auto); }
   .table-head span:nth-child(3), .table-row > span:nth-child(3) { display: none; }
+  .env-table .table-head, .env-table .table-row { grid-template-columns: minmax(0,1.35fr) minmax(0,1fr) 60px 90px 160px; }
   .theme-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .gpu-context-column { border-left: 0; }
 }
@@ -934,6 +938,15 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .search, .search.compact { width: 100%; min-width: 0; }
   .env-table, .user-table { overflow-x: auto; }
   .table-head, .table-row { min-width: 700px; }
+  .env-table { overflow-x: visible; }
+  .env-table .table-head { display: none; }
+  .env-table .table-row { grid-template-columns: minmax(0,1fr) auto; gap: 8px 12px; padding-block: 14px; }
+  .env-table .table-row > span:first-child { grid-column: 1; grid-row: 1; }
+  .env-table .table-row > .status-label { grid-column: 2; grid-row: 1; justify-self: end; }
+  .env-table .table-row > span:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .env-table .table-row > span:nth-child(3) { display: block; grid-column: 1; grid-row: 3; }
+  .env-table .table-row > span:nth-child(4) { grid-column: 2; grid-row: 3; justify-self: end; }
+  .env-table .table-row > .service-actions { grid-column: 1 / -1; grid-row: 4; }
   .webui-row { grid-template-columns: auto 1fr; }
   .webui-actions { grid-column: 1/-1; justify-content: flex-end; }
   .webui-main > div { flex-wrap: wrap; }

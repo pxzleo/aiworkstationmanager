@@ -758,6 +758,7 @@ function renderOverviewServices() {
 function renderGpuServiceLabels() {
   const running = runningServices(); document.querySelectorAll('.gpu-lane[data-gpu-key]').forEach((lane) => { const gpu = state.gpus.find((item) => item._uiKey === lane.dataset.gpuKey); if (!gpu) return; const matches = running.filter((item) => gpuLayout.serviceGpuKeys(item, state.gpus).includes(gpu._uiKey)); const names = lane.querySelector('.gpu-service-names'); const meta = lane.querySelector('.gpu-service-meta'); names.toggleAttribute('data-i18n-skip', Boolean(matches.length)); meta.toggleAttribute('data-i18n-skip', Boolean(matches.length)); names.textContent = matches.length ? matches.map((item) => item.name).join(' · ') : '没有已启动服务'; meta.textContent = matches.length ? matches.map((item) => item.name).join(ui('；')) : 'GPU 标签下没有已启动服务'; });
 }
+window.addEventListener('resize', () => document.querySelector('.service-action-menu:popover-open')?.hidePopover());
 function renderRegisteredServiceTable() {
   const rows = byId('registeredServiceRows'); const openMenu = rows.querySelector('.service-action-menu:popover-open');
   if (openMenu) { const service = state.services.find((item) => item.id === openMenu.dataset.serviceId); if (!service) openMenu.hidePopover(); else openMenu.querySelectorAll('button').forEach((button) => { button.disabled = button.dataset.action !== 'ui' && (service.operation_pending || actionGuard.pending); button.hidden = button.dataset.action === 'ui' && !service.ui_url; }); return; }
