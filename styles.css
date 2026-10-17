@@ -541,6 +541,25 @@ body:has(.image-viewer-dialog[open]) { overflow: hidden; }
 .icon-button:disabled { opacity: .28; cursor: not-allowed; }
 .icon-button.is-default { color: var(--accent); border-color: rgba(var(--accent-rgb),.28); background: rgba(var(--accent-rgb),.08); }
 .icon-button.danger:hover:not(:disabled) { color: var(--danger); border-color: rgba(239,128,123,.42); background: rgba(239,128,123,.08); box-shadow: 0 0 18px rgba(239,128,123,.08); }
+.service-action-check { --service-action-rgb: 96,165,250; }
+.service-action-start { --service-action-rgb: 74,222,128; }
+.service-action-stop { --service-action-rgb: 251,146,60; }
+.service-action-restart { --service-action-rgb: 250,204,21; }
+.service-action-ui { --service-action-rgb: 34,211,238; }
+.service-action-edit { --service-action-rgb: 192,132,252; }
+.service-action-delete { --service-action-rgb: 248,113,113; }
+:root[data-theme="shadcn-light"] .service-action-check { --service-action-rgb: 37,99,235; }
+:root[data-theme="shadcn-light"] .service-action-start { --service-action-rgb: 21,128,61; }
+:root[data-theme="shadcn-light"] .service-action-stop { --service-action-rgb: 194,65,12; }
+:root[data-theme="shadcn-light"] .service-action-restart { --service-action-rgb: 161,98,7; }
+:root[data-theme="shadcn-light"] .service-action-ui { --service-action-rgb: 14,116,144; }
+:root[data-theme="shadcn-light"] .service-action-edit { --service-action-rgb: 126,34,206; }
+:root[data-theme="shadcn-light"] .service-action-delete { --service-action-rgb: 185,28,28; }
+.env-table .row-buttons.service-actions .icon-button { width: 32px; height: 32px; padding: 0; color: rgb(var(--service-action-rgb)); border-color: rgba(var(--service-action-rgb),.24); background: rgba(var(--service-action-rgb),.08); }
+.env-table .row-buttons.service-actions .icon-button:hover:not(:disabled) { color: rgb(var(--service-action-rgb)); border-color: rgba(var(--service-action-rgb),.6); background: rgba(var(--service-action-rgb),.16); }
+.env-table .row-buttons.service-actions .icon-button:focus-visible { outline: 2px solid rgb(var(--service-action-rgb)); outline-offset: 2px; }
+.service-actions .icon-button:last-child::after { left: auto; right: 0; transform: translateY(3px); }
+.service-actions .icon-button:last-child:hover:not(:disabled)::after, .service-actions .icon-button:last-child:focus-visible::after { transform: translateY(0); }
 .scene-activate-button { min-width: 154px; white-space: nowrap; }
 .scene-activate-button svg, .dialog-actions .button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
