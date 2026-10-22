@@ -1144,6 +1144,72 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.list_scenes()[0]["state"], "active")
         self.assertEqual(self.manager.active_scene()["id"], scene["id"])
 
+    async def test_scene_skips_stopped_services_after_uncertain_state_check(self) -> None:
+        target = await self.add_service("目标")
+        stopped = []
+        for state in ("unknown", "unhealthy"):
+            service = await self.add_service(f"未启动_{state}", health_url=f"http://127.0.0.1/{state}")
+            self.manager._set_status(service["id"], state, "健康接口超时", "health")
+            self.health_probe.results[service["health_url"]] = HealthProbeResult(
+                "unknown", "健康接口超时", False
+            )
+            stopped.append(service)
+        running = await self.add_service("实际运行")
+        self.runner.states[running["script_path"]] = "running"
+        already_stopped = await self.add_service("已停止")
+        await self.manager.refresh_status(already_stopped)
+        self.manager.create_scene(
+            {"name": "其他", "service_ids": [item["id"] for item in
+             [*stopped, running, already_stopped]]}, "admin", "local",
+        )
+        scene = self.manager.create_scene(
+            {"name": "目标场景", "service_ids": [target["id"]]}, "admin", "local",
+        )
+        self.runner.calls.clear()
+
+        result = await self.wait_operation(
+            self.manager.submit_scene_activation(scene["id"], "admin", "local")
+        )
+
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(result["total_steps"], 2)
+        self.assertEqual(len(result["steps"]), 2)
+        self.assertEqual(
+            [call for call in self.runner.calls if call[1] in {"start", "stop"}],
+            [("实际运行.ps1", "stop"), ("目标.ps1", "start")],
+        )
+        self.assertNotIn(("已停止.ps1", "status"), self.runner.calls)
+        for service in stopped:
+            self.assertIn((Path(service["script_path"]).name, "status"), self.runner.calls)
+            stored = self.database.get_registered_service(service["id"])
+            self.assertEqual(stored["desired_state"], "stopped")
+            self.assertEqual(stored["observed_state"], "stopped")
+
+    async def test_scene_cancel_during_status_check_skips_remaining_checks_and_actions(self) -> None:
+        services = [await self.add_service(name) for name in ("未知A", "未知B")]
+        self.manager.create_scene(
+            {"name": "其他", "service_ids": [item["id"] for item in services]}, "admin", "local",
+        )
+        scene = self.manager.create_scene(
+            {"name": "空场景", "service_ids": []}, "admin", "local",
+        )
+        reconcile = self.manager._reconcile_service_status
+
+        async def cancel_after_check(service, source):
+            status = await reconcile(service, source)
+            for event in self.manager._cancel_requests.values():
+                event.set()
+            return status
+
+        with patch.object(self.manager, "_reconcile_service_status", side_effect=cancel_after_check):
+            result = await self.wait_operation(
+                self.manager.submit_scene_activation(scene["id"], "admin", "local")
+            )
+
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(self.runner.calls, [("未知A.ps1", "status")])
+        self.assertEqual(result["steps"], [])
+
     async def test_recovery_starts_monitoring_without_base_or_default_scene_actions(self) -> None:
         base = await self.add_service("基础")
         self.manager.update_base_services({"service_ids": [base["id"]]}, "admin", "local")

@@ -1417,18 +1417,26 @@ class RegisteredServiceManager:
 
     async def _run_scene_operation(self, operation_id: str, scene_id: str, _: str) -> None:
         scene = self._require_scene(scene_id)
-        await self.refresh_all_health()
-        before = {key: value.get("state", "unknown") for key, value in self.statuses.items()}
+        await self.refresh_all_health(immediate=True)
         target_ids = list(scene["service_ids"])
         target = set(target_ids)
         managed = self._scene_managed_service_ids()
         services = {item["id"]: item for item in self.database.list_registered_services()}
-        stop_targets = [
-            service for service in services.values()
-            if service["id"] in managed
-            and service["id"] not in target
-            and self.statuses.get(service["id"], {}).get("state") != "stopped"
-        ]
+        cancel_event = self._cancel_requests[operation_id]
+        stop_targets = []
+        for service in services.values():
+            if cancel_event.is_set():
+                break
+            if service["id"] not in managed or service["id"] in target:
+                continue
+            state = self.statuses.get(service["id"], {}).get("state", "unknown")
+            if state in {"unknown", "unhealthy"}:
+                async with self._service_lock(service["id"]):
+                    status = await self._reconcile_service_status(service, "scene")
+                state = status["state"]
+            if state != "stopped":
+                stop_targets.append(service)
+        before = {key: value.get("state", "unknown") for key, value in self.statuses.items()}
         start_targets = [
             services[service_id] for service_id in target_ids
             if self.statuses.get(service_id, {}).get("state") != "running"
@@ -1440,21 +1448,17 @@ class RegisteredServiceManager:
         sequence = 0
         stop_ok = True
         cancelled = False
-        cancel_event = self._cancel_requests[operation_id]
-        for service in services.values():
+        for service in stop_targets:
             if cancel_event.is_set():
                 cancelled = True
                 break
-            if service["id"] in managed and service["id"] not in target and self.statuses.get(
-                service["id"], {}
-            ).get("state") != "stopped":
-                sequence += 1
-                stop_ok = await self._run_script_action(
-                    operation_id, sequence, "stop_unselected", service, "stop"
-                ) and stop_ok
-                if cancel_event.is_set():
-                    cancelled = True
-                    break
+            sequence += 1
+            stop_ok = await self._run_script_action(
+                operation_id, sequence, "stop_unselected", service, "stop"
+            ) and stop_ok
+            if cancel_event.is_set():
+                cancelled = True
+                break
         start_ok = True
         if stop_ok and not cancelled:
             for service_id in target_ids:
