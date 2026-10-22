@@ -1452,7 +1452,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(scene["state"], "active")
 
-    async def test_scene_is_partial_when_other_scene_service_is_running(self) -> None:
+    async def test_scenes_are_active_when_each_scene_members_are_running(self) -> None:
         target = await self.add_service("目标")
         other = await self.add_service("其他场景服务")
         self.runner.states[target["script_path"]] = "running"
@@ -1468,10 +1468,87 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
             "admin", "local",
         )
 
-        self.assertEqual(
-            next(item for item in self.manager.list_scenes() if item["id"] == scene["id"])["state"],
-            "partial",
+        self.assertEqual([item["state"] for item in self.manager.list_scenes()], ["active", "active"])
+
+    async def test_running_scenes_can_share_members(self) -> None:
+        shared = await self.add_service("共享服务")
+        for name in ("场景一服务", "场景二服务"):
+            service = await self.add_service(name)
+            self.runner.states[service["script_path"]] = "running"
+            await self.manager.refresh_status(service)
+            self.manager.create_scene(
+                {"name": name, "service_ids": [shared["id"], service["id"]]}, "admin", "local",
+            )
+        self.runner.states[shared["script_path"]] = "running"
+        await self.manager.refresh_status(shared)
+
+        self.assertEqual([item["state"] for item in self.manager.list_scenes()], ["active", "active"])
+
+    async def test_scene_member_actions_include_shared_members_but_leave_other_members_running(self) -> None:
+        shared = await self.add_service("共享")
+        target = await self.add_service("本场景")
+        outside = await self.add_service("其他场景独有")
+        self.runner.states[outside["script_path"]] = "running"
+        await self.manager.refresh_status(outside)
+        scene = self.manager.create_scene(
+            {"name": "本场景", "service_ids": [shared["id"], target["id"]]}, "admin", "local",
         )
+        other = self.manager.create_scene(
+            {"name": "其他场景", "service_ids": [shared["id"], outside["id"]]}, "admin", "local",
+        )
+        self.database.set_last_activated_scene(other["id"])
+        self.runner.calls.clear()
+
+        for action, expected in (("start", "active"), ("stop", "inactive")):
+            operation_id = self.manager.submit_scene_services_action(scene["id"], action, "admin", "local")
+            operation = await self.wait_operation(operation_id)
+            self.assertEqual(operation["status"], "succeeded", operation)
+            self.assertEqual(operation["total_steps"], 2)
+            self.assertEqual(operation["action"], f"{action}_scene")
+            self.assertEqual([step["target_id"] for step in operation["steps"]], [shared["id"], target["id"]])
+            self.assertEqual(next(s for s in self.manager.list_scenes() if s["id"] == scene["id"])["state"], expected)
+            self.assertEqual(self.manager.statuses[outside["id"]]["state"], "running")
+            self.assertEqual(self.database.get_last_activated_scene()["id"], other["id"])
+        self.assertEqual(self.runner.calls, [("共享.ps1", "start"), ("本场景.ps1", "start"),
+                                             ("共享.ps1", "stop"), ("本场景.ps1", "stop")])
+        self.assertEqual(next(s for s in self.manager.list_scenes() if s["id"] == other["id"])["state"], "partial")
+
+    async def test_scene_member_action_skips_members_already_in_target_state(self) -> None:
+        service = await self.add_service("已停止")
+        await self.manager.refresh_status(service)
+        scene = self.manager.create_scene({"name": "无需操作", "service_ids": [service["id"]]}, "admin", "local")
+        self.runner.calls.clear()
+        operation = await self.wait_operation(self.manager.submit_scene_services_action(scene["id"], "stop", "admin", "local"))
+        self.assertEqual(operation["status"], "succeeded")
+        self.assertEqual(operation["total_steps"], 0)
+        self.assertEqual(self.runner.calls, [])
+        self.assertEqual(self.database.get_registered_service(service["id"])["desired_state"], "stopped")
+        with self.assertRaises(RegistryError):
+            self.manager.submit_scene_services_action(scene["id"], "restart", "admin", "local")
+
+    async def test_scene_member_start_failure_stops_later_starts_and_releases_lock(self) -> None:
+        first = await self.add_service("首项")
+        later = await self.add_service("后项")
+        scene = self.manager.create_scene({"name": "启动失败", "service_ids": [first["id"], later["id"]]}, "admin", "local")
+        self.runner.failures.add(("首项.ps1", "start"))
+        operation = await self.wait_operation(self.manager.submit_scene_services_action(scene["id"], "start", "admin", "local"))
+        self.assertEqual(operation["status"], "failed")
+        self.assertNotIn(("后项.ps1", "start"), self.runner.calls)
+        self.assertFalse(self.manager._operation_pending)
+
+    async def test_scene_member_stop_attempts_remaining_members_after_failure(self) -> None:
+        first = await self.add_service("首项")
+        later = await self.add_service("后项")
+        for service in (first, later):
+            self.runner.states[service["script_path"]] = "running"
+            await self.manager.refresh_status(service)
+        scene = self.manager.create_scene({"name": "停止失败", "service_ids": [first["id"], later["id"]]}, "admin", "local")
+        self.runner.failures.add(("首项.ps1", "stop"))
+        operation = await self.wait_operation(self.manager.submit_scene_services_action(scene["id"], "stop", "admin", "local"))
+        self.assertEqual(operation["status"], "failed")
+        self.assertIn(("后项.ps1", "stop"), self.runner.calls)
+        self.assertEqual(operation["steps"][0]["status"], "failed")
+        self.assertFalse(self.manager._operation_pending)
 
     async def test_empty_scene_ignores_unassigned_running_service(self) -> None:
         running = await self.add_service("运行中")
@@ -1485,6 +1562,14 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         await self.manager.refresh_status(running)
 
         self.assertEqual(self.manager.list_scenes()[0]["state"], "active")
+
+    async def test_empty_scene_preserves_state_when_other_scene_members_are_running(self) -> None:
+        service = await self.add_service("其他场景成员")
+        scene = self.manager.create_scene({"name": "空场景", "service_ids": []}, "admin", "local")
+        self.manager.create_scene({"name": "其他场景", "service_ids": [service["id"]]}, "admin", "local")
+        self.runner.states[service["script_path"]] = "running"
+        await self.manager.refresh_status(service)
+        self.assertEqual(next(s for s in self.manager.list_scenes() if s["id"] == scene["id"])["state"], "partial")
 
     async def test_stop_all_services_records_each_step(self) -> None:
         first = await self.add_service("A")
@@ -2448,6 +2533,26 @@ class ApiRegistryTests(unittest.TestCase):
                 self.assertEqual(scene.status_code, 201, scene.text)
                 self.assertEqual(scene.json()["description"], "简短介绍")
                 self.assertEqual(scene.json()["is_default_generation"], 1)
+                scene_actions_url = f"/api/v1/scenes/{scene.json()['id']}/actions"
+                self.assertEqual(client.post(scene_actions_url, json={"action": "start"}).status_code, 403)
+                self.assertEqual(client.post(scene_actions_url, headers=headers, json={"action": "restart"}).status_code, 422)
+                self.assertEqual(client.post(f"/api/v1/scenes/{'f' * 32}/actions", headers=headers, json={"action": "start"}).status_code, 404)
+                for action in ("start", "stop"):
+                    registry.health_probe.results[created.json()["health_url"]] = HealthProbeResult(
+                        "running" if action == "start" else "stopped", None, True,
+                    )
+                    submitted = client.post(scene_actions_url, headers=headers, json={"action": action})
+                    self.assertEqual(submitted.status_code, 202, submitted.text)
+                    for _ in range(100):
+                        operation = client.get(f"/api/v1/operations/{submitted.json()['operation_id']}").json()
+                        if operation["status"] not in {"queued", "running"}:
+                            break
+                        time.sleep(0.01)
+                    self.assertEqual(operation["status"], "succeeded", operation)
+                    self.assertEqual(operation["kind"], "service_group")
+                    self.assertEqual(operation["action"], f"{action}_scene")
+                    self.assertEqual(operation["target_id"], scene.json()["id"])
+                    self.assertEqual(operation["total_steps"], 0)
                 self.assertEqual(
                     scene.json()["detailed_description"],
                     "API Base：http://127.0.0.1:8080/v1",

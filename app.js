@@ -897,11 +897,13 @@ function renderScenes() {
     const up = iconButton('上移场景', 'arrow-up'); up.disabled = index === 0 || displayedScenes[index - 1]?.state === 'active' || scene.busy || actionGuard.pending; up.addEventListener('click', () => moveSceneByOffset(scene.id, -1));
     const down = iconButton('下移场景', 'arrow-down'); down.disabled = scene.state === 'active' || index === displayedScenes.length - 1 || scene.busy || actionGuard.pending; down.addEventListener('click', () => moveSceneByOffset(scene.id, 1));
     reorder.append(up, down);
+    const start = iconButton('启动本场景服务', 'play', 'scene-service-start'); start.disabled = !scene.service_ids.length || scene.busy || actionGuard.pending; start.addEventListener('click', () => runSceneServicesAction(scene, 'start'));
+    const stop = iconButton('停止本场景服务', 'stop', 'scene-service-stop'); stop.disabled = !scene.service_ids.length || scene.busy || actionGuard.pending; stop.addEventListener('click', () => runSceneServicesAction(scene, 'stop'));
     const details = iconButton('查看详细说明', 'info'); details.addEventListener('click', () => openSceneDetails(scene));
     const defaultButton = iconButton(scene.is_default ? '取消默认场景' : '设为默认场景', 'star', scene.is_default ? 'is-default' : ''); defaultButton.disabled = scene.busy || actionGuard.pending; defaultButton.addEventListener('click', () => setDefaultScene(scene));
     const edit = iconButton('编辑场景', 'edit'); edit.disabled = scene.busy || actionGuard.pending; edit.addEventListener('click', () => openSceneDialog(scene));
     const remove = iconButton('删除场景', 'trash', 'danger'); remove.disabled = scene.busy || actionGuard.pending; remove.addEventListener('click', () => deleteScene(scene));
-    utilities.append(reorder, details, defaultButton, edit, remove);
+    utilities.append(reorder, start, stop, details, defaultButton, edit, remove);
     const activateLabel = scene.state === 'active' ? '重新切换' : '切换到此场景';
     const activate = labeledIconButton(activateLabel, 'switch', 'button primary scene-activate-button'); activate.disabled = scene.busy || actionGuard.pending; activate.addEventListener('click', () => activateScene(scene));
     actions.append(utilities, activate); panel.append(map, actions); list.append(panel);
@@ -927,6 +929,27 @@ function openOperationProgress(operationId, title, summary, waiting, cancelLabel
 }
 function openSceneProgress(scene, operationId) { const managed = new Set(state.scenes.flatMap((item) => item.service_ids)); const base = new Set(state.baseServices?.service_ids || []); sceneProgressExpectedTotal = state.services.filter((service) => managed.has(service.id) && !base.has(service.id) && !scene.service_ids.includes(service.id) && service.status.state === 'running').length + scene.service_ids.filter((serviceId) => state.services.find((service) => service.id === serviceId)?.status.state !== 'running').length; openOperationProgress(operationId, `正在切换到 ${scene.name}`, '管理器正在按顺序停止和启动服务。', '等待第一项服务操作', '终止切换并返回', '返回工作场景'); }
 function openStopAllProgress(operationId) { openOperationProgress(operationId, '正在停止全部服务', '管理器正在确认需要停止的服务并按顺序执行。', '正在确认需要停止的服务', '', '返回服务列表'); }
+async function runSceneServicesAction(scene, action) {
+  if (action === 'stop') {
+    const related = state.scenes.filter((other) => other.id !== scene.id && other.service_ids.some((id) => scene.service_ids.includes(id)));
+    const sharedIds = new Set(related.flatMap((other) => other.service_ids).filter((id) => scene.service_ids.includes(id)));
+    const message = [`${ui('停止本场景全部服务？')}\n${scene.name}`, ui('将停止本场景全部成员，包括共享服务。')];
+    if (sharedIds.size) message.push(`${ui('共享服务')}：${state.services.filter((service) => sharedIds.has(service.id)).map((service) => service.name).join('、')}`, `${ui('受影响场景')}：${related.map((other) => other.name).join('、')}`);
+    if (!confirmUi(message.join('\n'))) return;
+  }
+  const owner = actionGuard.acquire(); if (!owner) return showToast('已有操作正在执行');
+  try {
+    const result = await api(`/scenes/${scene.id}/actions`, { method: 'POST', body: { action } });
+    const title = `${ui(action === 'start' ? '正在启动' : '正在停止')} · ${scene.name}`;
+    openOperationProgress(result.operation_id, title, '仅操作本场景成员，不执行场景切换。', title, '', '返回工作场景');
+    await pollOperation(result.operation_id, (operation) => renderOperationProgress(operation, operation.total_steps, {
+      successCurrent: '场景服务操作完成', interruptedCurrent: '操作已终止', failureCurrent: '场景服务操作未完成',
+      successTitle: '场景服务操作完成', interruptedTitle: '操作已终止', failureTitle: '场景服务操作未完成',
+      successSummary: action === 'start' ? '本场景服务均已启动。' : '本场景服务均已停止。', failureSummary: '请在日志中心查看失败步骤。'
+    }), null);
+  } catch (error) { showToast(error.message); if (byId('sceneProgressDialog').open) byId('sceneProgressDialog').close(); }
+  finally { sceneProgressOperationId = null; actionGuard.release(owner); await refreshServicesAndScenes(); }
+}
 async function runBaseServicesAction(action) {
   const owner = actionGuard.acquire(); if (!owner) return showToast('已有操作正在执行');
   try {
@@ -1020,12 +1043,12 @@ async function saveUserPassword(event) {
 }
 async function deleteUser(user) { if (!confirmUi(`删除用户“${user.username}”？该用户的登录会话将立即失效。`)) return; try { await api(`/users/${user.id}`, { method: 'DELETE' }); showToast('用户已删除'); await refreshUsers(); } catch (error) { showToast(error.message); } }
 
-function targetName(kind, id) { if (kind === 'service_group' && id === 'all') return '全部服务'; if (kind === 'service_group' && id === 'base') return '基础服务'; const collection = kind === 'scene' ? state.scenes : state.services; return collection.find((item) => item.id === id)?.name || id; }
+function targetName(kind, id) { if (kind === 'service_group' && id === 'all') return '全部服务'; if (kind === 'service_group' && id === 'base') return '基础服务'; const collection = ['scene', 'service_group'].includes(kind) ? state.scenes : state.services; return collection.find((item) => item.id === id)?.name || id; }
 function defaultSceneOperation(event) { const summary = event.summary || {}; return { id: `audit-${event.id}`, kind: 'scene_default', target_id: summary.scene_id, target_name: summary.name, action: event.event === 'management.scene.default.set' ? 'set_default' : 'clear_default', status: event.result === 'success' ? 'succeeded' : 'failed', result: event.result === 'success' ? 'success' : 'failed', requested_by: summary.requested_by, created_at: event.created_at, steps: [] }; }
 function operationTargetName(operation) { return operation.target_name || targetName(operation.kind, operation.target_id); }
 function operationStatusLabel(status) { return { succeeded: '成功', failed: '失败', interrupted: '已终止', queued: '等待执行', running: '执行中' }[status] || '状态未知'; }
-function operationActionLabel(action) { return { start: '启动', stop: '停止', restart: '重启', activate: '切换场景', start_base: '启动基础服务', stop_base: '停止基础服务', stop_all: '停止全部服务', set_default: '设为默认', clear_default: '取消默认' }[action] || action; }
-function operationPhaseLabel(phase) { return { start_base: '启动基础服务', stop_base: '停止基础服务', stop_all: '停止全部服务', stop_unselected: '停止未选服务', start_selected: '启动目标服务' }[phase] || phase; }
+function operationActionLabel(action) { return { start: '启动', stop: '停止', restart: '重启', activate: '切换场景', start_scene: '启动场景服务', stop_scene: '停止场景服务', start_base: '启动基础服务', stop_base: '停止基础服务', stop_all: '停止全部服务', set_default: '设为默认', clear_default: '取消默认' }[action] || action; }
+function operationPhaseLabel(phase) { return { start_scene: '启动场景服务', stop_scene: '停止场景服务', start_base: '启动基础服务', stop_base: '停止基础服务', stop_all: '停止全部服务', stop_unselected: '停止未选服务', start_selected: '启动目标服务' }[phase] || phase; }
 function operationResultLabel(result) { return { success: '成功', failed: '失败', partial: '部分启动', stop_failed: '停止失败', cancelled: '已终止' }[result] || result; }
 function operationActor(operation) { return String(operation.requested_by || '').trim() || ui('未知账号'); }
 function renderOperationTimeline() { const timeline = byId('auditTimeline'); timeline.replaceChildren(); const recent = state.operations.filter((item) => Date.now() - new Date(item.created_at).getTime() <= 30 * 60 * 1000).slice(0, 5); if (!recent.length) { timeline.append(element('li', 'empty-state', '最近 30 分钟没有服务或场景操作。')); return; } recent.forEach((operation) => { const item = element('li'); const success = operation.status === 'succeeded'; item.append(element('span', `event-dot ${success ? 'good' : 'warn'}`)); const copy = element('div'); const eventLabel = operation.kind === 'scene_default' ? '默认场景' : operation.kind === 'scene' ? '场景切换' : '服务操作'; copy.append(element('strong', '', `${ui(eventLabel)} · ${operationTargetName(operation)}`), element('small', '', `${formatDate(operation.created_at, true)} · ${ui(operationActionLabel(operation.action))} · ${ui(operationStatusLabel(operation.status))} · ${ui('操作账号')} ${operationActor(operation)}`)); item.append(copy); timeline.append(item); }); }

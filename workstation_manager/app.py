@@ -897,6 +897,14 @@ def create_app(settings: Settings | None = None, sampler: Sampler | None = None,
             scene_id, False, session.username, _client_ip(request)
         )
 
+    @app.post("/api/v1/scenes/{scene_id}/actions", status_code=202)
+    async def scene_services_action(scene_id: str, payload: ServiceActionPayload, request: Request,
+                                    session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, str]:
+        operation_id = resolved_registry.submit_scene_services_action(
+            scene_id, payload.action, session.username, _client_ip(request)
+        )
+        return {"operation_id": operation_id, "status": "queued"}
+
     @app.post("/api/v1/scenes/{scene_id}/activate", status_code=202)
     async def activate_scene(scene_id: str, request: Request,
                              session: AuthenticatedSession = Depends(require_csrf)) -> dict[str, str]:

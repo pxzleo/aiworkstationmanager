@@ -308,6 +308,31 @@ test('active scene is displayed first without changing the relative order of oth
   assert.deepEqual(Array.from(sandbox.scenesForDisplay(), (scene) => scene.id), ['active', 'first', 'last']);
 });
 
+test('scene stop confirms shared members before submitting and cancellation performs no action', async () => {
+  const source = js.slice(js.indexOf('async function runSceneServicesAction('), js.indexOf('async function runBaseServicesAction('));
+  const scene = { id: 'first', name: 'First scene', service_ids: ['shared', 'own'] };
+  const calls = []; let confirmation = ''; let acquired = 0; let released = 0;
+  const sandbox = {
+    state: { scenes: [scene, { id: 'other', name: 'Other scene', service_ids: ['shared', 'outside'] }], services: [{ id: 'shared', name: 'Shared LLM' }] },
+    ui: (value) => value, confirmUi: (message) => { confirmation = message; return false; },
+    actionGuard: { acquire: () => { acquired++; return 'owner'; }, release: () => { released++; } },
+    api: async (path, options) => { calls.push([path, options.body.action]); return { operation_id: 'op' }; },
+    openOperationProgress: () => {}, pollOperation: async () => {}, refreshServicesAndScenes: async () => {}, sceneProgressOperationId: null,
+  };
+  vm.runInNewContext(source, sandbox);
+  await sandbox.runSceneServicesAction(scene, 'stop');
+  assert.ok(confirmation.includes('Shared LLM'));
+  assert.ok(confirmation.includes('Other scene'));
+  assert.ok(confirmation.includes('包括共享服务'));
+  assert.equal(acquired, 0);
+  assert.deepEqual(calls, []);
+  sandbox.confirmUi = () => true;
+  await sandbox.runSceneServicesAction(scene, 'stop');
+  await sandbox.runSceneServicesAction(scene, 'start');
+  assert.deepEqual(calls, [['/scenes/first/actions', 'stop'], ['/scenes/first/actions', 'start']]);
+  assert.equal(released, 2);
+});
+
 test('authenticated refresh keeps the login panel hidden while the session is checked', () => {
   assert.ok(html.includes('<body class="auth-pending app-initializing">'));
   assert.ok(html.includes('id="startupScreen"'));
@@ -319,9 +344,9 @@ test('authenticated refresh keeps the login panel hidden while the session is ch
 });
 
 test('scene generation controls use the current frontend asset cache key', () => {
-  assert.ok(html.includes('styles.css?v=20261017-4'));
-  assert.ok(html.includes('i18n.js?v=20261008-1'));
-  assert.ok(html.includes('app.js?v=20261017-4'));
+  assert.ok(html.includes('styles.css?v=20261022-1'));
+  assert.ok(html.includes('i18n.js?v=20261022-1'));
+  assert.ok(html.includes('app.js?v=20261022-1'));
 });
 
 test('read polling tolerates transient network failures without retrying writes', () => {
@@ -590,9 +615,9 @@ test('Chinese and English UI supports automatic detection and a remembered manua
   assert.ok(html.indexOf('gpu-layout.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('monitor-chart.js') < html.indexOf('app.js'));
   assert.ok(html.indexOf('i18n.js') < html.indexOf('app.js'));
-  assert.ok(html.includes('styles.css?v=20261017-4'));
-  assert.ok(html.includes('i18n.js?v=20261008-1'));
-  assert.ok(html.includes('app.js?v=20261017-4'));
+  assert.ok(html.includes('styles.css?v=20261022-1'));
+  assert.ok(html.includes('i18n.js?v=20261022-1'));
+  assert.ok(html.includes('app.js?v=20261022-1'));
   assert.ok(i18n.includes("navigator.languages"));
   assert.ok(i18n.includes("localStorage.getItem(STORAGE_KEY)"));
   assert.ok(i18n.includes("localStorage.setItem(STORAGE_KEY, next)"));

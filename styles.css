@@ -544,6 +544,9 @@ body:has(.image-viewer-dialog[open]) { overflow: hidden; }
 .icon-button:disabled { opacity: .28; cursor: not-allowed; }
 .icon-button.is-default { color: var(--accent); border-color: rgba(var(--accent-rgb),.28); background: rgba(var(--accent-rgb),.08); }
 .icon-button.danger:hover:not(:disabled) { color: var(--danger); border-color: rgba(239,128,123,.42); background: rgba(239,128,123,.08); box-shadow: 0 0 18px rgba(239,128,123,.08); }
+.icon-button.scene-service-start { color: var(--success, #4ade80); width: 28px; }
+.icon-button.scene-service-stop { color: var(--warning); width: 28px; }
+.scene-card-actions .scene-utility-actions { flex-wrap: wrap; min-width: 0; }
 .service-action-start { --service-action-rgb: 74,222,128; }
 .service-action-stop { --service-action-rgb: 251,146,60; }
 :root[data-theme="shadcn-light"] .service-action-start { --service-action-rgb: 21,128,61; }

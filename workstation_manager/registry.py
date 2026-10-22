@@ -1045,19 +1045,14 @@ class RegisteredServiceManager:
         if scene is None:
             raise RegistryError(404, "scene_not_found", "场景不存在")
         target = set(scene["service_ids"])
-        managed = self._scene_managed_service_ids()
         services = self.database.list_registered_services()
-        matches = True
-        target_running = False
-        for service in services:
-            if service["id"] not in managed and service["id"] not in target:
-                continue
-            state = self.statuses.get(service["id"], {}).get("state", "unknown")
-            if service["id"] in target:
-                matches = matches and state == "running"
-                target_running = target_running or state == "running"
-            else:
-                matches = matches and state != "running"
+        target_states = [self.statuses.get(service_id, {}).get("state", "unknown")
+                         for service_id in target]
+        matches = all(state == "running" for state in target_states)
+        target_running = any(state == "running" for state in target_states)
+        if not target:
+            matches = not any(self.statuses.get(service_id, {}).get("state") == "running"
+                              for service_id in self._scene_managed_service_ids())
         item = dict(scene)
         service_map = {service["id"]: service for service in services}
         item["services"] = [
@@ -1103,6 +1098,17 @@ class RegisteredServiceManager:
         self._require_scene(scene_id)
         return self._submit("scene", scene_id, "activate", username, source_ip,
                             self._run_scene_operation, video_job_id=video_job_id)
+
+    def submit_scene_services_action(self, scene_id: str, action: str,
+                                     username: str, source_ip: str) -> str:
+        if action not in {"start", "stop"}:
+            raise RegistryError(422, "invalid_action", "动作只支持 start/stop")
+        scene = self._require_scene(scene_id)
+        operation_id = self._submit("service_group", scene_id, f"{action}_scene", username,
+                                    source_ip, self._run_scene_services_operation)
+        if action == "stop":
+            self._deferred_base_services.difference_update(scene["service_ids"])
+        return operation_id
 
     def submit_default_scene_activation(self) -> str | None:
         if os.environ.get("WM_MANAGER_RECOVERY") == "1":
@@ -1377,6 +1383,36 @@ class RegisteredServiceManager:
             "success" if success else "partial", None,
             "running" if success else "partial",
             None if success else "部分基础服务未能启动",
+        )
+
+    async def _run_scene_services_operation(self, operation_id: str, scene_id: str, action: str) -> None:
+        scene = self._require_scene(scene_id)
+        await self.refresh_all_health(immediate=True)
+        before = self._scene_with_state(scene)["state"]
+        service_map = {service["id"]: service for service in self.database.list_registered_services()}
+        members = [service_map[service_id] for service_id in scene["service_ids"]]
+        script_action = "start" if action == "start_scene" else "stop"
+        expected = "running" if script_action == "start" else "stopped"
+        targets = []
+        for service in members:
+            if self.statuses.get(service["id"], {}).get("state") == expected:
+                self._set_desired_state(service["id"], expected)
+            else:
+                targets.append(service)
+        self.database.update_operation(operation_id, status="running", started_at=utc_now(),
+                                       before_state=before, total_steps=len(targets))
+        success = True
+        for sequence, service in enumerate(targets, start=1):
+            step_ok = await self._run_script_action(operation_id, sequence, action, service, script_action)
+            success = step_ok and success
+            if not step_ok and script_action == "start":
+                break
+        success = success and all(self.statuses.get(service["id"], {}).get("state") == expected
+                                  for service in members)
+        self.database.finish_operation_with_audit(
+            operation_id, "succeeded" if success else "failed", "success" if success else "partial",
+            before, self._scene_with_state(scene)["state"],
+            None if success else "场景服务未达到全部目标状态",
         )
 
     async def _run_scene_operation(self, operation_id: str, scene_id: str, _: str) -> None:
