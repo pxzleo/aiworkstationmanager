@@ -766,7 +766,7 @@ function renderRegisteredServiceTable() {
   if (!filtered.length) { rows.append(element('p', 'empty-state', state.services.length ? '没有符合筛选条件的服务。' : '尚未添加服务。')); return; }
   filtered.forEach((service, index) => {
     const row = element('div', 'table-row'); const title = element('span'); const logo = userElement('i', 'env-logo', String(index + 1)); const copy = element('span');
-    copy.append(userElement('b', '', service.name), userElement('small', '', service.script_path)); title.append(logo, copy);
+    copy.append(userElement('b', service.status.state === 'running' ? 'service-name-running' : '', service.name), userElement('small', '', service.script_path)); title.append(logo, copy);
     const status = element('i', `status-label ${service.wsl_portproxy_error ? 'danger' : statusClass(service.status.state)}`, service.busy ? '操作中' : serviceStatusLabel(service));
     status.title = service.wsl_portproxy_error || (service.status.checked_at ? `状态检查于 ${formatDate(service.status.checked_at, true)}` : '尚未检查状态');
     const actions = element('span', 'row-buttons service-actions');
