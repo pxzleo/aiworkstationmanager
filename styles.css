@@ -303,7 +303,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .scene-map > div { padding: 14px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 90px minmax(0, 1fr) auto; column-gap: 14px; align-items: center; }
 .scene-map span { color: var(--accent); font-size: 9px; letter-spacing: .08em; }
 .scene-map strong { overflow-wrap: anywhere; color: var(--muted); font-size: 11px; font-weight: 600; }
-.scene-map strong.scene-service-running, .env-table .table-row b.service-name-running { color: var(--success, #4ade80); }
+.scene-map strong.service-name-running, .env-table .table-row b.service-name-running { color: var(--success, #4ade80); }
+.scene-map strong.service-name-warning, .env-table .table-row b.service-name-warning { color: var(--warning); }
 .scene-map small { grid-column: 2; color: var(--muted); font-size: 9px; margin-top: 3px; }
 .scene-map .scene-service-meta { grid-column: 2; display: flex; align-items: center; gap: 9px; margin-top: 5px; }
 .scene-service-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 9px; }
