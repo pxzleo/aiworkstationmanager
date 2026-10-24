@@ -861,7 +861,7 @@ function renderBaseServices(list) {
   const map = element('div', 'scene-map');
   if (!base.services.length) map.append(element('div', '', '尚未配置基础服务'));
   base.services.forEach((service, order) => {
-    const item = element('div'); item.append(element('span', '', `启动顺序 ${order + 1}`), userElement('strong', '', service.name));
+    const item = element('div'); item.append(element('span', '', `启动顺序 ${order + 1}`), userElement('strong', service.status.state === 'running' ? 'scene-service-running' : '', service.name));
     const meta = element('small', 'scene-service-meta'); const status = element('i', 'scene-service-status');
     status.append(element('i', `service-state ${statusClass(service.status.state)}`), document.createTextNode(service.busy ? '操作中' : serviceStatusLabel(service))); meta.append(status, element('span', '', sceneServicePortLabel(service))); item.append(meta);
     item.append(renderSceneServiceActions(service));
@@ -900,7 +900,7 @@ function renderScenes() {
     }
     panel.append(cardHeader, userElement('h2', '', scene.name), userOrUiElement('p', '', scene.description, '无说明'));
     const map = element('div', 'scene-map'); const sceneServices = scene.services || scene.service_ids.map((id, order) => ({ id, name: scene.service_names[order], ui_url: '', status: { state: 'unknown' } })); if (!sceneServices.length) map.append(element('div', '', '此场景不启动任何服务'));
-    sceneServices.forEach((service, order) => { const item = element('div'); item.append(element('span', '', `启动顺序 ${order + 1}`), userElement('strong', '', service.name)); const meta = element('small', 'scene-service-meta'); const status = element('i', 'scene-service-status'); status.append(element('i', `service-state ${statusClass(service.status.state)}`), document.createTextNode(service.busy ? '操作中' : serviceStatusLabel(service))); meta.append(status, element('span', '', sceneServicePortLabel(service))); item.append(meta); item.append(renderSceneServiceActions(service)); map.append(item); });
+    sceneServices.forEach((service, order) => { const item = element('div'); item.append(element('span', '', `启动顺序 ${order + 1}`), userElement('strong', service.status.state === 'running' ? 'scene-service-running' : '', service.name)); const meta = element('small', 'scene-service-meta'); const status = element('i', 'scene-service-status'); status.append(element('i', `service-state ${statusClass(service.status.state)}`), document.createTextNode(service.busy ? '操作中' : serviceStatusLabel(service))); meta.append(status, element('span', '', sceneServicePortLabel(service))); item.append(meta); item.append(renderSceneServiceActions(service)); map.append(item); });
     const actions = element('div', 'scene-card-actions');
     const utilities = element('div', 'scene-utility-actions');
     const reorder = element('span', 'scene-reorder-controls');
