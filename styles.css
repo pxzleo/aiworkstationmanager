@@ -556,7 +556,7 @@ body:has(.image-viewer-dialog[open]) { overflow: hidden; }
 .service-action-stop { --service-action-rgb: 251,146,60; }
 :root[data-theme="shadcn-light"] .service-action-start { --service-action-rgb: 21,128,61; }
 :root[data-theme="shadcn-light"] .service-action-stop { --service-action-rgb: 194,65,12; }
-.env-table .row-buttons.service-actions .icon-button, .scene-service-actions .icon-button { width: 32px; height: 32px; padding: 0; color: rgb(var(--service-action-rgb)); border-color: rgba(var(--service-action-rgb),.24); background: rgba(var(--service-action-rgb),.08); }
+.env-table .row-buttons.service-actions .icon-button, .scene-service-actions .icon-button { width: 32px; height: 32px; min-height: 32px; padding: 0; color: rgb(var(--service-action-rgb)); border-color: rgba(var(--service-action-rgb),.24); background: rgba(var(--service-action-rgb),.08); }
 .env-table .row-buttons.service-actions .icon-button:hover:not(:disabled), .scene-service-actions .icon-button:hover:not(:disabled) { color: rgb(var(--service-action-rgb)); border-color: rgba(var(--service-action-rgb),.6); background: rgba(var(--service-action-rgb),.16); }
 .env-table .row-buttons.service-actions .icon-button:focus-visible, .scene-service-actions .icon-button:focus-visible { outline: 2px solid rgb(var(--service-action-rgb)); outline-offset: 2px; }
 .env-table .row-buttons .service-action-toggle { height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; font-size: 11px; }
