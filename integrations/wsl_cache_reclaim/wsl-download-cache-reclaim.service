@@ -1,0 +1,10 @@
+[Unit]
+Description=Reclaim cold file cache from the Xolotl download task
+
+[Service]
+Type=oneshot
+User=xu
+ExecStart=/usr/bin/python3 /usr/local/lib/wsl-download-cache-reclaim/reclaim.py --state /run/wsl-download-cache-reclaim/state.json
+RuntimeDirectory=wsl-download-cache-reclaim
+RuntimeDirectoryPreserve=yes
+TimeoutStartSec=30

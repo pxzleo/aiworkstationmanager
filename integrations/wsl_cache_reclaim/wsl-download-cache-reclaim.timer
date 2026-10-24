@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the Xolotl download cache every 15 seconds
+
+[Timer]
+OnActiveSec=5s
+OnUnitInactiveSec=15s
+AccuracySec=1s
+Unit=wsl-download-cache-reclaim.service
+
+[Install]
+WantedBy=timers.target
