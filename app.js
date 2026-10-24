@@ -843,6 +843,16 @@ function sceneServicePortLabel(service) {
   return `服务端口:${port || '—'}`;
 }
 
+function renderSceneServiceActions(service) {
+  const actions = element('div', 'scene-service-actions');
+  for (const [action, label, iconName] of [['start', '启动', 'play'], ['stop', '停止', 'stop']]) {
+    const button = iconButton(label, iconName, `service-action-${action}`); button.disabled = service.busy || service.operation_pending || actionGuard.pending;
+    button.addEventListener('click', () => runServiceAction(service, action)); actions.append(button);
+  }
+  if (service.ui_url) { const link = element('button', 'scene-ui-link', '打开 UI ↗'); link.type = 'button'; link.addEventListener('click', () => window.open(service.ui_url, '_blank', 'noopener,noreferrer')); actions.append(link); }
+  return actions;
+}
+
 function renderBaseServices(list) {
   const base = state.baseServices; if (!base) return;
   const panel = element('article', 'scene-panel');
@@ -854,7 +864,7 @@ function renderBaseServices(list) {
     const item = element('div'); item.append(element('span', '', `启动顺序 ${order + 1}`), userElement('strong', '', service.name));
     const meta = element('small', 'scene-service-meta'); const status = element('i', 'scene-service-status');
     status.append(element('i', `service-state ${statusClass(service.status.state)}`), document.createTextNode(service.busy ? '操作中' : serviceStatusLabel(service))); meta.append(status, element('span', '', sceneServicePortLabel(service))); item.append(meta);
-    if (service.ui_url) { const link = element('button', 'scene-ui-link', '打开 UI ↗'); link.type = 'button'; link.addEventListener('click', () => window.open(service.ui_url, '_blank', 'noopener,noreferrer')); item.append(link); }
+    item.append(renderSceneServiceActions(service));
     map.append(item);
   });
   const actions = element('div', 'scene-card-actions'); const utilities = element('div', 'scene-utility-actions');
@@ -890,7 +900,7 @@ function renderScenes() {
     }
     panel.append(cardHeader, userElement('h2', '', scene.name), userOrUiElement('p', '', scene.description, '无说明'));
     const map = element('div', 'scene-map'); const sceneServices = scene.services || scene.service_ids.map((id, order) => ({ id, name: scene.service_names[order], ui_url: '', status: { state: 'unknown' } })); if (!sceneServices.length) map.append(element('div', '', '此场景不启动任何服务'));
-    sceneServices.forEach((service, order) => { const item = element('div'); item.append(element('span', '', `启动顺序 ${order + 1}`), userElement('strong', '', service.name)); const meta = element('small', 'scene-service-meta'); const status = element('i', 'scene-service-status'); status.append(element('i', `service-state ${statusClass(service.status.state)}`), document.createTextNode(service.busy ? '操作中' : serviceStatusLabel(service))); meta.append(status, element('span', '', sceneServicePortLabel(service))); item.append(meta); if (service.ui_url) { const uiButton = element('button', 'scene-ui-link', '打开 UI ↗'); uiButton.type = 'button'; uiButton.addEventListener('click', () => window.open(service.ui_url, '_blank', 'noopener,noreferrer')); item.append(uiButton); } map.append(item); });
+    sceneServices.forEach((service, order) => { const item = element('div'); item.append(element('span', '', `启动顺序 ${order + 1}`), userElement('strong', '', service.name)); const meta = element('small', 'scene-service-meta'); const status = element('i', 'scene-service-status'); status.append(element('i', `service-state ${statusClass(service.status.state)}`), document.createTextNode(service.busy ? '操作中' : serviceStatusLabel(service))); meta.append(status, element('span', '', sceneServicePortLabel(service))); item.append(meta); item.append(renderSceneServiceActions(service)); map.append(item); });
     const actions = element('div', 'scene-card-actions');
     const utilities = element('div', 'scene-utility-actions');
     const reorder = element('span', 'scene-reorder-controls');

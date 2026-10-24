@@ -301,11 +301,12 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .scene-map { margin: 30px 0; border-top: 1px solid var(--line); }
 .scene-map > div { padding: 14px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 90px minmax(0, 1fr) auto; column-gap: 14px; align-items: center; }
 .scene-map span { color: var(--accent); font-size: 9px; letter-spacing: .08em; }
-.scene-map strong { font-size: 11px; font-weight: 600; }
+.scene-map strong { overflow-wrap: anywhere; font-size: 11px; font-weight: 600; }
 .scene-map small { grid-column: 2; color: var(--muted); font-size: 9px; margin-top: 3px; }
 .scene-map .scene-service-meta { grid-column: 2; display: flex; align-items: center; gap: 9px; margin-top: 5px; }
 .scene-service-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 9px; }
 .scene-service-status .service-state { flex: 0 0 auto; }
+.scene-service-actions { grid-column: 3; grid-row: 1 / span 2; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
 .scene-ui-link { grid-column: 3; grid-row: 1 / span 2; align-self: center; min-height: 32px; padding: 0 12px; border: 1px solid rgba(var(--accent-rgb),.42); border-radius: 6px; background: var(--accent-dim); color: var(--accent); font-size: 10px; font-weight: 650; white-space: nowrap; cursor: pointer; transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease; }
 .scene-ui-link:hover { transform: translateY(-1px); border-color: var(--accent); background: rgba(var(--accent-rgb),.16); box-shadow: 0 5px 18px rgba(var(--accent-rgb),.12); }
 .scene-ui-link:active { transform: translateY(0); }
@@ -551,9 +552,9 @@ body:has(.image-viewer-dialog[open]) { overflow: hidden; }
 .service-action-stop { --service-action-rgb: 251,146,60; }
 :root[data-theme="shadcn-light"] .service-action-start { --service-action-rgb: 21,128,61; }
 :root[data-theme="shadcn-light"] .service-action-stop { --service-action-rgb: 194,65,12; }
-.env-table .row-buttons.service-actions .icon-button { width: 32px; height: 32px; padding: 0; color: rgb(var(--service-action-rgb)); border-color: rgba(var(--service-action-rgb),.24); background: rgba(var(--service-action-rgb),.08); }
-.env-table .row-buttons.service-actions .icon-button:hover:not(:disabled) { color: rgb(var(--service-action-rgb)); border-color: rgba(var(--service-action-rgb),.6); background: rgba(var(--service-action-rgb),.16); }
-.env-table .row-buttons.service-actions .icon-button:focus-visible { outline: 2px solid rgb(var(--service-action-rgb)); outline-offset: 2px; }
+.env-table .row-buttons.service-actions .icon-button, .scene-service-actions .icon-button { width: 32px; height: 32px; padding: 0; color: rgb(var(--service-action-rgb)); border-color: rgba(var(--service-action-rgb),.24); background: rgba(var(--service-action-rgb),.08); }
+.env-table .row-buttons.service-actions .icon-button:hover:not(:disabled), .scene-service-actions .icon-button:hover:not(:disabled) { color: rgb(var(--service-action-rgb)); border-color: rgba(var(--service-action-rgb),.6); background: rgba(var(--service-action-rgb),.16); }
+.env-table .row-buttons.service-actions .icon-button:focus-visible, .scene-service-actions .icon-button:focus-visible { outline: 2px solid rgb(var(--service-action-rgb)); outline-offset: 2px; }
 .env-table .row-buttons .service-action-toggle { height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; font-size: 11px; }
 .service-action-toggle svg { width: 12px; height: 12px; transform: rotate(90deg); }
 .service-action-menu { position: fixed; inset: auto; margin: 0; min-width: 136px; max-height: calc(100dvh - 16px); overflow-y: auto; padding: 6px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: 0 10px 30px rgba(0,0,0,.25); }
@@ -888,6 +889,8 @@ body:not(.auth-pending) .auth-gate { display: none; }
 }
 
 @media (max-width: 720px) {
+  .scene-map > div { grid-template-columns: 70px minmax(0, 1fr); }
+  .scene-service-actions { grid-column: 2; grid-row: 3; justify-content: flex-start; margin-top: 6px; }
   .top-actions .language-select span { display: none; }
   .top-actions { gap: 4px; }
   :root { --sidebar: 250px; --topbar: 58px; }
