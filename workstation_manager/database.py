@@ -14,7 +14,7 @@ from .config import MAX_HISTORY_MINUTES
 from .redaction import redact_value
 
 
-SCHEMA_VERSION = 39
+SCHEMA_VERSION = 40
 
 
 class DatabaseError(RuntimeError):
@@ -137,6 +137,7 @@ class Database:
                         37: self._migrate_to_37,
                         38: self._migrate_to_38,
                         39: self._migrate_to_39,
+                        40: self._migrate_to_40,
                     }
                     while version < SCHEMA_VERSION:
                         next_version = version + 1
@@ -515,6 +516,14 @@ class Database:
                 start_order INTEGER NOT NULL UNIQUE
             )"""
         )
+
+    @classmethod
+    def _migrate_to_40(cls, connection: sqlite3.Connection) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='registered_services'"
+        ).fetchone()
+        if table is not None:
+            cls._ensure_column(connection, "registered_services", "tags_json", "TEXT NOT NULL DEFAULT '[]'")
 
     @classmethod
     def _migrate_to_18(cls, connection: sqlite3.Connection) -> None:
@@ -1613,14 +1622,20 @@ class Database:
         except sqlite3.Error as exc:
             raise DatabaseError(f"读取操作任务列表失败: {exc}") from exc
 
+    @staticmethod
+    def _registered_service_from_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["tags"] = json.loads(item.pop("tags_json"))
+        return item
+
     def list_registered_services(self) -> list[dict[str, Any]]:
         try:
             with self.connect() as connection:
                 rows = connection.execute(
                     "SELECT * FROM registered_services ORDER BY name COLLATE NOCASE, id"
                 ).fetchall()
-            return [dict(row) for row in rows]
-        except sqlite3.Error as exc:
+            return [self._registered_service_from_row(row) for row in rows]
+        except (sqlite3.Error, json.JSONDecodeError) as exc:
             raise DatabaseError(f"读取已登记服务失败: {exc}") from exc
 
     def get_registered_service(self, service_id: str) -> dict[str, Any] | None:
@@ -1629,8 +1644,8 @@ class Database:
                 row = connection.execute(
                     "SELECT * FROM registered_services WHERE id=?", (service_id,)
                 ).fetchone()
-            return dict(row) if row is not None else None
-        except sqlite3.Error as exc:
+            return self._registered_service_from_row(row) if row is not None else None
+        except (sqlite3.Error, json.JSONDecodeError) as exc:
             raise DatabaseError(f"读取已登记服务失败: {exc}") from exc
 
     def create_registered_service(self, item: dict[str, Any]) -> None:
@@ -1643,8 +1658,8 @@ class Database:
                                id,name,description,script_path,gpu_label,port,ui_url,
                                health_url,health_expect,wsl_portproxy_enabled,wsl_distro,
                                wsl_listen_address,wsl_listen_port,wsl_connect_port,
-                               wsl_last_address,created_at,updated_at
-                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                               wsl_last_address,created_at,updated_at,tags_json
+                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (item["id"], item["name"], item["description"], item["script_path"],
                          item["gpu_label"], item["port"], item["ui_url"],
                          item.get("health_url", ""), item.get("health_expect", ""),
@@ -1652,7 +1667,8 @@ class Database:
                          item.get("wsl_distro", "Ubuntu-22.04"),
                          item.get("wsl_listen_address", "0.0.0.0"),
                          item.get("wsl_listen_port"), item.get("wsl_connect_port"),
-                         item.get("wsl_last_address"), now, now),
+                         item.get("wsl_last_address"), now, now,
+                         json.dumps(item.get("tags", []), ensure_ascii=False)),
                     )
         except sqlite3.IntegrityError as exc:
             raise DatabaseError("服务名称或 ID 已存在") from exc
@@ -1670,7 +1686,7 @@ class Database:
                         """UPDATE registered_services SET name=?,description=?,script_path=?,
                                gpu_label=?,port=?,ui_url=?,health_url=?,health_expect=?,
                                wsl_portproxy_enabled=?,wsl_distro=?,wsl_listen_address=?,
-                               wsl_listen_port=?,wsl_connect_port=?,
+                               wsl_listen_port=?,wsl_connect_port=?,tags_json=COALESCE(?,tags_json),
                                wsl_last_address=CASE
                                    WHEN wsl_portproxy_enabled<>? OR wsl_distro<>?
                                         OR wsl_listen_address<>?
@@ -1702,6 +1718,7 @@ class Database:
                          int(item["wsl_portproxy_enabled"]), item["wsl_distro"],
                          item["wsl_listen_address"], item["wsl_listen_port"],
                          item["wsl_connect_port"],
+                         json.dumps(item["tags"], ensure_ascii=False) if "tags" in item else None,
                          int(item["wsl_portproxy_enabled"]), item["wsl_distro"],
                          item["wsl_listen_address"], item["wsl_listen_port"],
                          item["wsl_connect_port"],

@@ -63,6 +63,7 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
   "description": "图像生成服务",
   "script_path": "C:\\Services\\comfyui.ps1",
   "gpu_label": "RTX 3090",
+  "tags": ["图像生成", "ComfyUI"],
   "port": 8189,
   "ui_url": "http://192.168.100.190:8189/",
   "wsl_portproxy_enabled": false,
@@ -74,6 +75,8 @@ API 前缀为 `/api/v1`，请求和响应使用 JSON。错误响应保留稳定�
 ```
 
 `name` 最长 100 字符，`description` 最长 1000 字符，`script_path` 必须是现有 `.ps1`、`.cmd` 或 `.bat` 绝对路径，`gpu_label` 最长 100 字符，`port` 为 `1..65535`，`ui_url` 必须为空或完整 HTTP/HTTPS 地址。启用 `wsl_portproxy_enabled` 后，管理器启动及任一服务启动/重启前会统一校准全部已登记的 Windows `portproxy`，关闭、修改或删除登记时会清理旧映射；管理器仅更新或清理自己上次成功同步过的目标，未知现有映射会拒绝操作。同步成功还要求 IP Helper 实际持有监听端口。监听地址只允许 `0.0.0.0`、loopback 或私网 IPv4，监听端口为空时使用服务端口，WSL 目标端口为空时使用监听端口。
+
+`tags` 是可选的字符串数组，省略时新服务默认为空数组，已有服务保留原标签。传入空数组会清空标签。服务列表会返回每项服务的 `tags`。
 
 登记或修改场景使用有序且不包含未知服务的 `service_ids`；重复 ID 会按首次出现去重。`description` 是最长 1000 字符的卡片简短介绍，`detailed_description` 是最长 8000 字符的独立详细使用说明。`is_default_generation` 表示默认生成场景，最多只能有一个，由用户在场景编辑器中勾选：
 
@@ -309,7 +312,7 @@ WM_POWER_PSU_RATED_W
 
 ## 数据与并发
 
-默认数据库是 `data/workstation-manager.db`，当前 schema 为 39，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置；schema 23 增加旧版场景用途、持久化 `video_jobs` 状态机和 RTX 4090 `resource_leases`；schema 24 删除视频任务的回调认证字段；schema 25 将旧版 `video_gen` 用途迁移为唯一的 `is_default_generation` 勾选项，并为视频任务保存生成场景及原场景；schema 26 增加显式视频批次 ID、段序号和总段数；schema 27 为每段任务持久化从工作流提取的视频规格，避免任务列表重复解析完整工作流；schema 28 在该规格中补充原视频标题或提示词内容说明并回填已有任务；schema 29 持久化已经成功发布到共享文件服务的相对输出路径；schema 30 增加自动任务队列、执行会话所有权和结果状态；schema 31 增加可持久化的未执行任务顺序；schema 32 修复旧进程在 schema 31 迁移后继续写入的空任务顺序，按创建顺序追加到已有队列末尾；schema 33 为资源采样增加整机功耗列；schema 34 把整机功耗拆成实测和估算两列，并增加保存墙插功率校准结果的 `power_calibration` 表；schema 35 为资源历史增加 CPU 封装功耗列，供整机功耗拆分曲线使用；schema 36 增加持久化电价表，默认 0.5 元/度；schema 37 增加全局自动任务执行设置和每日触发日期。旧客户端更新场景时若未提交详细说明或默认生成场景字段，已有值会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
+默认数据库是 `data/workstation-manager.db`，当前 schema 为 40，并在启动时自动迁移。schema 19 为场景增加唯一的 `is_default` 标记；schema 20 增加独立的 `detailed_description` 场景详细说明字段；schema 21 为操作记录增加权威的 `total_steps` 总步骤数；schema 22 为已登记服务增加显式 WSL `portproxy` 配置；schema 23 增加旧版场景用途、持久化 `video_jobs` 状态机和 RTX 4090 `resource_leases`；schema 24 删除视频任务的回调认证字段；schema 25 将旧版 `video_gen` 用途迁移为唯一的 `is_default_generation` 勾选项，并为视频任务保存生成场景及原场景；schema 26 增加显式视频批次 ID、段序号和总段数；schema 27 为每段任务持久化从工作流提取的视频规格，避免任务列表重复解析完整工作流；schema 28 在该规格中补充原视频标题或提示词内容说明并回填已有任务；schema 29 持久化已经成功发布到共享文件服务的相对输出路径；schema 30 增加自动任务队列、执行会话所有权和结果状态；schema 31 增加可持久化的未执行任务顺序；schema 32 修复旧进程在 schema 31 迁移后继续写入的空任务顺序，按创建顺序追加到已有队列末尾；schema 33 为资源采样增加整机功耗列；schema 34 把整机功耗拆成实测和估算两列，并增加保存墙插功率校准结果的 `power_calibration` 表；schema 35 为资源历史增加 CPU 封装功耗列，供整机功耗拆分曲线使用；schema 36 增加持久化电价表，默认 0.5 元/度；schema 37 增加全局自动任务执行设置和每日触发日期。schema 40 为已登记服务增加服务标签。旧客户端更新场景时若未提交详细说明或默认生成场景字段，已有值会保持不变。同一个数据库同一时间只允许一个管理器实例使用，避免重复执行服务脚本。
 
 服务控制面分别保存期望状态和实际观察状态。场景、总览及 GPU 服务摘要只使用实际观察状态；状态或错误变化时才写入 SQLite，连续成功检查不会每 5 秒写盘。资源监控定时采样和健康监控都不会调用服务脚本；显式深度检查、无默认场景的启动校准及失败动作校准才执行 `status`。资源采样将 CPU、内存及每张 GPU 的负载、显存、温度、功率和图形核心频率写入 SQLite，默认保留最近 90 天；内存队列固定只保留最近 15 分钟。
 

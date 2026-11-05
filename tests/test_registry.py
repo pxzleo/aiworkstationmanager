@@ -250,8 +250,8 @@ class DatabaseRegistryTests(unittest.TestCase):
                        ORDER BY queue_position IS NULL,queue_position,created_at,id"""
                 ).fetchall()
 
-            self.assertEqual(SCHEMA_VERSION, 39)
-            self.assertEqual(version, 39)
+            self.assertEqual(SCHEMA_VERSION, 40)
+            self.assertEqual(version, SCHEMA_VERSION)
             self.assertEqual(
                 [(row["id"], row["queue_position"]) for row in positions],
                 [
@@ -336,7 +336,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 version = connection.execute(
                     "SELECT version FROM schema_version"
                 ).fetchone()["version"]
-            self.assertEqual(version, 39)
+            self.assertEqual(version, SCHEMA_VERSION)
             self.assertIsNone(migrated["total_steps"])
 
             database.update_operation("a" * 32, total_steps=3)
@@ -381,7 +381,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                        WHERE type='index' AND name='idx_scenes_single_default'"""
                 ).fetchone()
 
-            self.assertEqual(version, 39)
+            self.assertEqual(version, SCHEMA_VERSION)
             self.assertEqual(scene["is_default"], 0)
             self.assertEqual(scene["detailed_description"], "")
             self.assertIsNotNone(index)
@@ -413,6 +413,7 @@ class DatabaseRegistryTests(unittest.TestCase):
 
             database = Database(path)
             service = database.get_registered_service("a" * 32)
+            self.assertEqual(service["tags"], [])
 
             self.assertEqual(service["desired_state"], "running")
             self.assertEqual(service["observed_state"], "running")
@@ -422,7 +423,7 @@ class DatabaseRegistryTests(unittest.TestCase):
     def test_schema_twelve_crud_and_service_delete_cascades_scene_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Database(Path(temporary) / "manager.db")
-            self.assertEqual(SCHEMA_VERSION, 39)
+            self.assertEqual(SCHEMA_VERSION, 40)
             with database.connect() as connection:
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -525,7 +526,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 tables = {row["name"] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )}
-                self.assertEqual(version, 39)
+                self.assertEqual(version, SCHEMA_VERSION)
             self.assertEqual(username, "admin")
             self.assertFalse({"discovered_entries", "scan_runs", "control_operation_lease",
                               "control_recovery_lock", "control_recovery_items"} & tables)
@@ -568,7 +569,7 @@ class DatabaseRegistryTests(unittest.TestCase):
             created = auth.create_user("zzq", "5678", "127.0.0.1")
             token, _, _ = auth.login("zzq", "5678", "127.0.0.1")
 
-            self.assertEqual(SCHEMA_VERSION, 39)
+            self.assertEqual(SCHEMA_VERSION, 40)
             self.assertEqual(created["username"], "zzq")
             self.assertEqual(auth.authenticate(token).username, "zzq")
             with database.connect() as connection:
@@ -636,7 +637,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                 60, bucket_seconds=15, now=now + timedelta(seconds=30)
             )
 
-            self.assertEqual(SCHEMA_VERSION, 39)
+            self.assertEqual(SCHEMA_VERSION, 40)
             self.assertEqual(result["stored_sample_count"], 3)
             self.assertEqual(len(result["samples"]), 2)
             self.assertEqual(result["samples"][0]["cpu_load_percent"], 15)
@@ -697,7 +698,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                        FROM resource_samples"""
                 ).fetchone()
 
-            self.assertEqual(version, 39)
+            self.assertEqual(version, SCHEMA_VERSION)
             # 旧的 total_power_w 本来就是纯实测值，回填到 measured 列。
             self.assertEqual(row["measured_power_w"], 604.0)
             self.assertEqual(row["total_power_w"], 604.0)
@@ -737,7 +738,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_gpu_samples WHERE sample_id=1"
                 ).fetchone()
 
-            self.assertEqual(version, 39)
+            self.assertEqual(version, SCHEMA_VERSION)
             self.assertEqual(row["temperature_c"], 62)
             self.assertIsNone(row["power_w"])
             self.assertIsNone(row["graphics_clock_mhz"])
@@ -776,7 +777,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                     "FROM resource_samples"
                 ).fetchone()
 
-            self.assertEqual(version, 39)
+            self.assertEqual(version, SCHEMA_VERSION)
             self.assertEqual(row["memory_percent"], 50)
             self.assertIsNone(row["memory_used_bytes"])
             self.assertIsNone(row["memory_total_bytes"])
@@ -2551,11 +2552,28 @@ class ApiRegistryTests(unittest.TestCase):
                 created = client.post("/api/v1/registered-services", headers=headers, json={
                     "name": "API 服务", "description": "说明", "script_path": str(script),
                     "gpu_label": "RTX 3090", "port": 8080, "ui_url": "http://127.0.0.1:8080",
+                    "tags": [" 图像生成 ", "ComfyUI", "图像生成", ""],
                     "health_url": "http://127.0.0.1:8080/v1/models",
                     "health_expect": "api-model",
                 })
                 self.assertEqual(created.status_code, 201, created.text)
                 service_id = created.json()["id"]
+                self.assertEqual(created.json()["tags"], ["图像生成", "ComfyUI"])
+                service_url = f"/api/v1/registered-services/{service_id}"
+                edited = client.put(service_url, headers=headers, json={
+                    "name": "API 服务", "script_path": str(script),
+                })
+                self.assertEqual(edited.status_code, 200, edited.text)
+                self.assertEqual(edited.json()["tags"], ["图像生成", "ComfyUI"])
+                self.assertEqual(
+                    client.get("/api/v1/registered-services").json()["services"][0]["tags"],
+                    ["图像生成", "ComfyUI"],
+                )
+                cleared_tags = client.put(service_url, headers=headers, json={
+                    "name": "API 服务", "script_path": str(script), "tags": [],
+                })
+                self.assertEqual(cleared_tags.status_code, 200, cleared_tags.text)
+                self.assertEqual(cleared_tags.json()["tags"], [])
                 self.assertEqual(client.get("/api/v1/base-services").json()["service_ids"], [])
                 base_saved = client.put("/api/v1/base-services", headers=headers, json={
                     "description": "常驻服务", "detailed_description": "独立启动",

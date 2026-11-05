@@ -96,6 +96,7 @@ class ServicePayload(BaseModel):
     description: str = Field(default="", max_length=1000)
     script_path: str = Field(min_length=1, max_length=2048)
     gpu_label: str = Field(default="", max_length=100)
+    tags: list[str] = Field(default_factory=list)
     port: int | None = Field(default=None, ge=1, le=65535)
     ui_url: str = Field(default="", max_length=2048)
     health_url: str = Field(default="", max_length=2048)

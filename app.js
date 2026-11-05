@@ -30,7 +30,7 @@ const state = {
   history: [], services: [], scenes: [], baseServices: null, users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
   fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', viewerPath: '', imageZoom: 100,
   historyWindowMinutes: 15, historyAnchorMs: null, historyFollowingCurrent: true, historyLoaded: false, historyLoading: false, historyBucketSeconds: 0, powerModel: null,
-  chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all',
+  chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all', serviceTag: null,
 };
 
 class ApiError extends Error {
@@ -765,10 +765,41 @@ function renderGpuServiceLabels() {
   const running = runningServices(); document.querySelectorAll('.gpu-lane[data-gpu-key]').forEach((lane) => { const gpu = state.gpus.find((item) => item._uiKey === lane.dataset.gpuKey); if (!gpu) return; const matches = running.filter((item) => gpuLayout.serviceGpuKeys(item, state.gpus).includes(gpu._uiKey)); const names = lane.querySelector('.gpu-service-names'); const meta = lane.querySelector('.gpu-service-meta'); names.toggleAttribute('data-i18n-skip', Boolean(matches.length)); meta.toggleAttribute('data-i18n-skip', Boolean(matches.length)); names.textContent = matches.length ? matches.map((item) => item.name).join(' · ') : '没有已启动服务'; meta.textContent = matches.length ? matches.map((item) => item.name).join(ui('；')) : 'GPU 标签下没有已启动服务'; });
 }
 window.addEventListener('resize', () => document.querySelector('.service-action-menu:popover-open')?.hidePopover());
+function renderRegisteredServiceTags() {
+  const group = byId('serviceTagFilters');
+  const tags = [...new Set(state.services.flatMap((service) => service.tags || []))].sort((a, b) => a.localeCompare(b));
+  if (!tags.includes(state.serviceTag)) state.serviceTag = null;
+  group.hidden = tags.length === 0;
+  if (tags.length !== group.children.length || tags.some((tag, index) => tag !== group.children[index].textContent)) {
+    group.replaceChildren(...tags.map((tag) => {
+      const button = userElement('button', 'filter', tag);
+      button.type = 'button';
+      button.addEventListener('click', () => {
+        state.serviceTag = state.serviceTag === tag ? null : tag;
+        renderRegisteredServiceTable();
+      });
+      return button;
+    }));
+  }
+  for (const button of group.children) {
+    const selected = button.textContent === state.serviceTag;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  }
+}
+
 function renderRegisteredServiceTable() {
+  renderRegisteredServiceTags();
   const rows = byId('registeredServiceRows'); const openMenu = rows.querySelector('.service-action-menu:popover-open');
   if (openMenu) { const service = state.services.find((item) => item.id === openMenu.dataset.serviceId); if (!service) openMenu.hidePopover(); else openMenu.querySelectorAll('button').forEach((button) => { button.disabled = button.dataset.action !== 'ui' && (service.operation_pending || actionGuard.pending); button.hidden = button.dataset.action === 'ui' && !service.ui_url; }); return; }
-  rows.replaceChildren(); const query = byId('serviceSearch').value.trim().toLowerCase(); const filtered = state.services.filter((item) => (state.serviceFilter === 'all' || item.status.state === state.serviceFilter) && [item.name, item.description, item.gpu_label, item.port].join(' ').toLowerCase().includes(query));
+  rows.replaceChildren();
+  const query = byId('serviceSearch').value.trim().toLowerCase();
+  const filtered = state.services.filter((item) => {
+    const tags = item.tags || [];
+    return (state.serviceFilter === 'all' || item.status.state === state.serviceFilter)
+      && (state.serviceTag === null || tags.includes(state.serviceTag))
+      && [item.name, item.description, item.gpu_label, item.port, ...tags].join(' ').toLowerCase().includes(query);
+  });
   if (!filtered.length) { rows.append(element('p', 'empty-state', state.services.length ? '没有符合筛选条件的服务。' : '尚未添加服务。')); return; }
   filtered.forEach((service, index) => {
     const row = element('div', 'table-row'); const title = element('span'); const logo = userElement('i', 'env-logo', String(index + 1)); const copy = element('span');
@@ -1002,8 +1033,8 @@ async function cancelSceneSwitch() {
 }
 
 function updateServicePortproxyFields() { byId('servicePortproxyFields').hidden = !byId('serviceWslPortproxyEnabled').checked; }
-function openServiceDialog(service = null) { byId('serviceForm').reset(); text('serviceFormError', ''); text('serviceDialogTitle', service ? '编辑服务' : '添加服务'); byId('serviceId').value = service?.id || ''; byId('serviceName').value = service?.name || ''; byId('serviceDescription').value = service?.description || ''; byId('serviceScriptPath').value = service?.script_path || ''; byId('serviceGpu').value = service?.gpu_label || ''; byId('servicePort').value = service?.port || ''; byId('serviceUiUrl').value = service?.ui_url || ''; byId('serviceHealthUrl').value = service?.health_url || ''; byId('serviceHealthExpect').value = service?.health_expect || ''; byId('serviceWslPortproxyEnabled').checked = Boolean(service?.wsl_portproxy_enabled); byId('serviceWslDistro').value = service?.wsl_distro || 'Ubuntu-22.04'; byId('serviceWslListenAddress').value = service?.wsl_listen_address || '0.0.0.0'; byId('serviceWslListenPort').value = service?.wsl_listen_port || ''; byId('serviceWslConnectPort').value = service?.wsl_connect_port || ''; updateServicePortproxyFields(); byId('serviceDialog').showModal(); }
-async function saveService(event) { event.preventDefault(); const id = byId('serviceId').value; const payload = { name: byId('serviceName').value.trim(), description: byId('serviceDescription').value.trim(), script_path: byId('serviceScriptPath').value.trim(), gpu_label: byId('serviceGpu').value.trim(), port: byId('servicePort').value ? Number(byId('servicePort').value) : null, ui_url: byId('serviceUiUrl').value.trim(), health_url: byId('serviceHealthUrl').value.trim(), health_expect: byId('serviceHealthExpect').value.trim(), wsl_portproxy_enabled: byId('serviceWslPortproxyEnabled').checked, wsl_distro: byId('serviceWslDistro').value.trim(), wsl_listen_address: byId('serviceWslListenAddress').value.trim(), wsl_listen_port: byId('serviceWslListenPort').value ? Number(byId('serviceWslListenPort').value) : null, wsl_connect_port: byId('serviceWslConnectPort').value ? Number(byId('serviceWslConnectPort').value) : null }; try { await api(id ? `/registered-services/${id}` : '/registered-services', { method: id ? 'PUT' : 'POST', body: payload }); byId('serviceDialog').close(); showToast(id ? '服务已更新' : '服务已添加'); await refreshServicesAndScenes(); } catch (error) { text('serviceFormError', error.message); } }
+function openServiceDialog(service = null) { byId('serviceForm').reset(); text('serviceFormError', ''); text('serviceDialogTitle', service ? '编辑服务' : '添加服务'); byId('serviceId').value = service?.id || ''; byId('serviceName').value = service?.name || ''; byId('serviceDescription').value = service?.description || ''; byId('serviceScriptPath').value = service?.script_path || ''; byId('serviceGpu').value = service?.gpu_label || ''; byId('serviceTags').value = service?.tags?.join(', ') || ''; byId('servicePort').value = service?.port || ''; byId('serviceUiUrl').value = service?.ui_url || ''; byId('serviceHealthUrl').value = service?.health_url || ''; byId('serviceHealthExpect').value = service?.health_expect || ''; byId('serviceWslPortproxyEnabled').checked = Boolean(service?.wsl_portproxy_enabled); byId('serviceWslDistro').value = service?.wsl_distro || 'Ubuntu-22.04'; byId('serviceWslListenAddress').value = service?.wsl_listen_address || '0.0.0.0'; byId('serviceWslListenPort').value = service?.wsl_listen_port || ''; byId('serviceWslConnectPort').value = service?.wsl_connect_port || ''; updateServicePortproxyFields(); byId('serviceDialog').showModal(); }
+async function saveService(event) { event.preventDefault(); const id = byId('serviceId').value; const payload = { name: byId('serviceName').value.trim(), description: byId('serviceDescription').value.trim(), script_path: byId('serviceScriptPath').value.trim(), gpu_label: byId('serviceGpu').value.trim(), tags: byId('serviceTags').value.split(/[,，]/), port: byId('servicePort').value ? Number(byId('servicePort').value) : null, ui_url: byId('serviceUiUrl').value.trim(), health_url: byId('serviceHealthUrl').value.trim(), health_expect: byId('serviceHealthExpect').value.trim(), wsl_portproxy_enabled: byId('serviceWslPortproxyEnabled').checked, wsl_distro: byId('serviceWslDistro').value.trim(), wsl_listen_address: byId('serviceWslListenAddress').value.trim(), wsl_listen_port: byId('serviceWslListenPort').value ? Number(byId('serviceWslListenPort').value) : null, wsl_connect_port: byId('serviceWslConnectPort').value ? Number(byId('serviceWslConnectPort').value) : null }; try { await api(id ? `/registered-services/${id}` : '/registered-services', { method: id ? 'PUT' : 'POST', body: payload }); byId('serviceDialog').close(); showToast(id ? '服务已更新' : '服务已添加'); await refreshServicesAndScenes(); } catch (error) { text('serviceFormError', error.message); } }
 async function deleteService(service) { if (!confirmUi(`删除服务“${service.name}”的登记记录？原始脚本和服务不会被删除。`)) return; try { await api(`/registered-services/${service.id}`, { method: 'DELETE' }); showToast('服务登记已删除'); await refreshServicesAndScenes(); } catch (error) { showToast(error.message); } }
 
 function openSceneDetails(scene) { dataText('sceneDetailTitle', scene.name, '场景名称'); dataText('sceneDetailIntro', scene.description || '', '无说明'); dataText('sceneDetailBody', scene.detailed_description || '', '暂无详细说明。'); byId('sceneDetailDialog').showModal(); }

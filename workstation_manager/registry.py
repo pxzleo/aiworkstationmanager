@@ -294,6 +294,12 @@ def validate_service_input(payload: dict[str, Any], runner: ScriptRunner) -> dic
     gpu_label = str(payload.get("gpu_label") or "").strip()
     if len(gpu_label) > 100:
         raise RegistryError(422, "invalid_gpu", "GPU 标签不能超过 100 个字符")
+    raw_tags = payload.get("tags", [])
+    if not isinstance(raw_tags, list) or not all(isinstance(tag, str) for tag in raw_tags):
+        raise RegistryError(422, "invalid_service_tags", "服务标签必须是文本列表")
+    tags = list(dict.fromkeys(
+        tag for tag in (part.strip() for part in re.split(r"[,，\r\n]", "\n".join(raw_tags))) if tag
+    ))
     raw_port = payload.get("port")
     try:
         port = None if raw_port in {None, ""} else int(raw_port)
@@ -366,7 +372,7 @@ def validate_service_input(payload: dict[str, Any], runner: ScriptRunner) -> dic
                 422, "invalid_wsl_portproxy_port", "启用 WSL 局域网映射时必须填写服务端口或监听端口"
             )
     return {"name": name, "description": description, "script_path": script_path,
-            "gpu_label": gpu_label, "port": port, "ui_url": ui_url,
+            "gpu_label": gpu_label, "tags": tags, "port": port, "ui_url": ui_url,
             "health_url": health_url, "health_expect": health_expect,
             "wsl_portproxy_enabled": wsl_portproxy_enabled,
             "wsl_distro": wsl_distro,

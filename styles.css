@@ -328,6 +328,11 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .filter-group, .range-select { display: flex; gap: 4px; }
 .filter, .range-select button { border: 0; background: transparent; color: var(--muted); padding: 7px 10px; border-radius: 5px; font-size: 10px; cursor: pointer; }
 .filter.active, .range-select button.active { background: var(--surface-3); color: var(--text); }
+#serviceTagFilters { flex: 1; min-width: 0; flex-wrap: wrap; }
+#serviceTagFilters[hidden] { display: none; }
+#serviceTagFilters .filter { max-width: 100%; overflow-wrap: anywhere; border: 1px solid var(--line); }
+#serviceTagFilters .filter.active { border-color: var(--accent); }
+#serviceFilters { flex-shrink: 0; }
 .range-select { gap: 6px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--surface) 82%, var(--bg)); }
 .range-select button { min-width: 52px; min-height: 42px; padding: 8px 13px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; font-weight: 750; letter-spacing: .03em; }
 .range-select button.active { border-color: color-mix(in srgb, var(--accent) 52%, var(--line)); background: color-mix(in srgb, var(--accent) 18%, var(--surface-3)); color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent), 0 0 16px color-mix(in srgb, var(--accent) 12%, transparent); }
@@ -946,6 +951,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .rule-flow i { display: none; }
   .toolbar, .log-toolbar { flex-wrap: wrap; }
   .search, .search.compact { width: 100%; min-width: 0; }
+  #serviceTagFilters { flex: 0 0 100%; }
   .env-table, .user-table { overflow-x: auto; }
   .table-head, .table-row { min-width: 700px; }
   .env-table { overflow-x: visible; }
