@@ -31,7 +31,7 @@ const state = {
   history: [], services: [], scenes: [], baseServices: null, users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
   fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', viewerPath: '', imageZoom: 100,
   historyWindowMinutes: 15, historyAnchorMs: null, historyFollowingCurrent: true, historyLoaded: false, historyLoading: false, historyBucketSeconds: 0, powerModel: null,
-  chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all', serviceTag: null, serviceSort: 'name',
+  chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all', serviceTag: null, serviceSort: 'latest',
 };
 
 class ApiError extends Error {
@@ -806,10 +806,10 @@ function renderRegisteredServiceTable() {
   if (state.serviceSort === 'latest') {
     // The registry stores UTC ISO timestamps, including fractional seconds.
     filtered.sort((left, right) => {
-      if (left.created_at === right.created_at) return 0;
-      if (!left.created_at) return 1;
-      if (!right.created_at) return -1;
-      return left.created_at < right.created_at ? 1 : -1;
+      const leftTime = left.updated_at || left.created_at || '';
+      const rightTime = right.updated_at || right.created_at || '';
+      if (leftTime === rightTime) return 0;
+      return leftTime < rightTime ? 1 : -1;
     });
   }
   filtered.forEach((service, index) => {
