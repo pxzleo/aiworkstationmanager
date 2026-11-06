@@ -21,6 +21,7 @@ let sceneProgressOperationId = null;
 let sceneProgressExpectedTotal = null;
 let progressCancelLabel = '终止切换并返回';
 let draggedSceneId = null;
+const expandedSceneCards = new Set();
 let fileThumbnailObserver = null;
 let viewerThumbnailObserver = null;
 let automaticTaskOrderSaving = false;
@@ -801,6 +802,20 @@ function renderRegisteredServiceTable() {
       && [item.name, item.description, item.gpu_label, item.port, ...tags].join(' ').toLowerCase().includes(query);
   });
   if (!filtered.length) { rows.append(element('p', 'empty-state', state.services.length ? '没有符合筛选条件的服务。' : '尚未添加服务。')); return; }
+  const sort = byId('serviceSortSelect').value;
+  // The service API already returns names in case-insensitive ascending order.
+  if (sort === 'name-desc') {
+    filtered.reverse();
+  } else if (sort === 'created-asc' || sort === 'created-desc') {
+    const direction = sort === 'created-asc' ? 1 : -1;
+    // The registry stores UTC ISO timestamps, including fractional seconds.
+    filtered.sort((left, right) => {
+      if (left.created_at === right.created_at) return 0;
+      if (!left.created_at) return 1;
+      if (!right.created_at) return -1;
+      return direction * (left.created_at < right.created_at ? -1 : 1);
+    });
+  }
   filtered.forEach((service, index) => {
     const row = element('div', 'table-row'); const title = element('span'); const logo = userElement('i', 'env-logo', String(index + 1)); const copy = element('span');
     copy.append(userElement('b', serviceNameClass(service), service.name), userElement('small', '', service.script_path)); title.append(logo, copy);
@@ -890,11 +905,27 @@ function renderSceneServiceActions(service) {
   return actions;
 }
 
+function appendSceneCardContent(panel, key, title, ...content) {
+  const heading = element('h2'); const toggle = element('button', 'scene-title-toggle'); toggle.type = 'button';
+  toggle.append(title, icon('chevron')); heading.append(toggle);
+  const setExpanded = (expanded) => {
+    toggle.setAttribute('aria-expanded', String(expanded)); panel.classList.toggle('scene-collapsed', !expanded);
+    content.forEach((node) => { node.hidden = !expanded; });
+  };
+  setExpanded(expandedSceneCards.has(key));
+  toggle.addEventListener('click', () => {
+    const expanded = !expandedSceneCards.has(key);
+    if (expanded) expandedSceneCards.add(key); else expandedSceneCards.delete(key);
+    setExpanded(expanded);
+  });
+  panel.append(heading, ...content);
+}
+
 function renderBaseServices(list) {
   const base = state.baseServices; if (!base) return;
   const panel = element('article', 'scene-panel');
   const top = element('div', 'scene-panel-top'); top.append(element('span', '', '独立于工作场景'), element('i', 'scene-status', '随管理器启动'));
-  panel.append(top, element('h2', '', '基础服务'), userOrUiElement('p', '', base.description, '场景切换时保持运行'));
+  panel.append(top);
   const map = element('div', 'scene-map');
   if (!base.services.length) map.append(element('div', '', '尚未配置基础服务'));
   base.services.forEach((service, order) => {
@@ -912,7 +943,8 @@ function renderBaseServices(list) {
     const button = labeledIconButton(label, icon, 'button'); button.disabled = !base.services.length || base.busy || actionGuard.pending;
     button.addEventListener('click', () => runBaseServicesAction(action)); controls.append(button);
   }
-  utilities.append(details, edit); actions.append(utilities, controls); panel.append(map, actions); list.append(panel);
+  utilities.append(details, edit); actions.append(utilities, controls);
+  appendSceneCardContent(panel, 'base-services', element('span', '', '基础服务'), userOrUiElement('p', '', base.description, '场景切换时保持运行'), map, actions); list.append(panel);
 }
 
 function renderScenes() {
@@ -935,7 +967,7 @@ function renderScenes() {
       banner.append(element('strong', '', combined ? '默认场景 · 已激活' : scene.is_default ? '默认启动场景' : '当前已激活场景'), bannerMeta);
       banners.append(banner); cardHeader = banners;
     }
-    panel.append(cardHeader, userElement('h2', '', scene.name), userOrUiElement('p', '', scene.description, '无说明'));
+    panel.append(cardHeader);
     const map = element('div', 'scene-map'); const sceneServices = scene.services || scene.service_ids.map((id, order) => ({ id, name: scene.service_names[order], ui_url: '', status: { state: 'unknown' } })); if (!sceneServices.length) map.append(element('div', '', '此场景不启动任何服务'));
     sceneServices.forEach((service, order) => { const item = element('div'); item.append(element('span', '', `启动顺序 ${order + 1}`), userElement('strong', serviceNameClass(service), service.name)); const meta = element('small', 'scene-service-meta'); const status = element('i', 'scene-service-status'); status.append(element('i', `service-state ${statusClass(service.status.state)}`), document.createTextNode(service.busy ? '操作中' : serviceStatusLabel(service))); meta.append(status, element('span', '', sceneServicePortLabel(service))); item.append(meta); item.append(renderSceneServiceActions(service)); map.append(item); });
     const actions = element('div', 'scene-card-actions');
@@ -953,7 +985,8 @@ function renderScenes() {
     utilities.append(reorder, start, stop, details, defaultButton, edit, remove);
     const activateLabel = scene.state === 'active' ? '重新切换' : '切换到此场景';
     const activate = labeledIconButton(activateLabel, 'switch', 'button primary scene-activate-button'); activate.disabled = scene.busy || actionGuard.pending; activate.addEventListener('click', () => activateScene(scene));
-    actions.append(utilities, activate); panel.append(map, actions); list.append(panel);
+    actions.append(utilities, activate);
+    appendSceneCardContent(panel, `scene:${scene.id}`, userElement('span', '', scene.name), userOrUiElement('p', '', scene.description, '无说明'), map, actions); list.append(panel);
   });
   const active = state.scenes.find((item) => item.state === 'active'); dataText('activeSceneName', active ? `${active.name} · ${ui('已激活')}` : '', '场景未完整激活'); dataText('activeSceneSummary', active?.description || '', active ? ui(`包含 ${active.service_ids.length} 个服务`) : '当前服务状态不完整符合任何场景。');
   renderOperationTimeline();
@@ -1188,6 +1221,7 @@ byId('uploadFilesButton').addEventListener('click', () => byId('fileUploadInput'
 byId('fileUploadInput').addEventListener('change', (event) => uploadSelectedFiles([...event.target.files]));
 byId('fileRenameForm').addEventListener('submit', renameFileEntry);
 byId('fileSortSelect').addEventListener('change', (event) => { state.fileSort = event.target.value; refreshFiles(state.filePath).catch(() => {}); });
+byId('serviceSortSelect').addEventListener('change', renderRegisteredServiceTable);
 byId('fileBrowser').parentElement.querySelector('.file-view-switch').addEventListener('click', (event) => { const button = event.target.closest('[data-file-view]'); if (button) setFileView(button.dataset.fileView); });
 byId('closeMediaButton').addEventListener('click', closeMedia);
 byId('mediaDialog').addEventListener('close', releaseMedia);
