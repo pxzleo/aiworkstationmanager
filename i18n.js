@@ -27,7 +27,7 @@
     '根目录未配置': 'Root folder is not configured', '媒体播放': 'Media player', '下载文件': 'Download File',
     '排序': 'Sort', '文件排序方式': 'File sort order', '时间：最新优先': 'Time: newest first', '时间：最早优先': 'Time: oldest first',
     '名称：升序': 'Name: A to Z', '名称：降序': 'Name: Z to A', '大小：从大到小': 'Size: largest first', '大小：从小到大': 'Size: smallest first',
-    '服务排序方式': 'Service sort order', '时间最新': 'Newest first', '字母': 'Alphabetical',
+    '服务排序方式': 'Service sort order', '时间最新': 'Newest', '字母': 'A–Z',
     '文件查看方式': 'File view', '列表': 'List', '缩略图': 'Thumbnails', '无法进入全屏': 'Unable to enter fullscreen', '无法退出全屏': 'Unable to exit fullscreen', '浏览器不支持全屏播放': 'Fullscreen playback is not supported by this browser',
     '返回文件': 'Back to files', '前一张': 'Previous image', '后一张': 'Next image', '图片缩略图': 'Image thumbnails', '图片加载失败': 'Unable to load image',
     '前一个': 'Previous item', '后一个': 'Next item', '媒体缩略图': 'Media thumbnails',

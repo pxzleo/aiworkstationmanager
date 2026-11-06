@@ -338,12 +338,13 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .filter-group, .range-select { display: flex; gap: 4px; }
 .filter, .range-select button { border: 0; background: transparent; color: var(--muted); padding: 7px 10px; border-radius: 5px; font-size: 10px; cursor: pointer; }
 .filter.active, .range-select button.active { background: var(--surface-3); color: var(--text); }
-.service-category-controls { display: flex; flex: 1 1 250px; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
-#serviceTagFilters { min-width: 0; flex-wrap: wrap; }
+#serviceTagFilters { flex: 1 1 150px; min-width: 0; flex-wrap: wrap; }
 #serviceTagFilters[hidden] { display: none; }
-.service-category-controls .filter { max-width: 100%; overflow-wrap: anywhere; border: 1px solid var(--line); }
-.service-category-controls .filter.active { border-color: var(--accent); }
-#serviceFilters { flex-shrink: 0; }
+#serviceTagFilters .filter, #serviceSortControls .filter { border: 1px solid var(--line); }
+#serviceTagFilters .filter { max-width: 100%; overflow-wrap: anywhere; }
+#serviceTagFilters .filter.active, #serviceSortControls .filter.active { border-color: var(--accent); }
+.service-status-controls { display: flex; align-items: center; gap: 8px; max-width: 100%; overflow-x: auto; }
+.service-status-controls .filter-group { flex: none; white-space: nowrap; }
 .range-select { gap: 6px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--surface) 82%, var(--bg)); }
 .range-select button { min-width: 52px; min-height: 42px; padding: 8px 13px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; font-weight: 750; letter-spacing: .03em; }
 .range-select button.active { border-color: color-mix(in srgb, var(--accent) 52%, var(--line)); background: color-mix(in srgb, var(--accent) 18%, var(--surface-3)); color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent), 0 0 16px color-mix(in srgb, var(--accent) 12%, transparent); }
@@ -962,7 +963,7 @@ body:not(.auth-pending) .auth-gate { display: none; }
   .rule-flow i { display: none; }
   .toolbar, .log-toolbar { flex-wrap: wrap; }
   .search, .search.compact { width: 100%; min-width: 0; }
-  .service-category-controls { flex: 0 0 100%; }
+  #serviceTagFilters { flex: 0 0 100%; }
   .env-table, .user-table { overflow-x: auto; }
   .table-head, .table-row { min-width: 700px; }
   .env-table { overflow-x: visible; }
@@ -1338,4 +1339,6 @@ body:not(.auth-pending) .auth-gate { display: none; }
 @media (max-width: 400px) {
   .breadcrumb { display: none; }
   .display-style-select select { max-width: 95px; }
+  .service-status-controls, .service-status-controls .filter-group { gap: 2px; }
+  .service-status-controls .filter { padding-inline: 3px; }
 }
