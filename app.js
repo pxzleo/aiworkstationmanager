@@ -31,7 +31,7 @@ const state = {
   history: [], services: [], scenes: [], baseServices: null, users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
   fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', viewerPath: '', imageZoom: 100,
   historyWindowMinutes: 15, historyAnchorMs: null, historyFollowingCurrent: true, historyLoaded: false, historyLoading: false, historyBucketSeconds: 0, powerModel: null,
-  chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all', serviceTag: null,
+  chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all', serviceTag: null, serviceSort: 'name',
 };
 
 class ApiError extends Error {
@@ -802,18 +802,14 @@ function renderRegisteredServiceTable() {
       && [item.name, item.description, item.gpu_label, item.port, ...tags].join(' ').toLowerCase().includes(query);
   });
   if (!filtered.length) { rows.append(element('p', 'empty-state', state.services.length ? '没有符合筛选条件的服务。' : '尚未添加服务。')); return; }
-  const sort = byId('serviceSortSelect').value;
   // The service API already returns names in case-insensitive ascending order.
-  if (sort === 'name-desc') {
-    filtered.reverse();
-  } else if (sort === 'created-asc' || sort === 'created-desc') {
-    const direction = sort === 'created-asc' ? 1 : -1;
+  if (state.serviceSort === 'latest') {
     // The registry stores UTC ISO timestamps, including fractional seconds.
     filtered.sort((left, right) => {
       if (left.created_at === right.created_at) return 0;
       if (!left.created_at) return 1;
       if (!right.created_at) return -1;
-      return direction * (left.created_at < right.created_at ? -1 : 1);
+      return left.created_at < right.created_at ? 1 : -1;
     });
   }
   filtered.forEach((service, index) => {
@@ -1221,7 +1217,17 @@ byId('uploadFilesButton').addEventListener('click', () => byId('fileUploadInput'
 byId('fileUploadInput').addEventListener('change', (event) => uploadSelectedFiles([...event.target.files]));
 byId('fileRenameForm').addEventListener('submit', renameFileEntry);
 byId('fileSortSelect').addEventListener('change', (event) => { state.fileSort = event.target.value; refreshFiles(state.filePath).catch(() => {}); });
-byId('serviceSortSelect').addEventListener('change', renderRegisteredServiceTable);
+byId('serviceSortControls').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-sort]');
+  if (!button || state.serviceSort === button.dataset.sort) return;
+  state.serviceSort = button.dataset.sort;
+  event.currentTarget.querySelectorAll('[data-sort]').forEach((option) => {
+    const selected = option === button;
+    option.classList.toggle('active', selected);
+    option.setAttribute('aria-pressed', String(selected));
+  });
+  renderRegisteredServiceTable();
+});
 byId('fileBrowser').parentElement.querySelector('.file-view-switch').addEventListener('click', (event) => { const button = event.target.closest('[data-file-view]'); if (button) setFileView(button.dataset.fileView); });
 byId('closeMediaButton').addEventListener('click', closeMedia);
 byId('mediaDialog').addEventListener('close', releaseMedia);
