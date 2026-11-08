@@ -30,6 +30,7 @@ const state = {
   activePage: 'overview', authMode: 'login', csrfToken: null, username: '', snapshot: null,
   history: [], services: [], scenes: [], baseServices: null, users: [], operations: [], videoJobs: [], videoQueueSummary: { queued_segments: 0 }, automaticTasks: [], automaticTaskSummary: { pending: 0, running: 0, total: 0 }, timers: new Map(),
   fileService: null, files: [], filePath: '', fileSort: 'modified-desc', fileView: 'thumbnail', viewerPath: '', imageZoom: 100,
+  monitorClock: null,
   historyWindowMinutes: 15, historyAnchorMs: null, historyFollowingCurrent: true, historyLoaded: false, historyLoading: false, historyBucketSeconds: 0, powerModel: null,
   chartSpecs: [], correlationControllers: [], monitorDetails: null, monitorView: 'summary', selectedMonitorGpuKey: null, selectedMonitorDisk: null, gpus: [], gpuCardSignature: null, monitorGpuSignature: null, serviceFilter: 'all', serviceTag: null, serviceSort: 'latest',
 };
@@ -112,6 +113,10 @@ async function api(path, options = {}) {
         const error = new ApiError(response.status, serverError?.code || 'request_failed', serverError?.message || `请求失败（${response.status}）`);
         if (response.status === 401 && !options.authRequest) showAuth('login', '登录状态已过期，请重新登录。');
         throw error;
+      }
+      if (path === '/auth/status' || options.resource === 'snapshot') {
+        const serverMs = Date.parse(response.headers.get('Date'));
+        if (Number.isFinite(serverMs)) state.monitorClock = { serverMs, receivedAt: performance.now() };
       }
       return payload;
     } catch (error) {
@@ -259,7 +264,8 @@ async function shiftHistoryPeriod(direction) {
   const calendar = state.historyWindowMinutes >= 1440;
   const anchor = direction < 0 ? period.startMs - (calendar ? 1 : 0) : period.endMs + (calendar ? 0 : period.endMs - period.startMs);
   const next = historyPeriodForRange(state.historyWindowMinutes, anchor);
-  state.historyFollowingCurrent = calendar ? next.startMs <= Date.now() && Date.now() < next.endMs : next.endMs >= Date.now();
+  const now = monitorNow();
+  state.historyFollowingCurrent = calendar ? next.startMs <= now && now < next.endMs : next.endMs >= now;
   state.historyAnchorMs = state.historyFollowingCurrent ? null : anchor;
   state.history = []; state.historyLoaded = false;
   updateHistoryPeriodNavigation(); buildMonitorCharts(); await refreshHistory();
@@ -493,14 +499,22 @@ function normalizeSnapshot(snapshot) { const host = snapshot.host || {}; const s
 function snapshotAsHistory(snapshot) { const host = snapshot?.host; const memory = host?.memory; const network = host?.primary_network; const wsl = host?.wsl; const staleSnapshot = Boolean(snapshot?.stale_collectors?.snapshot); const staleGpu = staleSnapshot || Boolean(snapshot?.stale_collectors?.nvidia); return snapshot ? { sampled_at: snapshot.sampled_at, total_power_w: staleSnapshot ? null : host?.power?.total_w, measured_power_w: staleSnapshot ? null : host?.power?.measured_w, estimated_power_w: staleSnapshot ? null : host?.power?.estimated_w, cpu_power_w: staleSnapshot ? null : host?.power?.cpu_package_w, cpu_load_percent: staleSnapshot ? null : host?.cpu?.load_percent, cpu_temperature_c: staleSnapshot ? null : host?.cpu?.temperature_c, cpu_frequency_mhz: staleSnapshot ? null : host?.cpu?.frequency_mhz, memory_percent: staleSnapshot ? null : memory?.percent, memory_used_bytes: staleSnapshot ? null : memory?.used_bytes, memory_total_bytes: memory?.total_bytes, memory_available_bytes: staleSnapshot ? null : memory?.available_bytes, commit_used_bytes: staleSnapshot ? null : memory?.commit_used_bytes, commit_limit_bytes: memory?.commit_limit_bytes, swap_used_bytes: staleSnapshot ? null : memory?.swap_used_bytes, swap_total_bytes: memory?.swap_total_bytes, network_received_bytes_per_second: staleSnapshot ? null : network?.received_bytes_per_second, network_sent_bytes_per_second: staleSnapshot ? null : network?.sent_bytes_per_second, wsl_memory_used_bytes: staleSnapshot ? null : wsl?.memory_used_bytes, wsl_swap_used_bytes: staleSnapshot ? null : wsl?.swap_used_bytes, disks: staleSnapshot ? [] : host?.disk_io || [], gpus: staleGpu ? [] : snapshot.gpus || [] } : null; }
 function currentSeries() { const samples = state.history.slice(); const current = state.historyFollowingCurrent ? snapshotAsHistory(state.snapshot) : null; if (current && !samples.some((sample) => sample.sampled_at === current.sampled_at)) samples.push(current); return monitorChart.holdPowerReadings(samples, Math.min(120_000, Math.max(30_000, state.historyBucketSeconds * 2_000))); }
 function historyWindowLabel() { return { 15: '15m', 60: '1h', 1440: '24h', 10080: '1周', 43200: '1月' }[state.historyWindowMinutes]; }
-function historyPeriodForRange(minutes, anchorMs = Date.now()) {
+function monitorNow() {
+  const sampleMs = Date.parse(state.snapshot?.sampled_at);
+  const clock = state.monitorClock;
+  if (!clock) return Number.isFinite(sampleMs) ? sampleMs : Date.now();
+  const serverNow = clock.serverMs + (performance.now() - clock.receivedAt);
+  // HTTP Date has whole-second precision. Include snapshots sampled later in that second.
+  return Number.isFinite(sampleMs) ? Math.max(serverNow, sampleMs) : serverNow;
+}
+function historyPeriodForRange(minutes, anchorMs) {
   if (minutes < 1440) return { startMs: anchorMs - monitorChart.windowMilliseconds(minutes), endMs: anchorMs };
   const anchor = new Date(anchorMs); const year = anchor.getFullYear(); const month = anchor.getMonth(); const day = anchor.getDate();
   const start = minutes === 1440 ? new Date(year, month, day) : minutes === 10080 ? new Date(year, month, day - (anchor.getDay() + 6) % 7) : new Date(year, month, 1);
   const end = minutes === 1440 ? new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1) : minutes === 10080 ? new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7) : new Date(year, month + 1, 1);
   return { startMs: start.getTime(), endMs: end.getTime() };
 }
-function activeHistoryPeriod() { return historyPeriodForRange(state.historyWindowMinutes, state.historyFollowingCurrent ? Date.now() : state.historyAnchorMs); }
+function activeHistoryPeriod() { return historyPeriodForRange(state.historyWindowMinutes, state.historyFollowingCurrent ? monitorNow() : state.historyAnchorMs); }
 function historyPeriodLabel(period) {
   const locale = window.axisI18n.language === 'zh' ? 'zh-CN' : 'en-US'; const start = new Date(period.startMs); const end = new Date(period.endMs - 1);
   if (state.historyFollowingCurrent && state.historyWindowMinutes < 1440) return ui(state.historyWindowMinutes === 15 ? '最近 15 分钟' : '最近 1 小时');

@@ -44,6 +44,37 @@ function okResponse(payload) {
   return { ok: true, status: 200, json: async () => payload };
 }
 
+test('the monitor follows host time when the browser clock differs', async () => {
+  const hostMs = Date.parse('2026-11-08T08:36:00Z');
+  let elapsed = 10;
+  const sandbox = sandboxWith(async () => ({
+    ...okResponse({}),
+    headers: new Headers({ Date: new Date(hostMs).toUTCString() }),
+  }));
+  sandbox.Date = class extends Date {
+    static now() { return hostMs - 11 * 60_000; }
+  };
+  sandbox.performance = { now: () => elapsed };
+  sandbox.monitorChart = { windowMilliseconds: (minutes) => minutes * 60_000 };
+  Object.assign(sandbox.state, { historyFollowingCurrent: true, historyWindowMinutes: 15 });
+  const periodSource = source.slice(source.indexOf('function monitorNow()'), source.indexOf('function historyPeriodLabel('));
+  vm.runInNewContext(`${periodSource}\nthis.periodUnderTest = activeHistoryPeriod;`, sandbox);
+
+  await sandbox.apiUnderTest('/auth/status', { authRequest: true });
+  assert.equal(sandbox.periodUnderTest().endMs, hostMs);
+
+  await sandbox.apiUnderTest('/snapshot', { resource: 'snapshot' });
+  sandbox.state.snapshot = { sampled_at: new Date(hostMs + 850).toISOString() };
+  assert.equal(sandbox.periodUnderTest().endMs, hostMs + 850);
+
+  elapsed += 1_100;
+  assert.equal(sandbox.periodUnderTest().endMs, hostMs + 1_100);
+
+  sandbox.state.historyFollowingCurrent = false;
+  sandbox.state.historyAnchorMs = hostMs - 30 * 60_000;
+  assert.equal(sandbox.periodUnderTest().endMs, sandbox.state.historyAnchorMs);
+});
+
 test('safe reads recover from two transient network failures', async () => {
   let calls = 0;
   const sandbox = sandboxWith(async () => {
