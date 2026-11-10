@@ -1114,3 +1114,9 @@ Web UI / HTTP API
 - 源码与 unit 模板位于 `integrations/wsl_cache_reclaim/`；部署脚本为 `/usr/local/lib/wsl-download-cache-reclaim/reclaim.py`，服务与定时器为 `/etc/systemd/system/wsl-download-cache-reclaim.service` 和 `.timer`。定时器启用后随 WSL systemd 启动；状态保存在 `/run/wsl-download-cache-reclaim/state.json`，日志由 journal 管理。
 - 停用只需在 WSL root 下执行 `systemctl disable --now wsl-download-cache-reclaim.timer` 并停止同名 `.service`，不停止下载或模型。当前仅覆盖这一个下载任务；其他程序的真实内存增加不属于此回收范围。
 - 验收需观察缓存高低水位、Windows 实际可用内存、下载累计写入和速度、原进程 PID、目标交换内存及 OOM 计数，并复查 AXIS 和模型健康接口；不能承诺回收后的文件校验或磁盘读取性能完全无波动。
+
+## 2026-11-11：Fun-ASR-Nano 实时语音转写登记
+
+- 以独立手动服务「3090 Fun-ASR-Nano 实时语音转写」登记，管理入口为 `integrations/fun-asr/Manage-FunAsr.ps1`。控制 `Ubuntu-22.04` 用户 `xu` 的 `fun-asr.service` 及 Fun-ASR 专用 Windows Caddy 代理，模型固定使用 RTX 3090，不加入基础服务或现有场景。
+- 局域网 WebSocket 为 `ws://192.168.100.190:10095/`，网页为 `https://192.168.100.190:10443/`。由专用代理转发，不启用 AXIS 的 WSL portproxy。AXIS 自动健康检查经本机 `http://127.0.0.1:10443/` 访问模型页面并匹配 `<title>Fun-ASR-Nano`。
+- 管理入口支持 `start`、`stop`、`restart` 与只读 `status`。启动须等待代理的三个监听和模型健康检查通过；停止只结束经归属校验的专用代理和 WSL 用户服务。深度检查结合 WSL unit 状态、端口归属和模型响应。
